@@ -103,7 +103,7 @@ Your coding agent works the way it already does. Whatever it normally sends to i
 
 ### Is Onionskin released?
 
-Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is pre-release 0.0.1.
+Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is a pre-release.
 
 ### Can I try it without installing anything?
 
