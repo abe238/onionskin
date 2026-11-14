@@ -1,0 +1,124 @@
+/* Onionskin "Quiet": two pinned scroll moments (the editor from open to Send, the five-step loop), headline lines
+   that assemble once, and small feedback. Every motion rule is scoped under html.motion, which the head script sets
+   only when prefers-reduced-motion is off and JavaScript runs. Without it the page is a plain, fully visible document.
+   Only transform and opacity move. */
+
+/* scrollcraft tokens, mapped onto the site's own (both themes follow automatically) */
+:root{--sc-canvas:var(--bg);--sc-surface:var(--bg-2);--sc-ink:var(--ink);--sc-ink-soft:var(--ink-2);--sc-accent:var(--focus);--sc-accent-ink:var(--bg);--sc-font-text:var(--font);--sc-font-display:var(--font);--sc-font-mono:var(--mono)}
+
+/* ---------- hero: the onionskin paper photo, and the install card on a solid surface ---------- */
+.field img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:78% 50%}
+.field{background:var(--bg-2)}
+/* the card no longer uses glass: solid page color, a hairline and a soft shadow, so its small text keeps full contrast over the photo */
+.cluster{background:var(--bg);box-shadow:0 0 0 1px var(--rule),0 1px 2px var(--sh1),0 24px 60px -24px var(--sh2)}
+.cluster .reg{background:var(--bg-2);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:inset 0 0 0 1px var(--rule)}
+
+/* ---------- the editor, from open to Send: static layout (no JS, reduced motion, phones) ---------- */
+.seeit{max-width:calc(1240px + 2 * var(--gutter));margin:clamp(36px,4vw,56px) auto 0;padding:0 var(--gutter)}
+.frames{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(12px,1.6vw,20px);align-items:start}
+.shotbox{border-radius:16px;overflow:hidden;background:var(--bg-2);box-shadow:0 0 0 1px var(--rule),0 24px 60px -28px var(--sh2),0 6px 18px -10px var(--sh1)}
+.shotbox img,.shotbox picture{width:100%}
+.fr-l{position:relative;display:flex;align-items:center;gap:10px;margin-top:14px;font-weight:650;font-size:16px;letter-spacing:-.01em;color:var(--ink)}
+.fr-n{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--c-doc);color:#fff;font-size:12.5px;font-weight:700;flex:none}
+.fr2 .fr-n{background:var(--c-grid);color:oklch(18% .04 165)}
+.fr3 .fr-n{background:var(--c-slide);color:oklch(18% .05 36)}
+.seeit figcaption{margin-top:16px;font-size:14px;color:var(--ink-3);text-align:right}
+/* phones: one frame per row, each shown whole; the marked-up step is the real phone layout (picture source) */
+@media (max-width:760px){
+  .frames{grid-template-columns:minmax(0,1fr);gap:28px}
+  .fr2 .shotbox{max-width:340px;margin:0 auto;border-radius:22px}
+  .fr2 .fr-l{justify-content:center}
+}
+
+/* ---------- pinned scrub (wider than 760 px, engine mounted: .sc-act--pinned / .sc-stage) ---------- */
+.seeit.sc-act--pinned{max-width:none;margin-top:clamp(20px,3vw,40px);padding:0;
+  --a2:clamp(0,(var(--sc-p,0) - .18) * 4.5,1);
+  --a3:clamp(0,(var(--sc-p,0) - .56) * 4.5,1)}
+.seeit .sc-stage{display:grid;place-items:center;padding:84px var(--gutter) 20px}
+.sc-act--pinned .seeit-fig{width:min(1240px,100%,calc((100svh - 200px) * 1.6))}
+.sc-act--pinned .frames{display:block;position:relative;aspect-ratio:1.6/1;margin-bottom:56px}
+.sc-act--pinned .fr{position:absolute;inset:0}
+.sc-act--pinned .shotbox{position:absolute;inset:0;will-change:opacity}
+.sc-act--pinned .fr2 .shotbox{opacity:var(--a2)}
+.sc-act--pinned .fr3 .shotbox{opacity:var(--a3)}
+/* the three labels sit in one row under the stack at full strength; a bar slides under the current step */
+.sc-act--pinned .fr-l{position:absolute;top:calc(100% + 16px);margin:0;width:33.33%;padding-bottom:10px}
+.sc-act--pinned .fr1 .fr-l{left:0}
+.sc-act--pinned .fr2 .fr-l{left:33.33%;justify-content:center}
+.sc-act--pinned .fr3 .fr-l{left:66.66%;justify-content:flex-end}
+.sc-act--pinned .fr-l::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:2px;background:var(--ink);transform-origin:50% 50%;will-change:transform}
+.sc-act--pinned .fr1 .fr-l::after{transform:scaleX(calc(1 - var(--a2)))}
+.sc-act--pinned .fr2 .fr-l::after{transform:scaleX(clamp(0,var(--a2) - var(--a3),1))}
+.sc-act--pinned .fr3 .fr-l::after{transform:scaleX(var(--a3))}
+.seeit.sc-act--pinned figcaption{display:none}
+
+/* ---------- formats: the real Excel and PowerPoint editors ---------- */
+.fmt-shots{margin-top:clamp(20px,2.4vw,32px);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,2vw,24px)}
+.fmt-shot figcaption{margin-top:12px;font-size:14px;color:var(--ink-3)}
+@media (max-width:760px){.fmt-shots{grid-template-columns:minmax(0,1fr)}}
+
+/* ---------- loop steps: pinned sequence on wide screens ---------- */
+.loop-act.sc-act--pinned .sc-stage{display:flex;flex-direction:column;justify-content:center;padding-top:72px}
+.loop-act.sc-act--pinned .loop-stage>.diagram{width:100%;margin-top:clamp(20px,3vh,36px);display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:clamp(24px,3vw,48px);align-items:center}
+.loop-act.sc-act--pinned .loop{margin-top:0;columns:auto;padding-left:24px}
+/* every step stays fully readable; the current one gets the ink color, a nudge and a colored number */
+.loop-act.sc-act--pinned .loop li{margin-bottom:14px;color:var(--ink-2);transform:translate3d(0,0,0);transition:transform .35s var(--ease)}
+.loop-act.sc-act--pinned .loop li::marker{font-weight:700;color:var(--ink-3)}
+/* only the arrows dim; the numbered badges stay readable */
+.loop-act[data-step] .d-e[data-s]{opacity:.35;transition:opacity .35s var(--ease)}
+.loop-act[data-step] .d-b{transform-box:fill-box;transform-origin:50% 50%;transition:opacity .35s var(--ease),transform .45s var(--sc-ease-out)}
+.loop-act[data-step="1"] .loop li:nth-child(1),.loop-act[data-step="2"] .loop li:nth-child(2),.loop-act[data-step="3"] .loop li:nth-child(3),.loop-act[data-step="4"] .loop li:nth-child(4),.loop-act[data-step="5"] .loop li:nth-child(5){transform:translate3d(6px,0,0);color:var(--ink)}
+.loop-act[data-step="1"] .loop li:nth-child(1)::marker,.loop-act[data-step="2"] .loop li:nth-child(2)::marker,.loop-act[data-step="3"] .loop li:nth-child(3)::marker,.loop-act[data-step="4"] .loop li:nth-child(4)::marker,.loop-act[data-step="5"] .loop li:nth-child(5)::marker{color:var(--c-doc)}
+.loop-act[data-step="1"] [data-s="1"],.loop-act[data-step="2"] [data-s="2"],.loop-act[data-step="3"] [data-s="3"],.loop-act[data-step="4"] [data-s="4"],.loop-act[data-step="5"] [data-s="5"]{opacity:1}
+.loop-act[data-step="1"] .d-b[data-s="1"],.loop-act[data-step="2"] .d-b[data-s="2"],.loop-act[data-step="3"] .d-b[data-s="3"],.loop-act[data-step="4"] .d-b[data-s="4"],.loop-act[data-step="5"] .d-b[data-s="5"]{transform:scale(1.3)}
+
+/* ---------- headlines assemble line by line (fires once, then the plain text is restored) ---------- */
+.motion h2.kh{opacity:0}
+.motion h2.kh.kin-prep{opacity:1}
+.kl{display:block;overflow:hidden;padding-bottom:.14em;margin-bottom:-.14em}
+.kl>span{display:inline-block;transform:translate3d(0,105%,0);opacity:0;transition:transform .75s var(--sc-ease-out) calc(var(--i) * 80ms),opacity .5s var(--sc-ease-out) calc(var(--i) * 80ms)}
+h2.kin .kl>span{transform:none;opacity:1}
+
+/* ---------- small entrances ---------- */
+.motion .rv>li{opacity:0;transform:translate3d(0,16px,0);transition:opacity .6s var(--sc-ease-out) calc(var(--i,0) * 70ms),transform .6s var(--sc-ease-out) calc(var(--i,0) * 70ms)}
+.motion .rv.in>li{opacity:1;transform:none}
+@keyframes q-rise{from{opacity:0;transform:translate3d(0,14px,0)}to{opacity:1;transform:none}}
+.motion .hero-copy>*{animation:q-rise .7s var(--sc-ease-out) both}
+.motion .hero-copy>:nth-child(2){animation-delay:60ms}
+.motion .hero-copy>:nth-child(3){animation-delay:120ms}
+.motion .cluster{animation:q-rise .8s var(--sc-ease-out) .2s both}
+
+/* ---------- hover and press feedback (fine pointers only) ---------- */
+@media (hover:hover) and (pointer:fine){
+  .motion .pill:hover{transform:translate3d(0,-1px,0)}
+  .motion .pill:active{transform:scale(.97)}
+  .motion .formats li{transition:transform .25s var(--sc-ease-out)}
+  .motion .formats li:hover{transform:translate3d(0,-3px,0)}
+  .motion .feats li .ico{transition:transform .2s var(--sc-ease-out)}
+  .motion .feats li:hover .ico{transform:translate3d(0,-2px,0)}
+}
+
+/* ---------- Copy: a clear confirmation (color in every mode, the pop only with motion) ---------- */
+.copy{transition:transform .14s var(--sc-ease-out)}
+.copy:active{transform:scale(.95)}
+.copy.copied{background:var(--c-grid);color:oklch(18% .04 165)}
+.cmd{position:relative}
+.cmd::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 2px var(--c-grid);opacity:0;pointer-events:none}
+@keyframes q-pop{0%{transform:scale(.9)}55%{transform:scale(1.07)}100%{transform:scale(1)}}
+@keyframes q-flash{0%{opacity:0}20%{opacity:1}100%{opacity:0}}
+.motion .copy.copied{animation:q-pop .34s var(--sc-ease-out)}
+.motion .cmd.flash::after{animation:q-flash 1.1s var(--sc-ease-out)}
+
+/* ---------- theme switch: icon turns in; the page cross-fades through a view transition ---------- */
+@keyframes q-icon{from{opacity:0;transform:rotate(-70deg) scale(.7)}to{opacity:1;transform:none}}
+.motion #theme-toggle svg{animation:q-icon .42s var(--sc-ease-out)}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.34s;animation-timing-function:cubic-bezier(.23,1,.32,1)}
+
+/* ---------- FAQ answers and the name dialog ease in ---------- */
+@keyframes q-fade{from{opacity:0;transform:translate3d(0,-4px,0)}to{opacity:1;transform:none}}
+.motion .faq details[open] p{animation:q-fade .32s var(--sc-ease-out)}
+@keyframes q-dlg{from{opacity:0;transform:translate3d(0,10px,0) scale(.97)}to{opacity:1;transform:none}}
+.motion .fact[open]{animation:q-dlg .3s var(--sc-ease-out)}
+
+/* reduced motion: nothing sticks; the How it works heading scrolls with its section */
+@media (prefers-reduced-motion:reduce){.how .head{position:static}}

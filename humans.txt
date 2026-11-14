@@ -7,6 +7,7 @@ X: https://x.com/abe238
 /* THANKS */
 office-engine by p10node: https://github.com/p10node/office-engine
 human-review by Peter Yang: https://github.com/petergyang/human-review
+scroll-craft by Nate Herk (MIT): https://github.com/nateherkai/scroll-craft
 
 /* SITE */
 Standards: HTML, CSS, a little JavaScript, no framework, no build step

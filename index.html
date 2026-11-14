@@ -32,8 +32,11 @@
 <link rel="alternate" type="text/markdown" href="/index.md" title="Onionskin (Markdown)">
 <link rel="describedby" href="/llms.txt" type="text/plain">
 <link rel="author" href="/humans.txt" type="text/plain">
+<link rel="stylesheet" href="/assets/scrollcraft.css">
 <link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/quiet.css">
 <script>(function(){var d=document.documentElement;d.className=d.className.replace("no-js","js");var t=null;try{var m=location.search.match(/[?&]theme=(light|dark)/);t=m?m[1]:localStorage.getItem("theme")}catch(e){}if(t==="light"||t==="dark")d.setAttribute("data-theme",t)})();</script>
+<script>try{if(!matchMedia("(prefers-reduced-motion: reduce)").matches)document.documentElement.classList.add("motion")}catch(e){}</script>
 <!--gen:jsonld--><script type="application/ld+json">
 {
  "@context": "https://schema.org",
@@ -212,6 +215,8 @@
 }
 </script><!--/gen:jsonld-->
 <script src="/assets/site.js" defer></script>
+<script src="/assets/scrollcraft.js" defer></script>
+<script src="/assets/quiet.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -249,58 +254,10 @@
 
     <div class="stage">
       <div class="field" aria-hidden="true">
-<div class="sheet doc"><svg viewBox="0 0 300 390" focusable="false">
-<rect class="pg" width="300" height="390" rx="8"/><rect class="pg-edge" x=".5" y=".5" width="299" height="389" rx="8"/>
-<rect class="ink" x="34" y="36" width="132" height="13" rx="3"/><rect class="mut" x="34" y="58" width="84" height="6" rx="3"/>
-<rect class="hl" x="34" y="159" width="150" height="15" rx="2"/>
-<g class="mut2"><rect x="34" y="86" width="186" height="6" rx="3"/><rect x="34" y="100" width="178" height="6" rx="3"/><rect x="34" y="114" width="186" height="6" rx="3"/><rect x="34" y="128" width="132" height="6" rx="3"/><rect x="34" y="150" width="232" height="6" rx="3"/><rect x="34" y="164" width="212" height="6" rx="3" class="mut"/><rect x="34" y="178" width="232" height="6" rx="3"/><rect x="34" y="192" width="120" height="6" rx="3"/></g>
-<rect x="34" y="216" width="232" height="22" fill="var(--c-doc)" fill-opacity=".16"/>
-<path class="gl" d="M34 216h232v66H34zM111 216v66M188 216v66M34 238h232M34 260h232"/>
-<g class="mut"><rect x="44" y="224" width="38" height="6" rx="3"/><rect x="121" y="224" width="30" height="6" rx="3"/><rect x="198" y="224" width="36" height="6" rx="3"/><rect x="44" y="246" width="44" height="6" rx="3"/><rect x="121" y="246" width="26" height="6" rx="3"/><rect x="44" y="268" width="34" height="6" rx="3"/><rect x="121" y="268" width="40" height="6" rx="3"/></g>
-<g class="mut2"><rect x="34" y="304" width="232" height="6" rx="3"/><rect x="34" y="318" width="220" height="6" rx="3"/><rect x="34" y="332" width="232" height="6" rx="3"/><rect x="34" y="346" width="140" height="6" rx="3"/></g>
-<path d="M236 101C214 128 196 148 184 164" class="s-doc" stroke-width="1.4" stroke-dasharray="3 3"/>
-<g transform="translate(236 70)"><path class="t-doc" d="M9 0h34a9 9 0 0 1 9 9v16a9 9 0 0 1-9 9H22l-12 10 2-10h-3A9 9 0 0 1 0 25V9a9 9 0 0 1 9-9z"/><rect x="11" y="11" width="30" height="4" rx="2" fill="#fff" fill-opacity=".92"/><rect x="11" y="20" width="19" height="4" rx="2" fill="#fff" fill-opacity=".92"/></g>
-<g transform="translate(226 262)"><path class="pin" d="M0-17a8.5 8.5 0 0 1 8.5 8.5C8.5-2.5 0 6.5 0 6.5S-8.5-2.5-8.5-8.5A8.5 8.5 0 0 1 0-17z"/><circle cy="-8.5" r="3" fill="#fff"/></g>
-</svg></div>
-<div class="sheet grid"><svg viewBox="0 0 360 250" focusable="false">
-<defs><clipPath id="xl-c"><rect width="360" height="250" rx="8"/></clipPath></defs>
-<rect class="pg" width="360" height="250" rx="8"/>
-<g clip-path="url(#xl-c)">
-<rect width="360" height="26" class="t-grid"/><rect x="10" y="6" width="44" height="14" rx="3" fill="#fff" fill-opacity=".9"/><rect x="62" y="6" width="210" height="14" rx="3" fill="#fff" fill-opacity=".28"/>
-<rect y="26" width="360" height="20" fill="oklch(94% .006 262)"/><rect y="46" width="28" height="204" fill="oklch(94% .006 262)"/>
-<rect x="118" y="118" width="150" height="48" fill="var(--c-grid)" fill-opacity=".1"/>
-<path class="gl" d="M28 26V250M108 26V250M188 26V250M268 26V250M348 26V250M0 46H360M0 70H360M0 94H360M0 118H360M0 142H360M0 166H360M0 190H360M0 214H360M0 238H360"/>
-<g class="mut"><rect x="62" y="33" width="9" height="5" rx="2.5"/><rect x="142" y="33" width="9" height="5" rx="2.5"/><rect x="222" y="33" width="9" height="5" rx="2.5"/><rect x="302" y="33" width="9" height="5" rx="2.5"/></g>
-<g class="ink"><rect x="38" y="54" width="46" height="7" rx="3"/><rect x="118" y="54" width="40" height="7" rx="3"/><rect x="198" y="54" width="44" height="7" rx="3"/><rect x="278" y="54" width="38" height="7" rx="3"/></g>
-<g class="mut"><rect x="38" y="78" width="40" height="6" rx="3"/><rect x="38" y="102" width="52" height="6" rx="3"/><rect x="38" y="126" width="34" height="6" rx="3"/><rect x="38" y="150" width="46" height="6" rx="3"/><rect x="38" y="174" width="42" height="6" rx="3"/>
-<rect x="64" y="78" width="34" height="6" rx="3"/><rect x="54" y="102" width="44" height="6" rx="3"/><rect x="60" y="126" width="38" height="6" rx="3"/><rect x="48" y="150" width="50" height="6" rx="3"/><rect x="62" y="174" width="36" height="6" rx="3"/>
-<rect x="150" y="78" width="28" height="6" rx="3"/><rect x="144" y="126" width="34" height="6" rx="3"/><rect x="152" y="150" width="26" height="6" rx="3"/><rect x="146" y="174" width="32" height="6" rx="3"/>
-<rect x="226" y="78" width="32" height="6" rx="3"/><rect x="230" y="126" width="28" height="6" rx="3"/><rect x="222" y="150" width="36" height="6" rx="3"/><rect x="228" y="174" width="30" height="6" rx="3"/>
-<rect x="302" y="78" width="36" height="6" rx="3"/><rect x="298" y="102" width="40" height="6" rx="3"/><rect x="306" y="126" width="32" height="6" rx="3"/><rect x="300" y="150" width="38" height="6" rx="3"/><rect x="304" y="174" width="34" height="6" rx="3"/></g>
-<path d="M0 190H360" stroke="oklch(30% .03 265)" stroke-width="1.6"/>
-<g class="ink"><rect x="38" y="198" width="40" height="7" rx="3"/><rect x="146" y="198" width="32" height="7" rx="3"/><rect x="226" y="198" width="32" height="7" rx="3"/><rect x="298" y="198" width="40" height="7" rx="3"/></g>
-<rect x="188.8" y="94.8" width="78.4" height="22.4" fill="var(--c-grid)" fill-opacity=".14" class="s-grid" stroke-width="2.4"/>
-<rect x="263" y="113" width="7" height="7" fill="var(--c-grid)" stroke="#fff" stroke-width="1.4"/>
-<path class="pin" d="M259 95h8v8z"/>
-<g class="mut"><rect x="204" y="102" width="40" height="6" rx="3"/></g>
-</g>
-<rect class="pg-edge" x=".5" y=".5" width="359" height="249" rx="8"/>
-</svg></div>
-<div class="sheet slide"><svg viewBox="0 0 360 202" focusable="false">
-<rect class="pg" width="360" height="202" rx="8"/><rect class="pg-edge" x=".5" y=".5" width="359" height="201" rx="8"/>
-<path class="t-slide" d="M0 8a8 8 0 0 1 8-8h8v202H8a8 8 0 0 1-8-8z"/>
-<rect class="ink" x="42" y="36" width="184" height="15" rx="3"/><rect class="ink" x="42" y="58" width="116" height="15" rx="3"/>
-<rect x="34" y="28" width="202" height="52" fill="none" stroke="var(--c-doc)" stroke-width="1.3" stroke-dasharray="4 3"/>
-<g fill="#fff" stroke="var(--c-doc)" stroke-width="1.3"><rect x="31" y="25" width="6" height="6"/><rect x="132" y="25" width="6" height="6"/><rect x="233" y="25" width="6" height="6"/><rect x="31" y="51" width="6" height="6"/><rect x="233" y="51" width="6" height="6"/><rect x="31" y="77" width="6" height="6"/><rect x="132" y="77" width="6" height="6"/><rect x="233" y="77" width="6" height="6"/></g>
-<g class="t-slide"><circle cx="46" cy="108" r="3.2"/><circle cx="46" cy="130" r="3.2"/><circle cx="46" cy="152" r="3.2"/></g>
-<g class="mut"><rect x="58" y="105" width="150" height="6" rx="3"/><rect x="58" y="127" width="128" height="6" rx="3"/><rect x="58" y="149" width="160" height="6" rx="3"/></g>
-<path class="gl" d="M244 112H340M244 138H340"/><path d="M244 172H340" stroke="oklch(30% .03 265)" stroke-width="1.4"/>
-<g class="mut2"><rect x="250" y="136" width="16" height="36"/><rect x="274" y="116" width="16" height="56"/><rect x="298" y="144" width="16" height="28"/></g>
-<rect class="t-slide" x="322" y="98" width="16" height="74"/>
-<g transform="translate(316 10) scale(.78)"><path class="t-doc" d="M9 0h34a9 9 0 0 1 9 9v16a9 9 0 0 1-9 9H22l-12 10 2-10h-3A9 9 0 0 1 0 25V9a9 9 0 0 1 9-9z"/><rect x="11" y="11" width="30" height="4" rx="2" fill="#fff" fill-opacity=".92"/><rect x="11" y="20" width="19" height="4" rx="2" fill="#fff" fill-opacity=".92"/></g>
-</svg></div>
+        <img class="img-light" src="/assets/img/paper-light-1080.webp" srcset="/assets/img/paper-light-640.webp 640w, /assets/img/paper-light-1080.webp 1080w, /assets/img/paper-light-1536.webp 1536w" sizes="(max-width: 980px) calc(100vw - 32px), 680px" width="1536" height="1024" alt="" loading="lazy" fetchpriority="high" decoding="async">
+        <img class="img-dark" src="/assets/img/paper-dark-1080.webp" srcset="/assets/img/paper-dark-640.webp 640w, /assets/img/paper-dark-1080.webp 1080w, /assets/img/paper-dark-1600.webp 1600w" sizes="(max-width: 980px) calc(100vw - 32px), 680px" width="1672" height="941" alt="" loading="lazy" fetchpriority="high" decoding="async">
       </div>
-      <div class="cluster" data-lens="46 130" data-spec>
+      <div class="cluster">
         <div class="ctas">
           <a class="pill pill-ink big" href="https://github.com/abe238/onionskin"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>Star on GitHub</a>
           <a class="pill pill-clear big" href="/try/"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2Z"/></svg>Try the demo</a>
@@ -317,13 +274,19 @@
         </div>
       </div>
     </div>
-    <figure class="shot">
-        <div class="frame" data-tone="light">
-          <img class="img-light" src="/assets/img/editor-light-1080.webp" srcset="/assets/img/editor-light-640.webp 640w, /assets/img/editor-light-1080.webp 1080w, /assets/img/editor-light-1600.webp 1600w" sizes="(max-width: 1260px) calc(100vw - 32px), 1180px" width="1600" height="1000" alt="The Onionskin editor: a quarterly operations report in Word on the left with a numbered comment on a sentence just under the orders table; the Review panel on the right shows the background agent listening, the comment, an overall note asking for a new table row, and a Send to Agent button." loading="eager" decoding="async">
-          <img class="img-dark" src="/assets/img/editor-dark-1080.webp" srcset="/assets/img/editor-dark-640.webp 640w, /assets/img/editor-dark-1080.webp 1080w, /assets/img/editor-dark-1600.webp 1600w" sizes="(max-width: 1260px) calc(100vw - 32px), 1180px" width="1600" height="1000" alt="The Onionskin editor in dark mode: a quarterly operations report in Word on the left with a numbered comment on a sentence just under the orders table; the Review panel on the right shows the background agent listening, the comment, an overall note asking for a new table row, and a Send to Agent button." loading="eager" decoding="async">
-        </div>
-        <figcaption>The editor, running on a sample report, with the background agent listening.</figcaption>
-    </figure>
+  </section>
+
+  <section class="seeit" id="see" aria-label="The editor, from open to Send" data-sc-span="2.3">
+    <div class="seeit-stage" data-sc-stage>
+      <figure class="seeit-fig">
+        <ol class="frames">
+          <li class="fr fr1"><div class="shotbox" data-tone="light"><img class="img-light" src="/assets/img/word-1-light-1080.webp" srcset="/assets/img/word-1-light-640.webp 640w, /assets/img/word-1-light-1080.webp 1080w, /assets/img/word-1-light-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="The Onionskin editor with a quarterly operations report open in Word and an empty review panel: nothing to send yet." loading="lazy" decoding="async"><img class="img-dark" src="/assets/img/word-1-dark-1080.webp" srcset="/assets/img/word-1-dark-640.webp 640w, /assets/img/word-1-dark-1080.webp 1080w, /assets/img/word-1-dark-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="The Onionskin editor with a quarterly operations report open in Word in dark mode and an empty review panel: nothing to send yet." loading="lazy" decoding="async"></div><p class="fr-l"><span class="fr-n" aria-hidden="true">1</span>Open a file</p></li>
+          <li class="fr fr2"><div class="shotbox" data-tone="light"><picture class="img-light"><source media="(max-width: 760px)" srcset="/assets/img/phone-light-390.webp 390w, /assets/img/phone-light-780.webp 780w" sizes="(max-width: 760px) calc(100vw - 32px)" width="780" height="1688"><img src="/assets/img/word-2-light-1080.webp" srcset="/assets/img/word-2-light-640.webp 640w, /assets/img/word-2-light-1080.webp 1080w, /assets/img/word-2-light-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="The same report marked up: a numbered comment on the revenue sentence asking to tighten it and say who owns the follow-up and a typed edit to the next paragraph, with the Send button counting what goes to the agent." loading="lazy" decoding="async"></picture><picture class="img-dark"><source media="(max-width: 760px)" srcset="/assets/img/phone-dark-390.webp 390w, /assets/img/phone-dark-780.webp 780w" sizes="(max-width: 760px) calc(100vw - 32px)" width="780" height="1688"><img src="/assets/img/word-2-dark-1080.webp" srcset="/assets/img/word-2-dark-640.webp 640w, /assets/img/word-2-dark-1080.webp 1080w, /assets/img/word-2-dark-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="The same report marked up in dark mode: a numbered comment on the revenue sentence asking to tighten it and say that Operations owns the follow-up and a typed edit to the next paragraph, with the Send button counting what goes to the agent." loading="lazy" decoding="async"></picture></div><p class="fr-l"><span class="fr-n" aria-hidden="true">2</span>Mark it up</p></li>
+          <li class="fr fr3"><div class="shotbox" data-tone="light"><img class="img-light" src="/assets/img/word-3-light-1080.webp" srcset="/assets/img/word-3-light-640.webp 640w, /assets/img/word-3-light-1080.webp 1080w, /assets/img/word-3-light-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="After the agent run: the revenue sentence is rewritten in the file and underlined as changed, and the review panel shows Agent finished with Rewrote this text and Revert this run." loading="lazy" decoding="async"><img class="img-dark" src="/assets/img/word-3-dark-1080.webp" srcset="/assets/img/word-3-dark-640.webp 640w, /assets/img/word-3-dark-1080.webp 1080w, /assets/img/word-3-dark-1600.webp 1600w" sizes="(max-width: 1272px) calc(100vw - 32px), 1240px" width="2880" height="1800" alt="After the agent run in dark mode: the revenue sentence is rewritten in the file and highlighted as changed, with the old words shown as Was, and the review panel shows Agent finished with Rewrote this text and Revert this run." loading="lazy" decoding="async"></div><p class="fr-l"><span class="fr-n" aria-hidden="true">3</span>Press Send</p></li>
+        </ol>
+        <figcaption>The editor, running on a sample report.</figcaption>
+      </figure>
+    </div>
   </section>
 
   <section class="sec how" id="how" aria-labelledby="how-h">
@@ -388,6 +351,8 @@
 
   <section class="sec arch" id="architecture" aria-labelledby="arch-h">
     <div class="wrap">
+      <div class="loop-act" data-loop-act data-sc-span="2.8">
+      <div class="loop-stage" data-sc-stage>
       <div class="head wide">
         <h2 id="arch-h">How the pieces fit</h2>
         <p>Your edits start in a browser tab and finish in the file on disk. The editor and the server run on your computer, and your coding agent edits the file there.</p>
@@ -430,19 +395,19 @@
           <text class="d-t" x="720" y="296">report.docx</text>
           <text class="d-s" x="720" y="320">the real file on disk</text>
 
-          <path class="d-e" d="M300 128H369" marker-end="url(#ah)"/>
-          <path class="d-e" d="M375 166H306" marker-end="url(#ah)"/>
-          <path class="d-e" d="M625 128H694" marker-end="url(#ah)"/>
-          <path class="d-e" d="M700 166H631" marker-end="url(#ah)"/>
-          <path class="d-e" d="M825 192V250" marker-end="url(#ah)"/>
+          <path class="d-e" data-s="1" d="M300 128H369" marker-end="url(#ah)"/>
+          <path class="d-e" data-s="5" d="M375 166H306" marker-end="url(#ah)"/>
+          <path class="d-e" data-s="2" d="M625 128H694" marker-end="url(#ah)"/>
+          <path class="d-e" data-s="4" d="M700 166H631" marker-end="url(#ah)"/>
+          <path class="d-e" data-s="3" d="M825 192V250" marker-end="url(#ah)"/>
           <path class="d-e2" d="M500 192V250" marker-end="url(#ah2)"/>
           <path class="d-e2" d="M175 192V250" marker-end="url(#ah2)"/>
 
-          <g><circle class="d-num" cx="336" cy="128" r="11"/><text class="d-numt" x="336" y="132" text-anchor="middle">1</text></g>
-          <g><circle class="d-num" cx="661" cy="128" r="11"/><text class="d-numt" x="661" y="132" text-anchor="middle">2</text></g>
-          <g><circle class="d-num" cx="825" cy="220" r="11"/><text class="d-numt" x="825" y="224" text-anchor="middle">3</text></g>
-          <g><circle class="d-num" cx="664" cy="166" r="11"/><text class="d-numt" x="664" y="170" text-anchor="middle">4</text></g>
-          <g><circle class="d-num" cx="339" cy="166" r="11"/><text class="d-numt" x="339" y="170" text-anchor="middle">5</text></g>
+          <g class="d-b" data-s="1"><circle class="d-num" cx="336" cy="128" r="11"/><text class="d-numt" x="336" y="132" text-anchor="middle">1</text></g>
+          <g class="d-b" data-s="2"><circle class="d-num" cx="661" cy="128" r="11"/><text class="d-numt" x="661" y="132" text-anchor="middle">2</text></g>
+          <g class="d-b" data-s="3"><circle class="d-num" cx="825" cy="220" r="11"/><text class="d-numt" x="825" y="224" text-anchor="middle">3</text></g>
+          <g class="d-b" data-s="4"><circle class="d-num" cx="664" cy="166" r="11"/><text class="d-numt" x="664" y="170" text-anchor="middle">4</text></g>
+          <g class="d-b" data-s="5"><circle class="d-num" cx="339" cy="166" r="11"/><text class="d-numt" x="339" y="170" text-anchor="middle">5</text></g>
         </svg>
         <svg class="d-tall" viewBox="0 0 400 700" role="img" aria-labelledby="dt-t">
           <title id="dt-t">Diagram: the browser editor, the Onionskin local server, your coding agent and the file on disk, stacked top to bottom, passing a batch of changes around a five step loop.</title>
@@ -489,6 +454,8 @@
           </ol>
         </figcaption>
       </figure>
+      </div>
+      </div>
     </div>
   </section>
 
@@ -510,6 +477,10 @@
 <li><span class="fmt">XLSX</span><div><b>Excel (.xlsx)</b><span>Workbooks and sheets</span></div></li>
 <li><span class="fmt">PPTX</span><div><b>PowerPoint (.pptx)</b><span>Decks and slides</span></div></li><!--/gen:formats-->
       </ul>
+      <div class="fmt-shots">
+        <figure class="fmt-shot"><div class="shotbox"><img class="img-light" src="/assets/img/excel-light-1080.webp" srcset="/assets/img/excel-light-640.webp 640w, /assets/img/excel-light-1080.webp 1080w, /assets/img/excel-light-1600.webp 1600w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1272px) calc(50vw - 28px), 610px" width="2880" height="1800" alt="The Onionskin editor with a budget workbook open in Excel: cell C2 is marked with a numbered comment asking whether the rent figure is still right, and Send to Agent shows 1 comment." loading="lazy" decoding="async"><img class="img-dark" src="/assets/img/excel-dark-1080.webp" srcset="/assets/img/excel-dark-640.webp 640w, /assets/img/excel-dark-1080.webp 1080w, /assets/img/excel-dark-1600.webp 1600w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1272px) calc(50vw - 28px), 610px" width="2880" height="1800" alt="The Onionskin editor in dark mode with a budget workbook open in Excel: cell C2 is marked with a numbered comment asking whether the rent figure is still right, and Send to Agent shows 1 comment." loading="lazy" decoding="async"></div><figcaption>Excel</figcaption></figure>
+        <figure class="fmt-shot"><div class="shotbox"><img class="img-light" src="/assets/img/pptx-light-1080.webp" srcset="/assets/img/pptx-light-640.webp 640w, /assets/img/pptx-light-1080.webp 1080w, /assets/img/pptx-light-1600.webp 1600w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1272px) calc(50vw - 28px), 610px" width="2880" height="1800" alt="The Onionskin editor with a deck open in PowerPoint: a numbered comment on the Budget slide asks to add the headcount number, and Send to Agent shows 1 comment." loading="lazy" decoding="async"><img class="img-dark" src="/assets/img/pptx-dark-1080.webp" srcset="/assets/img/pptx-dark-640.webp 640w, /assets/img/pptx-dark-1080.webp 1080w, /assets/img/pptx-dark-1600.webp 1600w" sizes="(max-width: 760px) calc(100vw - 32px), (max-width: 1272px) calc(50vw - 28px), 610px" width="2880" height="1800" alt="The Onionskin editor in dark mode with a deck open in PowerPoint: a numbered comment on the Budget slide asks to add the headcount number, and Send to Agent shows 1 comment." loading="lazy" decoding="async"></div><figcaption>PowerPoint</figcaption></figure>
+      </div>
     </div>
   </section>
 
@@ -585,7 +556,7 @@
           <li><a href="#agents">Install steps for agents</a></li>
         </ul></div>
     </div>
-    <p class="fine"><!--gen:status-->Available now. Open source under the MIT license.<!--/gen:status--> Onionskin is open source under the MIT license. Fonts: Geist and JetBrains Mono (SIL Open Font License, <a href="/assets/fonts/Geist-OFL.txt">Geist</a>, <a href="/assets/fonts/JetBrainsMono-OFL.txt">JetBrains Mono</a>). This page makes no outside requests and sets no cookies.</p>
+    <p class="fine"><!--gen:status-->Available now. Open source under the MIT license.<!--/gen:status--> Onionskin is open source under the MIT license. Fonts: Geist and JetBrains Mono (SIL Open Font License, <a href="/assets/fonts/Geist-OFL.txt">Geist</a>, <a href="/assets/fonts/JetBrainsMono-OFL.txt">JetBrains Mono</a>). Scroll motion: scroll-craft by Nate Herk (MIT, <a href="/assets/scrollcraft-LICENSE.txt">license</a>). This page makes no outside requests and sets no cookies.</p>
   </div>
 </footer>
 
