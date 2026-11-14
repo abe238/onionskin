@@ -307,8 +307,7 @@ h1{margin-top:20px;font-size:clamp(40px,5vw,72px);line-height:1.0;letter-spacing
 
 /* ---------- footer: one statement, then the lists ---------- */
 .foot{margin-top:clamp(110px,13vw,180px);padding:clamp(56px,7vw,96px) 0 48px;background:var(--bg-2)}
-.foot .by{font-size:clamp(34px,5vw,64px);font-weight:700;letter-spacing:-.035em;line-height:1.05}
-.foot .by a{text-decoration-thickness:3px;text-underline-offset:8px}
+.foot .by{font-size:15px;color:var(--ink-2)}
 .foot-note{margin-top:14px;color:var(--ink-2)}
 .foot-note a{color:var(--ink)}
 .foot-cols{margin-top:48px;display:flex;flex-wrap:wrap;gap:24px 72px}
