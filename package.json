@@ -1,7 +1,6 @@
 {
   "name": "onionskin-cli",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.0.2",
   "description": "Edit Word, Excel and PowerPoint files in the browser and send the batch to a coding agent.",
   "type": "module",
   "bin": {
@@ -49,5 +48,22 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "vite": "^8.3.5"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abe238/onionskin.git"
+  },
+  "homepage": "https://onionskin.abediaz.ai",
+  "bugs": "https://github.com/abe238/onionskin/issues",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "docx",
+    "xlsx",
+    "pptx",
+    "word",
+    "excel",
+    "powerpoint",
+    "agent-skill"
+  ]
 }

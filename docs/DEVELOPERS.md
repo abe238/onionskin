@@ -6,8 +6,15 @@ Everything beyond the short [README](../README.md): the ways to install, the com
 
 1. **One sentence to your agent** (what the README shows): "Install Onionskin from https://github.com/abe238/onionskin". The agent follows the README's agent block, which runs `scripts/get.sh`.
 2. **The one-line installer**, by hand: `curl -fsSL <release url>/get.sh | sh`. It downloads the release zip, checks its SHA-256, unzips it to a temp folder and runs the zip's own `install.sh`. `sh scripts/get.sh --dry-run` prints what would happen. Pin a release with `ONIONSKIN_ZIP_URL`, `ONIONSKIN_SHA256_URL` or `ONIONSKIN_SHA256`; `ONIONSKIN_BASE_URL` changes the folder both files are fetched from (https only, or `http://127.0.0.1` and `file://` for local tests).
-3. **The zip**: unzip it and run `sh install.sh` in the `onionskin` folder (no sudo, needs Node.js 22 or newer).
-4. **From source**: see [GUIDE.md](GUIDE.md#install-from-source).
+3. **npm**: `npm install -g onionskin-cli`, then `onionskin setup` to install the two skill folders. The package is the same app without `install.sh`; the deeper checks are turned on later with `onionskin setup-checker`. If an installer copy also exists in `~/.local/bin`, whichever comes first on PATH answers; `onionskin doctor` prints the copy it runs from and a `NOTE` for each other copy.
+4. **Claude Code plugin**: `/plugin marketplace add abe238/onionskin`, then `/plugin install onionskin@onionskin`. `.claude-plugin/marketplace.json` lists one plugin whose source is `./skills/onionskin`, so only the skill folder is copied into Claude Code's plugin cache. It needs no `plugin.json`: the marketplace entry is the manifest (a `plugin.json` inside the skill folder would also be copied into `~/.claude/skills/onionskin` by `setup`, where Claude Code would load it as a second plugin). The skill shows as `onionskin:onionskin`.
+5. **Codex plugin**: `codex plugin marketplace add abe238/onionskin`, then `codex plugin add onionskin@onionskin`. Codex reads `.agents/plugins/marketplace.json` (it prefers it to the Claude Code file); the plugin root is `skills/`, with its manifest in `skills/.codex-plugin/plugin.json` and `"skills": "./onionskin/"`. Codex lists the skill only through that path: a plugin root with `SKILL.md` at the top installs but shows no skill.
+6. **The zip**: unzip it and run `sh install.sh` in the `onionskin` folder (no sudo, needs Node.js 22 or newer).
+7. **From source**: see [GUIDE.md](GUIDE.md#install-from-source).
+
+A plugin brings the skill only, not the `onionskin` command. When the command is missing, the skill tells the agent to run the agent install command from the README, then `onionskin doctor`. To keep one copy of the skill in Claude Code, `onionskin setup` skips `~/.claude/skills/onionskin` when `~/.claude/plugins/installed_plugins.json` records a user-scope `onionskin@...` install that `~/.claude/settings.json` does not turn off. It removes its own earlier copy there when that copy is identical, and a different one only with `--force` or a yes (`install.sh` passes `--force` when every skill folder is Onionskin's). Anything else installs the folder as before. `doctor` applies the same rule and compares the plugin's copy with the app's; a difference is a `NOTE`, because the plugin follows the repository and the app follows the release. The Codex plugin gets no such skip, because `~/.agents/skills` is shared with other agents, so a Codex user with both sees the skill twice.
+
+Updating the plugins: `claude plugin marketplace update onionskin`, then `claude plugin update onionskin@onionskin` (a plain `plugin update` alone reports "already at the latest version" until the marketplace is refreshed); `codex plugin marketplace upgrade onionskin` refreshes the Codex copy.
 
 ## Commands
 
@@ -44,7 +51,7 @@ The long reference is in [GUIDE.md](GUIDE.md).
 - macOS only so far, the only platform tested. Node.js 22 or newer. A browser (the full browser test suite runs in Chrome).
 - Claude Code or Codex, already installed and signed in. Onionskin does not include an agent.
 - Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to the agent.
-- Version 0.0.1, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
+- Version 0.0.2, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
 - Charts and SmartArt show as placeholders. Fields, content controls and equations are shown read-only. Macro-enabled files (`.docm`, `.xlsm`, `.pptm`) are refused.
 - Tests: over 1,000 unit tests and 300 browser tests pass (2026-11-13). A clean-machine test on a second Mac passed: install by the pasted sentence, `onionskin doctor`, and one real round.
 
@@ -113,7 +120,7 @@ In a new Terminal window:
 1. ```sh
    onionskin --version
    ```
-   You should see: a version number such as `0.0.1`.
+   You should see: a version number such as `0.0.2`.
 
 2. ```sh
    onionskin setup --dry-run
@@ -200,10 +207,12 @@ From Terminal: `onionskin config background midnight`, `onionskin config backgro
 ### Uninstall
 
 ```sh
-sh install.sh --uninstall
+sh ~/.onionskin/app/*/install.sh --uninstall
 ```
 
-(Run it from the unzipped `onionskin` folder, or from `~/.onionskin/app/<version>/` before it is removed.) This removes the `onionskin` command, the app copy, and the two skill folders. It keeps `~/.onionskin` (snapshots of your files and the optional checker environment) and never touches your documents. To remove those too: `sh install.sh --uninstall --purge`. Node.js, Python and LibreOffice are not removed.
+(Or `sh install.sh --uninstall` from the unzipped `onionskin` folder.) This removes the `onionskin` command, the app copy, and the two skill folders. It keeps `~/.onionskin` (snapshots of your files and the optional checker environment) and never touches your documents. To remove those too, add `--purge`. Node.js, Python and LibreOffice are not removed.
+
+An npm install is removed with `onionskin setup --uninstall`, then `npm uninstall -g onionskin-cli`. The plugins are removed with `claude plugin uninstall onionskin@onionskin` and `codex plugin remove onionskin@onionskin`; that removes the skill only, not the command.
 
 ### The helper for quick fixes
 

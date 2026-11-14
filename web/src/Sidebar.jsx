@@ -3,7 +3,6 @@ import { DeeperChecks, NOT_SET_UP } from "./DeeperChecks.jsx";
 import { diffParts, flagText, isProtected, labelFor, relTime, shownFlags } from "./lib.js";
 import { Icon } from "./Icons.jsx";
 import { SIDE_MAX, SIDE_MIN, useFocusTrap } from "./hooks.js";
-import { glass } from "./lens.js";
 import { History } from "./History.jsx";
 import { MOD, commentNavDir } from "./keys.js";
 import { StylePrefs } from "./StylePrefs.jsx";
@@ -480,7 +479,6 @@ export function Sidebar(p) {
     return () => cancelAnimationFrame(id);
   }, [lastKey, lastRun, working, open, askedKey, errRun]);
   useFocusTrap(ref, narrow && open, p.onToggle);
-  useEffect(() => glass(ref.current), []);
   useEffect(() => {
     if (open) setSnap("half"); // the sheet always opens at half height
   }, [open]);
@@ -513,7 +511,6 @@ export function Sidebar(p) {
         id="review-panel"
         ref={ref}
         className={`sidebar glass ${narrow ? "drawer" : ""} ${open ? "open" : "shut"}`}
-        data-lens="26 56"
         data-snap={phone ? snap : undefined}
         data-testid="sidebar"
         aria-label="Review panel"

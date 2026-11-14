@@ -4,13 +4,21 @@ Paste this sentence into Claude Code or Codex:
 
 > Install Onionskin from https://github.com/abe238/onionskin
 
-Your agent does the rest. Prefer to do it yourself? Open a terminal in this folder and run `sh install.sh`.
+Your agent does the rest. Prefer to do it yourself? Open a terminal in this folder and run `sh install.sh`. Other ways to install (npm, Claude Code and Codex plugins) are in the README.
+
+## Check it worked
+
+Run `onionskin doctor` (or `~/.local/bin/onionskin doctor` if the command is not found). A line that starts with `MISSING` ends with the command that fixes it.
 
 ## Start
 
 Say to your agent: **open report.docx in Onionskin**. Or type `onionskin report.docx` in a terminal.
 
 Your file opens in the browser. Edit, comment, drop a pin, then press **Send to Agent**. The changes appear in the document.
+
+## Uninstall
+
+Run `sh ~/.onionskin/app/*/install.sh --uninstall`. Your snapshots stay in `~/.onionskin`; add `--purge` to delete them too.
 
 ## What you need
 

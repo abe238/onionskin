@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.jsx";
 import { useMedia } from "./hooks.js";
-import { glass } from "./lens.js";
 import { Shortcuts } from "./Shortcuts.jsx";
 
 const STATE_TEXT = {
@@ -62,7 +61,7 @@ export function TopBar({ readOnly, product, session, counts, pending, sending, t
     </button>
   );
   return (
-    <header className="topbar glass" data-lens="16 40" ref={glass} data-busy={sending ? "1" : "0"} aria-label={`${product} document bar`}>
+    <header className="topbar glass" data-busy={sending ? "1" : "0"} aria-label={`${product} document bar`}>
       <Mark />
       <span className="brand">{product}</span>
       <span className="fname" data-testid="file-name" title={session.name}>{session.name}</span>
@@ -151,7 +150,7 @@ function Modes({ mode, onMode, readOnly }) {
 /** Desktop and tablet: the mode switch and the format toolbar share one glass bar. Phone: only the format strip (it shows in Edit mode); the modes live in the dock. */
 export function Toolbar({ mode, onMode, setBar, readOnly, phone }) {
   return (
-    <div className="toolbar glass" data-lens="16 40" ref={glass} data-hidden={phone && mode !== "edit" ? "1" : "0"}>
+    <div className="toolbar glass" data-hidden={phone && mode !== "edit" ? "1" : "0"}>
       {!phone && <Modes mode={mode} onMode={onMode} readOnly={readOnly} />}
       {!phone && <span className="tb-sep" aria-hidden="true" />}
       {readOnly && (
@@ -168,7 +167,7 @@ export function Toolbar({ mode, onMode, setBar, readOnly, phone }) {
 export function Dock({ mode, onMode, readOnly, counts, pending, sideOpen, onSidebar, sending }) {
   const parts = counts.comments + counts.pins + counts.edits;
   return (
-    <nav className="dock glass" data-lens="16 30" ref={glass} aria-label="Actions">
+    <nav className="dock glass" aria-label="Actions">
       <Modes mode={mode} onMode={onMode} readOnly={readOnly} />
       <button type="button" className="send-pill" data-testid="sidebar-toggle" data-empty={pending ? "0" : "1"} onClick={onSidebar} aria-expanded={sideOpen} aria-controls="review-panel" aria-label={`Review and send${pending ? `, ${parts || 1} to send` : ""}`}>
         <span>{sending ? "Sending" : "Send"}</span>

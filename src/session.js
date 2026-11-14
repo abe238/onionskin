@@ -153,6 +153,7 @@ export class Sessions extends EventEmitter {
   claimEditor(key, tab, { takeover = false } = {}) {
     const s = this.get(key);
     const cur = this.editors.get(key);
+    if (s.closed) return false; // a closed session has no editor; the tab that reopens it claims it
     if (cur && cur !== tab && !takeover) return false;
     if (cur !== tab) {
       this.editors.set(key, tab);
@@ -1699,6 +1700,7 @@ export class Sessions extends EventEmitter {
   close(key) {
     const s = this.get(key);
     s.closed = true;
+    this.editors.delete(key); // the closed tab may stay on screen with its event stream open: it must not hold the file against the tab that reopens it
     for (const p of s.pollers.splice(0)) p.resolve({ status: "closed" });
     fs.rmSync(path.join(stateDir(), "agents", s.key, "outline"), { recursive: true, force: true }); // the outline files of Onionskin's own agent
     this.emit("closed", s); // the server ends background checks for this file

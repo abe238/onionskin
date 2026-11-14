@@ -5,7 +5,7 @@ description: Open a Word (.docx), Excel (.xlsx) or PowerPoint (.pptx) file in On
 
 # onionskin
 
-The user reviews a Word, Excel or PowerPoint file in a browser, types edits, comments on things, presses Send. You answer; the page reloads where they were. Call the CLI as `onionskin` when `command -v onionskin` finds it, otherwise by its full location `~/.local/bin/onionskin` (use that path wherever a command below says `onionskin`). If neither exists, say so and point to the README install steps. Macro files (`.docm`, `.xlsm`, `.pptm`) are refused.
+The user reviews a Word, Excel or PowerPoint file in a browser, types edits, comments on things, presses Send. You answer; the page reloads where they were. Call the CLI as `onionskin` when `command -v onionskin` finds it, otherwise by its full location `~/.local/bin/onionskin` (use that path wherever a command below says `onionskin`). If neither exists (this skill came from a plugin, which does not install the command), install it first, as one shell command: `RELEASE=https://github.com/abe238/onionskin/releases/latest/download; curl -fsSL "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh`. The installer also downloads five small Python libraries from PyPI for its deeper file checks. If it stops saying Node.js 22 or newer is required, tell the user to install it from https://nodejs.org/en/download and stop. Otherwise run `~/.local/bin/onionskin doctor`, then continue with what they asked. Macro files (`.docm`, `.xlsm`, `.pptm`) are refused.
 
 ## Fast path
 

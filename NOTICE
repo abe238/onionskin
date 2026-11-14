@@ -39,6 +39,9 @@ vendor/engine/THIRD_PARTY_LICENSES.txt and in node_modules/react/LICENSE.
 Quick fixes use the on-device model that is part of macOS, under Apple's terms, through the small helper scripts/rewriter/apple/onionskin-fm, which
 Onionskin builds from its own source (scripts/rewriter/apple/main.swift, MIT, like the rest of Onionskin) and ships in the zip. No model is shipped or downloaded.
 
+6. The look of the web app: look inspired by Solid Glass by DeepLethe (MIT). Some pane, edge and shadow values in web/src/tokens.css are closely
+adapted from it; no file of it is shipped.
+
 Playwright (Apache-2.0) and Vite (MIT) are development dependencies used by the tests and the build; they are not shipped.
 
 3. Test fixtures

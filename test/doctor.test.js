@@ -74,6 +74,58 @@ test("doctor: a stale skill is MISSING with `onionskin setup --force`; a launche
   assert.equal(r2.ok, true, "a launcher dir missing from PATH does not fail the command");
 });
 
+test("doctor: prints the cli.js it runs from, and a NOTE for each other onionskin (npm global, ~/.local/bin) that runs a different copy", async () => {
+  const home = tmpHome();
+  // PATH holds only temp folders and the system ones: node's own folder could hold a global onionskin of the machine running the test
+  const nodeOnly = path.join(home, "nodebin");
+  fs.mkdirSync(nodeOnly);
+  fs.symlinkSync(process.execPath, path.join(nodeOnly, "node"));
+  const env = { ...(await install(home)), PATH: `${path.join(home, ".local", "bin")}:${nodeOnly}:/usr/bin:/bin` }; // ~/.local/bin/onionskin runs this repo's cli.js
+  const r = await runDoctor({ home, env, probes });
+  assert.equal(line(r, "running from").detail, fs.realpathSync(path.join(repo, "src", "cli.js")));
+  assert.equal(line(r, "another onionskin"), undefined, "the launcher runs this same copy");
+  // a second copy the way npm installs one: a symlink in its bin folder to another package's src/cli.js, first on PATH
+  const other = path.join(home, "npm", "lib", "node_modules", "onionskin-cli");
+  fs.mkdirSync(path.join(other, "src"), { recursive: true });
+  fs.writeFileSync(path.join(other, "src", "cli.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  fs.mkdirSync(path.join(home, "npm", "bin"));
+  fs.symlinkSync(path.join(other, "src", "cli.js"), path.join(home, "npm", "bin", "onionskin"));
+  // and a symlink to this same copy, which is not a second copy
+  fs.mkdirSync(path.join(home, "same"));
+  fs.symlinkSync(path.join(repo, "src", "cli.js"), path.join(home, "same", "onionskin"));
+  const env2 = { ...env, PATH: `${path.join(home, "npm", "bin")}:${path.join(home, "same")}:${env.PATH}` };
+  const r2 = await runDoctor({ home, env: env2, probes });
+  const notes = r2.checks.filter((c) => c.name === "another onionskin");
+  assert.equal(notes.length, 1, JSON.stringify(notes));
+  assert.equal(notes[0].status, "NOTE");
+  assert.equal(notes[0].required, false);
+  assert.match(notes[0].detail, /^~\/npm\/bin\/onionskin runs ~\/npm\/lib\/node_modules\/onionskin-cli\/src\/cli\.js/);
+  assert.match(notes[0].fix, /npm uninstall -g onionskin-cli/);
+});
+
+test("doctor: with the Claude Code plugin installed, a missing ~/.claude/skills folder is OK and a leftover copy is a NOTE", async () => {
+  const home = tmpHome();
+  const env = await install(home);
+  fs.mkdirSync(path.join(home, ".claude", "plugins"), { recursive: true });
+  // the plugin's installed folder, as Claude Code caches it: the skill folder itself (source ./skills/onionskin)
+  const cached = path.join(home, ".claude", "plugins", "cache", "onionskin", "onionskin", "abc123");
+  fs.cpSync(path.join(repo, "skills", "onionskin"), cached, { recursive: true });
+  fs.writeFileSync(path.join(home, ".claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "onionskin@onionskin": [{ scope: "user", installPath: cached }] } }));
+  const r = await runDoctor({ home, env, probes });
+  assert.equal(line(r, "skill for Claude Code").status, "NOTE");
+  assert.equal(line(r, "skill for Claude Code").fix, "onionskin setup --force");
+  await runSetup([], { home, ask: async () => assert.fail("must not ask"), python: () => null });
+  const r2 = await runDoctor({ home, env, probes });
+  assert.equal(line(r2, "skill for Claude Code").status, "OK");
+  assert.match(line(r2, "skill for Claude Code").detail, /provided by the Claude Code plugin onionskin@onionskin, the same as this app's copy/);
+  assert.equal(line(r2, "skill for Codex / agents").status, "OK");
+  // a plugin copy from a newer or older repository state is only a NOTE, with the update commands
+  fs.appendFileSync(path.join(cached, "SKILL.md"), "\nnewer line\n");
+  const r3 = await runDoctor({ home, env, probes });
+  assert.equal(line(r3, "skill for Claude Code").status, "NOTE");
+  assert.match(line(r3, "skill for Claude Code").fix, /^claude plugin marketplace update onionskin, then claude plugin update onionskin@onionskin/);
+});
+
 test("doctor: output never carries the home path, tokens or hashes, and ends with the copy line", async () => {
   const home = tmpHome();
   const env = await install(home);

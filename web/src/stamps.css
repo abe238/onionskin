@@ -3,6 +3,7 @@
 .stamps-row { display: flex; flex-wrap: wrap; gap: 4px; }
 .stamp { height: 26px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--hover); color: var(--ink); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
 .stamp:hover:not(:disabled) { background: var(--well-edge); }
+.stamp:active:not(:disabled) { background: color-mix(in srgb, var(--ink) 20%, transparent); }
 .stamp:disabled { opacity: 1; color: var(--ink-3); background: transparent; box-shadow: inset 0 0 0 1px var(--well-edge); } /* dimmed by color and an outline with no fill, not opacity, so the contrast is the measured one (as .btn.primary:disabled); no fill, since over a lighter backdrop in dark the well tint left 4.47:1 */
 .stamp-quiet { background: none; color: var(--ink-2); font-weight: 500; }
 .stamp-go { color: var(--accent-ink); }

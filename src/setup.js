@@ -14,6 +14,30 @@ const MIN_NODE = 22;
 /** Where agents read skills: Claude Code and the shared agents folder (Codex and others). Relative to the home directory. */
 export const skillTargets = (home) => [path.join(home, ".claude", "skills", PRODUCT.bin), path.join(home, ".agents", "skills", PRODUCT.bin)];
 
+/**
+ * `{ id, dir }` (the plugin id `onionskin@<marketplace>` and its installed folder) when the Claude Code plugin route already gives
+ * Claude Code this skill for every project: an install record with scope "user" in ~/.claude/plugins/installed_plugins.json that
+ * ~/.claude/settings.json does not turn off. Then a ~/.claude/skills/onionskin folder would make the same skill show twice. Anything
+ * unreadable or unexpected returns null, so setup installs the folder as before. Reads only the default ~/.claude, like skillTargets
+ * (a CLAUDE_CONFIG_DIR elsewhere is not looked at). The Codex plugin is not handled: ~/.agents/skills is shared by other agents too,
+ * so that folder is always installed.
+ */
+export function claudePluginProvides(home) {
+  try {
+    const rec = JSON.parse(fs.readFileSync(path.join(home, ".claude", "plugins", "installed_plugins.json"), "utf8"));
+    let enabled = {};
+    try {
+      enabled = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8")).enabledPlugins || {};
+    } catch {}
+    for (const [id, installs] of Object.entries(rec?.plugins || {})) {
+      if (id.split("@")[0] !== PRODUCT.bin || enabled[id] === false || !Array.isArray(installs)) continue;
+      const user = installs.find((i) => i?.scope === "user");
+      if (user) return { id, dir: typeof user.installPath === "string" ? user.installPath : null };
+    }
+  } catch {}
+  return null;
+}
+
 export function parseSetupArgs(rest) {
   const a = { dryRun: false, force: false, uninstall: false };
   for (const x of rest) {
@@ -101,11 +125,26 @@ export async function runSetup(rest, { home = os.homedir(), source = SKILL_SOURC
     return { exit: 1, lines };
   }
 
+  const plugin = a.uninstall ? null : claudePluginProvides(home)?.id;
   for (const target of skillTargets(home)) {
     let st = null;
     try {
       st = fs.lstatSync(target);
     } catch {}
+    if (plugin && target === skillTargets(home)[0]) {
+      // the Claude Code plugin already gives Claude Code this skill: a second copy here would show twice. An identical copy is removed;
+      // a different one only with --force or a yes, like any replacement below.
+      const twice = `the Claude Code plugin ${plugin} provides this skill, so this copy would show twice`;
+      if (!st) say(`${target}: skipped (the Claude Code plugin ${plugin} provides this skill)`);
+      else if (st.isSymbolicLink() || !st.isDirectory() || !isOurs(target)) say(`${target}: left alone (not a ${PRODUCT.bin} skill folder this tool installed; ${twice})`);
+      else if (!same(source, target) && !a.force && (a.dryRun || !(await ask(`${target} differs from this version and ${twice}. Remove it?`)))) {
+        say(`${dry}${target}: kept (it differs from this version; ${twice}). Remove it with: ${PRODUCT.bin} setup --force`);
+      } else {
+        if (!a.dryRun) fs.rmSync(target, { recursive: true });
+        say(`${dry}${target}: removed (${twice})`);
+      }
+      continue;
+    }
     if (a.uninstall) {
       if (!st) say(`${target}: not installed`);
       else if (st.isSymbolicLink() || !st.isDirectory() || !isOurs(target)) {

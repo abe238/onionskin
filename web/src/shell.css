@@ -1,5 +1,5 @@
-/* Onionskin app shell: layout, the Liquid Glass material, bars, sidebar, banners, overlays. Values come from tokens.css only.
- * Rule of the product: glass is the control layer; the document, the grid, the slides and the sidebar cards are content and stay solid. */
+/* Onionskin app shell: layout, the pane material, bars, sidebar, banners, overlays. Values come from tokens.css only.
+ * Rule of the product: the panes are the control layer; the document, the grid, the slides and the sidebar cards are content. */
 *,
 *::before,
 *::after { box-sizing: border-box; }
@@ -83,40 +83,11 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 :root[data-calm] .backdrop i { animation-play-state: paused; }
 
 /* ---- the material ----------------------------------------------------------------------------------------------
- * [data-spec] / .glass: tinted fill, frosted blur + saturate (Chrome swaps in the edge-lens filter through --lens), inner light near the top
- * edge, a masked 1.5 px specular rim whose bright point follows the pointer, V1's shadow stack. The fill comes from --g-fill, set per component. */
-.glass {
-  isolation: isolate;
-  background:
-    linear-gradient(180deg, var(--g-light-top), transparent 38%),
-    radial-gradient(120% 80% at 50% 120%, var(--g-light-bot), transparent 60%),
-    var(--g-fill);
-  -webkit-backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat)) brightness(var(--g-bri));
-  backdrop-filter: var(--lens, blur(var(--g-blur)) saturate(var(--g-sat)) brightness(var(--g-bri)));
-  box-shadow: var(--shadow-glass);
-}
-.glass::before {
-  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none; z-index: 2;
-  background:
-    radial-gradient(90% 140% at var(--lx, 18%) var(--ly, -10%), rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.18) 42%, transparent 70%),
-    radial-gradient(70% 120% at calc(100% - var(--lx, 18%)) calc(100% - var(--ly, -10%)), rgba(255, 255, 255, 0.3), transparent 55%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-}
-:root[data-theme="dark"] .glass::before {
-  background:
-    radial-gradient(90% 140% at var(--lx, 18%) var(--ly, -10%), rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.1) 42%, transparent 70%),
-    radial-gradient(70% 120% at calc(100% - var(--lx, 18%)) calc(100% - var(--ly, -10%)), rgba(255, 255, 255, 0.16), transparent 55%);
-}
-/* menus and dialogs: thick glass, a deeper blur, no lens (they carry the most text) */
-.glass-pop {
-  --g-fill: var(--g-pop); --g-blur: 24px;
-  background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-fill);
-  -webkit-backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
-  backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
-  box-shadow: var(--shadow-pop);
-  isolation: isolate;
-}
+ * .glass: a near-opaque neutral pane with no blur; the finish is at the edge only (--shadow-glass: a line of light along the top, a fine
+ * inner line, a hairline, a contact shadow and a soft long shadow). The fill comes from --g-fill, set per component. */
+.glass { isolation: isolate; background: var(--g-fill); box-shadow: var(--shadow-glass); }
+/* menus, popovers and floating boxes: the thickest pane and a deeper shadow (they carry the most text and float over the document) */
+.glass-pop { --g-fill: var(--g-pop); background: var(--g-fill); box-shadow: var(--shadow-pop); isolation: isolate; }
 
 /* ---- layout ---- */
 .shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; height: 100%; padding: 14px; }
@@ -193,9 +164,11 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .btn.quiet { background: transparent; box-shadow: none; color: var(--ink-2); }
 .topbar .btn.quiet { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
 .btn.quiet:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.btn.quiet:active:not(:disabled) { background: var(--press); }
 .btn.sm { padding: 0 12px; font-size: var(--text-xs); }
-.btn.primary { color: var(--pill-ink-on); background: var(--pill-ink); box-shadow: none; }
-.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--pill-ink) 86%, var(--accent)); }
+.btn.primary { color: var(--pill-ink-on); background: var(--pill-ink); box-shadow: inset 0 1px 0 var(--pill-rim), inset 0 -1px 0 var(--pill-foot), 0 1px 2px var(--contact), 0 8px 18px -9px var(--shade); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--pill-ink) 88%, var(--ink)); }
+.btn.primary:active:not(:disabled) { box-shadow: inset 0 1px 0 var(--pill-rim), inset 0 -1px 0 var(--pill-foot); } /* pressed, it sits down on the pane: the shadow under it goes */
 .btn.primary:disabled { opacity: 1; color: var(--ink-3); background: var(--well); box-shadow: inset 0 0 0 1px var(--well-edge); }
 
 /* ---- toolbar ---- */
@@ -203,8 +176,9 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .modes { display: flex; gap: 2px; flex: none; padding: 3px; border-radius: var(--r-pill); background: var(--well); box-shadow: inset 0 0 0 1px var(--well-edge); }
 .mode { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--hit); min-width: var(--hit); padding: 0 14px 0 11px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink-2); font-weight: 600; font-size: var(--text-sm); transition: background var(--dur-fast), color var(--dur-fast); }
 .mode:hover { color: var(--ink); background: var(--hover); }
-.mode.on { color: var(--ink); background: var(--raise); box-shadow: inset 0 1px 0 var(--g-hi), 0 0 0 1px var(--well-edge), 0 2px 6px -1px var(--sh2); }
-.mode.on .i { color: var(--accent-ink); }
+.mode:active { background: var(--press); }
+.mode.on { color: var(--ink); background: var(--raise); box-shadow: inset 0 1px 0 var(--rim), 0 0 0 1px var(--well-edge), 0 2px 6px -1px var(--sh2); }
+.mode.on .i { color: var(--ink); }
 .tb-sep { width: 1px; height: 22px; background: var(--rule); flex: none; margin: 0 2px; }
 .editbar { flex: 1; min-width: 0; }
 .locked-note { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 0 10px; color: var(--ink-2); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -217,7 +191,7 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 
 /* ---- banners: an overlay docked at the bottom of the document area, no layout space. They float over the real document, so the glass bends real content. ---- */
 .banners { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: var(--z-banner); display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(760px, calc(100% - 270px)); pointer-events: none; }
-.banner { --g-fill: var(--g-pop); --g-blur: 16px; position: relative; display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 10px 12px 10px 16px; border-radius: var(--r-pop); pointer-events: auto; color: var(--ink); animation: rise var(--dur-slow) var(--ease-out) both; }
+.banner { --g-fill: var(--g-pop); position: relative; display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 10px 12px 10px 16px; border-radius: var(--r-pop); pointer-events: auto; color: var(--ink); animation: rise var(--dur-slow) var(--ease-out) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 .banner > .i { flex: none; }
 .banner-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -242,9 +216,9 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .banner.toast { padding: 8px 16px; }
 .working-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
 
-.scrim { position: fixed; inset: 0; z-index: var(--z-dialog); display: flex; align-items: center; justify-content: center; padding: var(--s-4); background: var(--scrim); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); animation: fade var(--dur) var(--ease-out) both; }
+.scrim { position: fixed; inset: 0; z-index: var(--z-dialog); display: flex; align-items: center; justify-content: center; padding: var(--s-4); background: var(--scrim); animation: fade var(--dur) var(--ease-out) both; }
 @keyframes fade { from { opacity: 0; } }
-.dialog { --g-fill: var(--g-pop); --g-blur: 28px; position: relative; width: min(460px, 100%); padding: 28px; border-radius: var(--r-xl); outline: none; }
+.dialog { --g-fill: var(--g-pop); position: relative; width: min(460px, 100%); padding: 28px; border-radius: var(--r-xl); outline: none; }
 .dialog h2 { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.02em; margin: var(--s-3) 0 var(--s-2); }
 .dialog p { color: var(--ink-2); }
 .dialog .hint { margin-top: var(--s-3); font-size: var(--text-xs); color: var(--ink-3); }
@@ -295,14 +269,14 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .dragbox { position: absolute; border: 2px dashed var(--comment-line); background: var(--comment-hl-whole); pointer-events: none; }
 .thumbbadge { position: absolute; display: grid; place-items: center; min-width: var(--hit); height: var(--hit); padding: 0; border: 0; background: none; pointer-events: auto; transform: translate(-100%, -2px); }
 .thumbbadge .tbpill { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px 0 6px; border-radius: 10px; background: var(--comment-num); color: var(--comment-num-on); font-size: var(--text-2xs); font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--paper), 0 2px 6px rgba(11, 21, 44, 0.35); }
-/* the comment callout: small glass over the page. Documents are always light, so this glass and its ink stay light in both themes. */
-.chip { --g-fill: rgba(251, 252, 254, 0.78); --g-blur: 14px; --g-sat: 1.6; --g-bri: 1; --g-hi: rgba(255, 255, 255, 0.9); --g-edge: rgba(255, 255, 255, 0.5); --g-light-top: rgba(255, 255, 255, 0.3); --g-light-bot: transparent; --sh1: rgba(15, 22, 36, 0.1); --sh2: rgba(11, 21, 44, 0.3);
+/* the comment callout: a small pane over the page. Documents are always light, so this pane and its ink stay light in both themes. */
+.chip { --g-fill: rgba(251, 252, 254, 0.98); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 1px rgba(59, 66, 83, 0.2), 0 1px 2px rgba(31, 38, 52, 0.08), 0 10px 24px -10px rgba(31, 45, 76, 0.32);
   position: absolute; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 12px; border: 0; border-radius: var(--r-pill); pointer-events: auto; font-weight: 600; font-size: var(--text-sm); color: rgb(15, 20, 29); animation: rise var(--dur) var(--ease-out) both; white-space: nowrap; }
 .chip .i { color: rgb(2, 68, 190); }
 .chip kbd { margin-left: 4px; font: 500 var(--text-2xs) var(--font); color: rgb(66, 72, 83); }
 
-/* ---- sidebar: a glass frame around solid cards, with the Send area pinned at the bottom ---- */
-.sidebar { --g-fill: var(--g-clear); --g-blur: 3px; position: relative; display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; padding: var(--pad-frame); border-radius: var(--r-frame); z-index: var(--z-sidebar); }
+/* ---- sidebar: a pane frame around solid cards, with the Send area pinned at the bottom ---- */
+.sidebar { --g-fill: var(--g-clear); box-shadow: var(--shadow-frame); position: relative; display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; padding: var(--pad-frame); border-radius: var(--r-frame); z-index: var(--z-sidebar); }
 .sidebar.shut:not(.drawer) { display: none; }
 .resizer { position: absolute; left: -14px; top: 12%; bottom: 12%; width: 32px; cursor: col-resize; touch-action: none; border-radius: 7px; z-index: 3; }
 .resizer::after { content: ""; position: absolute; left: 12px; top: 50%; height: 44px; width: 4px; margin-top: -22px; border-radius: 2px; background: var(--ink-3); opacity: 0; transition: opacity var(--dur) var(--ease-out); }
@@ -335,7 +309,7 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .run-peek { min-width: 0; }
 .stack > li { animation: rise var(--dur) var(--ease-out) both; }
 .list:empty { display: none; }
-.card, .change, .run { background: var(--card); box-shadow: 0 0 0 1px var(--card-edge), 0 1px 2px var(--sh1); }
+.card, .change, .run { background: var(--card); box-shadow: var(--shadow-card); }
 .change { display: grid; gap: 3px; padding: 10px 14px; border-radius: var(--r-card); }
 .change-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .loc { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); font-weight: 500; color: var(--ink-3); }
@@ -345,14 +319,14 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .diff .i { color: var(--ink-3); flex: none; }
 .diff ins { text-decoration: none; font-weight: 600; color: var(--ok); background: var(--ok-soft); padding: 0 6px; border-radius: 6px; }
 .card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--r-card); }
-.card.moved { background: color-mix(in srgb, var(--warn) 9%, var(--card)); box-shadow: 0 0 0 1px var(--warn-edge); }
+.card.moved { background: color-mix(in srgb, var(--warn) 9%, var(--card)); box-shadow: inset 0 1px 0 var(--rim), 0 0 0 1px var(--warn-edge); }
 .card-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.num { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--comment-num); color: var(--comment-num-on); font-size: var(--text-2xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+.num { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: var(--card); /* in the panel the numbers are neutral; the marks on the page stay blue */ font-size: var(--text-2xs); font-weight: 700; font-variant-numeric: tabular-nums; }
 .num.pin2 { border-radius: 50% 50% 50% 3px; }
 .num.done, .card.st-done .num { background: var(--ok); color: rgb(5, 22, 13); }
 :root:not([data-theme="dark"]) .num.done, :root:not([data-theme="dark"]) .card.st-done .num { color: rgb(252, 252, 252); }
-.locate { display: block; line-height: var(--hit); flex: 1; min-width: 0; min-height: var(--hit); padding: 0 8px; margin: 0 -6px; border: 0; border-radius: var(--r-sm); background: none; color: var(--accent-ink); font-weight: 600; font-size: var(--text-xs); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.locate:hover { background: var(--accent-soft); }
+.locate { display: block; line-height: var(--hit); flex: 1; min-width: 0; min-height: var(--hit); padding: 0 8px; margin: 0 -6px; border: 0; border-radius: var(--r-sm); background: none; color: var(--ink); font-weight: 600; font-size: var(--text-xs); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+.locate:hover { background: var(--hover); text-decoration-color: currentColor; }
 .card.moved .locate { color: var(--warn); }
 .card .badge { letter-spacing: 0; font-size: var(--text-xs); font-weight: 600; }
 .card .badge.st-done { color: var(--ok); background: var(--ok-soft); }
@@ -362,7 +336,7 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .card blockquote { margin: 0; padding: 6px 10px; border-radius: var(--r-sm); background: var(--hover); color: var(--ink-2); font-size: var(--text-xs); }
 .card blockquote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .scope-note { margin: -2px 0 8px; font-size: var(--text-xs); line-height: 1.35; color: var(--ink-2); }
-.card textarea, .composer textarea { width: 100%; padding: 8px 12px; border: 0; border-radius: var(--r-sm); background: var(--input); box-shadow: inset 0 0 0 1px var(--well-edge); resize: none; min-height: 44px; color: var(--ink); line-height: 1.4; }
+.card textarea, .composer textarea { width: 100%; padding: 8px 12px; border: 0; border-radius: var(--r-sm); background: var(--input); box-shadow: var(--shadow-field); resize: none; min-height: 44px; color: var(--ink); line-height: 1.4; }
 .card textarea { field-sizing: content; max-height: 40vh; }
 .card textarea:disabled { min-height: 0; background: transparent; box-shadow: none; padding-left: 0; resize: none; opacity: 1; -webkit-text-fill-color: var(--ink); }
 textarea::placeholder { color: var(--ink-3); opacity: 1; }
@@ -380,7 +354,7 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .results { display: flex; flex-direction: column; gap: 4px; }
 .result { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: var(--text-xs); color: var(--ink-2); }
 .chipn { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px 0 3px; border-radius: var(--r-pill); font-weight: 600; background: var(--hover); color: var(--ink-2); }
-.chipn b { display: grid; place-items: center; min-width: 16px; height: 16px; border-radius: 8px; background: var(--comment-num); color: var(--comment-num-on); font-size: 10px; }
+.chipn b { display: grid; place-items: center; min-width: 16px; height: 16px; border-radius: 8px; background: var(--ink); color: var(--card); font-size: 10px; }
 .chipn:not(:has(b)) { padding-left: 9px; }
 .chipn.st-done { color: var(--ok); background: var(--ok-soft); }
 .chipn.st-done b { background: var(--ok); color: rgb(252, 252, 252); }
@@ -410,22 +384,22 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .shimmer i + i { width: 62%; }
 @keyframes shim { to { background-position: -300% 0; } }
 
-/* the frame is clear glass (V1's cluster: little blur, the lens shows in its rim); text sits on regular glass panes inside it (V1's .reg), concentric with the frame. The Send area is the lower pane. */
-.pane { display: flex; flex-direction: column; min-height: 0; border-radius: var(--r-card); background: var(--g-reg); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: inset 0 0 0 1px var(--g-edge), inset 0 1px 0 var(--g-hi), 0 0 0 1px var(--g-line); }
+/* the frame is the quieter pane; text sits on regular panes inside it, concentric with the frame. The Send area is the lower pane. */
+.pane { display: flex; flex-direction: column; min-height: 0; border-radius: var(--r-card); background: var(--g-reg); box-shadow: var(--shadow-glass); }
 .pane.main { flex: 1; }
 .sidebar.drawer .pane { background: var(--g-sheet); }
 .composer { flex: none; gap: 8px; padding: 12px; }
 .composer label { font-size: var(--text-sm); font-weight: 650; letter-spacing: var(--track-head); }
 .composer textarea { min-height: 62px; }
 .send { width: 100%; min-height: calc(var(--hit) + 12px); border-radius: var(--r-pill); font-size: var(--text-md); font-weight: 650; }
-.send-counts { margin-left: auto; padding: 2px 10px; border-radius: var(--r-pill); font-size: var(--text-xs); font-weight: 600; background: color-mix(in srgb, var(--pill-ink-on) 20%, transparent); }
+.send-counts { margin-left: auto; padding: 2px 10px; border-radius: var(--r-pill); font-size: var(--text-xs); font-weight: 600; background: var(--pill-count); }
 .send:disabled .send-counts { background: var(--hover); }
 .send[data-busy="1"] .i { animation: pulse 1s var(--ease-in-out) infinite; }
 .send-hint { font-size: var(--text-xs); color: var(--ink-3); }
 
 /* ---- narrow: the sidebar becomes a drawer over the document ---- */
 .drawer-scrim { position: fixed; inset: 0; z-index: var(--z-scrim); background: var(--scrim); animation: fade var(--dur) var(--ease-out) both; }
-.sidebar.drawer { --g-fill: var(--g-clear); --g-blur: 3px; position: fixed; top: 10px; right: 10px; bottom: 10px; width: min(var(--side-w), calc(100vw - 20px)); z-index: var(--z-drawer); transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow); }
+.sidebar.drawer { --g-fill: var(--g-clear); position: fixed; top: 10px; right: 10px; bottom: 10px; width: min(var(--side-w), calc(100vw - 20px)); z-index: var(--z-drawer); transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow); }
 .sidebar.drawer.shut { transform: translateX(calc(100% + 24px)); visibility: hidden; }
 .sidebar.drawer.open { transition-delay: 0s; }
 .sheet-grab { display: none; }
@@ -460,13 +434,13 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
   .mode-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* the dock: Edit / Comment / Pin, and Send with counts */
-  .dock { --g-fill: var(--g-bar); --g-blur: 12px; display: flex; align-items: center; justify-content: space-between; gap: 6px; position: fixed; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: var(--z-dock); padding: 6px; border-radius: 30px; }
+  .dock { --g-fill: var(--g-bar); display: flex; align-items: center; justify-content: space-between; gap: 6px; position: fixed; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: var(--z-dock); padding: 6px; border-radius: 30px; }
   .dock .modes { flex: 0 1 auto; padding: 0; background: none; box-shadow: none; gap: 2px; }
   .dock .mode { flex-direction: column; gap: 1px; width: 58px; min-height: 44px; padding: 3px 0 2px; border-radius: 22px; font-size: 11px; font-weight: 600; letter-spacing: 0; }
   .dock .mode .mode-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; line-height: 1.1; }
-  .dock .send-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 16px; border: 0; border-radius: 22px; background: var(--pill-ink); color: var(--pill-ink-on); font-weight: 650; font-size: var(--text-md); white-space: nowrap; transition: transform var(--dur-fast) var(--ease-out); }
-  .dock .send-pill:active { transform: scale(0.97); }
-  .dock .send-pill .cnt { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; background: color-mix(in srgb, var(--pill-ink-on) 20%, transparent); font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .dock .send-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 16px; border: 0; border-radius: 22px; background: var(--pill-ink); color: var(--pill-ink-on); font-weight: 650; font-size: var(--text-md); white-space: nowrap; box-shadow: inset 0 1px 0 var(--pill-rim), inset 0 -1px 0 var(--pill-foot), 0 1px 2px var(--contact); transition: transform var(--dur-fast) var(--ease-out); }
+  .dock .send-pill:active { transform: scale(0.97); box-shadow: inset 0 1px 0 var(--pill-rim), inset 0 -1px 0 var(--pill-foot); }
+  .dock .send-pill .cnt { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; background: var(--pill-count); font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
   .dock .send-pill[data-empty="1"] { background: var(--well); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
   .dock .send-pill[data-empty="1"] .cnt { display: none; }
   .dock .send-pill[data-empty="1"] { padding-right: 16px; }
@@ -518,27 +492,21 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
   .sidebar.drawer { transition: none; }
 }
 
-/* ---- reduced transparency and increased contrast: every glass surface is a solid fill, the field a plain tone ---- */
+/* ---- reduced transparency and increased contrast: every pane is a fully opaque fill, the field a plain tone ---- */
 @media (prefers-reduced-transparency: reduce) {
-  .glass, .glass-pop, .pane, .scrim { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   .glass, .glass-pop { background: var(--g-solid) !important; box-shadow: inset 0 0 0 1px var(--g-line), 0 1px 2px var(--sh1), 0 12px 28px -16px var(--sh2) !important; }
-  .glass::before { opacity: 0.35; }
   .pane { background: var(--g-solid); }
   .backdrop i { display: none; }
   .backdrop::after { display: none; }
   .backdrop { background: var(--bg-2); }
 }
 @media (prefers-contrast: more) {
-  .glass, .glass-pop { background: var(--g-solid) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: inset 0 0 0 1.5px var(--ink) !important; }
-  .glass::before { display: none; }
+  .glass, .glass-pop { background: var(--g-solid) !important; box-shadow: inset 0 0 0 1.5px var(--ink) !important; }
   .pane { background: var(--g-solid); box-shadow: inset 0 0 0 1px var(--ink); }
   .backdrop i { display: none; }
   .backdrop { background: var(--bg-2); }
   .backdrop::after { display: none; }
   :root { --ink-3: var(--ink-2); }
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass { --g-fill: var(--g-pop); }
 }
 
 .togglewrap { position: relative; display: inline-flex; }
@@ -549,16 +517,16 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .hist .sec-h .iconbtn { margin: -4px -4px -4px 0; } /* the full target size, without making the header taller */
 .h-hint { font-size: var(--text-xs); font-weight: 500; }
 .h-down { transform: rotate(90deg); }
-.h-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 4px; list-style: none; border-radius: var(--r-card); background: var(--card); box-shadow: 0 0 0 1px var(--card-edge), 0 1px 2px var(--sh1); min-width: 0; }
+.h-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 4px; list-style: none; border-radius: var(--r-card); background: var(--card); box-shadow: var(--shadow-card); min-width: 0; }
 .h-item { min-width: 0; border-radius: var(--r-sm); }
-.h-item[data-open="1"] { background: var(--hover); }
+.h-item[data-open="1"] { box-shadow: inset 0 0 0 1px var(--well-edge); } /* an outline, not a fill: on the lighter dark card a tint under the red and green words left them under 4.5:1 */
 .h-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: var(--hit); padding: 0 8px; border: 0; border-radius: var(--r-sm); background: none; color: var(--ink); font-size: var(--text-sm); text-align: left; white-space: nowrap; }
 .h-row:hover { background: var(--hover); }
-.h-item[data-open="1"] .h-row:hover { background: var(--press); }
+.h-item[data-open="1"] .h-row:hover { background: var(--hover); }
 .h-chev { flex: none; color: var(--ink-3); transition: transform var(--dur-fast) var(--ease-out); }
 .h-badge { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 50%; font-size: 10.5px; font-weight: 700; line-height: 1; background: var(--hover); color: var(--ink-2); }
-.h-badge.k-agent { background: var(--pill-ink); color: var(--pill-ink-on); }
-.h-badge.k-user { background: var(--comment-num); color: var(--comment-num-on); }
+.h-badge.k-agent { background: var(--ink); color: var(--card); }
+.h-badge.k-user { background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink-2); }
 .h-badge.k-outside { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-edge); }
 .h-badge.k-revert { background: var(--press); color: var(--ink); }
 .h-title { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; letter-spacing: var(--track-head); }
@@ -573,8 +541,8 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .h-place:first-child { border-top: 0; }
 .h-lab { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 22px; }
 .h-label { flex: 1 1 0; display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: var(--text-2xs); }
-.h-link { flex: none; min-height: 22px; padding: 0 6px; margin: 0 -6px 0 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--accent-ink); font-size: var(--text-xs); font-weight: 600; }
-.h-link:hover { background: var(--accent-soft); }
+.h-link { flex: none; min-height: 22px; padding: 0 6px; margin: 0 -6px 0 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--ink); font-size: var(--text-xs); font-weight: 600; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+.h-link:hover { background: var(--hover); text-decoration-color: currentColor; }
 .h-more { align-self: flex-start; margin: 2px 0 0 -6px; }
 .h-diff, .h-line { margin: 2px 0 0; min-width: 0; font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; word-break: normal; }
 .h-line { color: var(--ink-2); font-size: var(--text-xs); }
@@ -602,7 +570,7 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .chg.ask { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
 .qa { --g-fill: var(--g-pop); position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: var(--r-pop); pointer-events: auto; color: var(--ink); outline: none; animation: rise var(--dur) var(--ease-out) both; }
 .qa-quote { padding: 4px 8px; border-radius: var(--r-sm); background: var(--hover); color: var(--ink-2); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qa textarea { width: 100%; min-height: 52px; padding: 8px 12px; border: 0; border-radius: var(--r-sm); background: var(--input); box-shadow: inset 0 0 0 1px var(--well-edge); resize: none; color: var(--ink); line-height: 1.4; }
+.qa textarea { width: 100%; min-height: 52px; padding: 8px 12px; border: 0; border-radius: var(--r-sm); background: var(--input); box-shadow: var(--shadow-field); resize: none; color: var(--ink); line-height: 1.4; }
 .qa textarea:disabled { opacity: 0.55; }
 .qa-hint { display: flex; align-items: center; gap: 4px; font-size: var(--text-2xs); color: var(--ink-2); }
 .qa-hint[data-tone="warn"] { color: var(--warn); font-weight: 600; }

@@ -77,7 +77,7 @@ async function measure(page, theme, name, selector, { pseudo = "", min = 4.5, nt
   if (!(await loc.count()) || !(await loc.isVisible())) return void results.push({ theme, name: name + " (not shown)", ratio: 99 });
   const color = await loc.evaluate((el, ps) => getComputedStyle(el, ps || undefined).color, pseudo);
   const fg = parseColor(color);
-  await page.addStyleTag({ content: "*, *::before, *::after { transition: none !important; animation: none !important; } .topbar *, .toolbar *, .sidebar *, .banners *, .dialog *, .dock *, .qa * { color: transparent !important; -webkit-text-fill-color: transparent !important; text-shadow: none !important; } ::placeholder { color: transparent !important; -webkit-text-fill-color: transparent !important; } .banner code, .sidebar textarea { -webkit-text-fill-color: transparent !important; } .pill::before, .dot, .working-mark, .spinner, .chipn b, .dock .cnt { visibility: hidden !important; }" }).then(async (h) => {
+  await page.addStyleTag({ content: "*, *::before, *::after { transition: none !important; animation: none !important; } .topbar *, .toolbar *, .sidebar *, .banners *, .dialog *, .dock *, .qa *, .de-dd-pop *, .menu * { color: transparent !important; -webkit-text-fill-color: transparent !important; text-shadow: none !important; } ::placeholder { color: transparent !important; -webkit-text-fill-color: transparent !important; } .banner code, .sidebar textarea { -webkit-text-fill-color: transparent !important; } .pill::before, .dot, .working-mark, .spinner, .chipn b { visibility: hidden !important; }" }).then(async (h) => {
     await loc.scrollIntoViewIfNeeded();
     await page.waitForTimeout(80);
     const b = await boxOf(loc);
@@ -147,6 +147,7 @@ for (const theme of ["light", "dark"]) {
       await M("sidebar: change kind", ".change .kind");
       await M("sidebar: diff after", ".change .diff ins");
       await M("sidebar: card locate link", ".card .locate");
+      await M("sidebar: card comment number", ".card .num");
       await M("sidebar: card status badge", ".card .badge");
       await M("sidebar: card quote", ".card blockquote");
       await M("sidebar: card text", ".card textarea");
@@ -155,6 +156,19 @@ for (const theme of ["light", "dark"]) {
       await M("sidebar: send hint", ".send-hint");
       await M("sidebar: send button", '[data-testid="send"]');
       await M("sidebar: send count chip", ".send-counts");
+      // a menu (the paragraph style list) and a dialog (Close with unsent edits), on their own panes
+      await page.locator(".de-ebar .de-dd").first().click();
+      await page.locator(".de-dd-pop .de-dd-opt").first().waitFor({ timeout: 5000 });
+      await M("menu: style option", ".de-dd-pop .de-dd-opt");
+      await page.keyboard.press("Escape");
+      await page.locator('[data-testid="close"]').first().click();
+      await page.locator('[data-testid="close-dialog"]').waitFor({ timeout: 5000 });
+      await page.waitForTimeout(300);
+      await M("dialog: title", "#close-title");
+      await M("dialog: body", "#close-body");
+      await M("dialog: primary button", '[data-testid="close-download"]');
+      await M("dialog: button", '[data-testid="close-cancel"]');
+      await page.locator('[data-testid="close-cancel"]').click();
 
       // stranded
       await page.locator('[data-testid="overall-note"]').fill("Keep the tone formal.");
@@ -293,7 +307,11 @@ describe("contrast, phone (390 x 844): dock, bottom sheet, toast, dialog", () =>
       await page.waitForTimeout(900);
       await M("sheet (full): section heading", ".sec-h h3");
       await M("sheet (full): overall label", ".composer label");
+      // a note makes something to send: the count chip inside the blue Send pill of the dock
+      await page.locator('[data-testid="overall-note"]').fill("Keep the tone formal.");
       await page.keyboard.press("Escape");
+      await page.waitForTimeout(900);
+      await M("dock: Send pill count", ".dock .send-pill .cnt");
       poll.child.kill();
       await page.close();
     });

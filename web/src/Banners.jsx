@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Icon } from "./Icons.jsx";
 import { useFocusTrap } from "./hooks.js";
-import { glass } from "./lens.js";
 import { stageOf } from "./stage.js";
 
 export function CopyButton({ text }) {
@@ -50,12 +49,11 @@ function CopyActions({ copy, copyError, canReveal, onShowCopy, onKeepMine }) {
 function ConflictDialog({ conflict, onReloadDisk, onKeepMine, onShowCopy, onClose }) {
   const ref = useRef(null);
   useFocusTrap(ref, true, onClose);
-  useEffect(() => glass(ref.current), []);
   const { copy, copyError, canReveal, side } = conflict;
   const who = side === "agent" ? "the agent's edits" : "your edits";
   return (
     <div className="scrim" data-testid="conflict-scrim">
-      <div ref={ref} className="dialog glass" data-lens="22 40" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-body" tabIndex={-1} data-testid="banner-conflict">
+      <div ref={ref} className="dialog glass" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-body" tabIndex={-1} data-testid="banner-conflict">
         <div className="dialog-icon err" aria-hidden="true">
           <Icon name="alert" size={20} />
         </div>
@@ -89,10 +87,9 @@ function ConflictDialog({ conflict, onReloadDisk, onKeepMine, onShowCopy, onClos
 function CloseDialog({ edits, onKeepMine, onCloseAnyway, onCancel }) {
   const ref = useRef(null);
   useFocusTrap(ref, true, onCancel);
-  useEffect(() => glass(ref.current), []);
   return (
     <div className="scrim" data-testid="close-scrim">
-      <div ref={ref} className="dialog glass" data-lens="22 40" role="alertdialog" aria-modal="true" aria-labelledby="close-title" aria-describedby="close-body" tabIndex={-1} data-testid="close-dialog">
+      <div ref={ref} className="dialog glass" role="alertdialog" aria-modal="true" aria-labelledby="close-title" aria-describedby="close-body" tabIndex={-1} data-testid="close-dialog">
         <div className="dialog-icon err" aria-hidden="true">
           <Icon name="alert" size={20} />
         </div>
@@ -164,7 +161,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
     <>
       <div className="banners">
         {readOnly && (
-          <div className="banner warn glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-readonly">
+          <div className="banner warn glass" role="status" data-testid="banner-readonly">
             <Icon name="lock" size={18} />
             <span className="banner-text">
               <strong>Read-only: this file is open for editing in another tab</strong>
@@ -176,7 +173,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {failed && (
-          <div className="banner warn glass agent-banner" data-lens="14 26" ref={glass} role="alert" data-testid={`banner-agent-${agent.failure.code}`}>
+          <div className="banner warn glass agent-banner" role="alert" data-testid={`banner-agent-${agent.failure.code}`}>
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong data-testid="agent-failure-text">{failed.text}</strong>
@@ -196,25 +193,25 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {starting && (
-          <div className="banner info glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-agent-starting">
+          <div className="banner info glass" role="status" data-testid="banner-agent-starting">
             <span className="working-mark" aria-hidden="true" />
             <span>{agent.busy ? "Getting the agent ready... Another document's agent is busy." : s === "stranded" ? "Starting the agent for your batch..." : "Getting the agent ready..."}</span>
           </div>
         )}
         {handover && (
-          <div className="banner info glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-agent-handover">
+          <div className="banner info glass" role="status" data-testid="banner-agent-handover">
             <Icon name="panel" size={16} />
             <span>The agent is open in Terminal. It keeps working from there.</span>
           </div>
         )}
         {s === "listening" && !failed && !starting && !handover && (
-          <div className="banner ok glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-listening">
+          <div className="banner ok glass" role="status" data-testid="banner-listening">
             <span className="dot" aria-hidden="true" />
             <span>An agent is listening. Hit Send to Agent when you are ready.</span>
           </div>
         )}
         {(s === "working" || s === "queued") && (
-          <div className="banner info glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-working">
+          <div className="banner info glass" role="status" data-testid="banner-working">
             <span className="working-mark" aria-hidden="true" />
             <span className="banner-text">
               <strong data-testid="banner-stage">{stageOf(session).text || "Agent is working"}</strong>
@@ -226,7 +223,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {stranded && (
-          <div className="banner warn glass agent-banner" data-lens="14 26" ref={glass} role="status" data-testid="banner-stranded">
+          <div className="banner warn glass agent-banner" role="status" data-testid="banner-stranded">
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>Your batch is saved, but no agent is listening</strong>
@@ -243,10 +240,10 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {s === "closed" && (
-          <div className="banner muted glass" data-lens="14 26" ref={glass} role="status" data-testid="banner-closed">
+          <div className="banner muted glass" role="status" data-testid="banner-closed">
             <Icon name="lock" size={16} />
             <span>
-              This session is closed. Run <code>onionskin open</code> again to continue.
+              This session is closed. To continue, run <code>onionskin {/^[\w.-]+$/.test(session.name || "") ? session.name : `"${session.name || "<file>"}"`}</code> in a terminal, in the folder that holds the file.
             </span>
             {unsentEdits > 0 && (
               <button type="button" className="btn" onClick={onKeepMine} data-testid="closed-download">
@@ -256,7 +253,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {problem?.kind === "outside" && (
-          <div className="banner warn glass" data-lens="14 26" ref={glass} role="alert" data-testid="banner-outside">
+          <div className="banner warn glass" role="alert" data-testid="banner-outside">
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>Someone changed this file outside Onionskin</strong>
@@ -271,7 +268,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {session.conflict?.side === "agent" && (
-          <div className="banner warn glass" data-lens="14 26" ref={glass} role="alert" data-testid="banner-agent-outside">
+          <div className="banner warn glass" role="alert" data-testid="banner-agent-outside">
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>Someone changed this file outside Onionskin</strong>
@@ -295,7 +292,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {problem?.kind === "error" && (
-          <div className="banner err glass" data-lens="14 26" ref={glass} role="alert" data-testid="banner-error">
+          <div className="banner err glass" role="alert" data-testid="banner-error">
             <Icon name="alert" size={18} />
             <span className="banner-text">{problem.message}</span>
             {unsentEdits > 0 && (
@@ -309,7 +306,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {heldBack?.length > 0 && (
-          <div className="banner warn glass held-back" data-lens="14 26" ref={glass} role="status" data-testid="banner-held-back">
+          <div className="banner warn glass held-back" role="status" data-testid="banner-held-back">
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>
@@ -337,7 +334,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {notice && (
-          <div className="banner toast glass" data-lens="14 26" ref={glass} role="status" data-testid="notice">
+          <div className="banner toast glass" role="status" data-testid="notice">
             <span>{notice}</span>
           </div>
         )}

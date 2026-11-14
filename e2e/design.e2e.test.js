@@ -325,12 +325,13 @@ describe("accessibility", () => {
 });
 
 describe("preferences", () => {
-  test("prefers-reduced-transparency makes the glass solid; prefers-reduced-motion stops the working animation", async () => {
+  test("the panes are near-opaque with no blur; prefers-reduced-transparency makes them fully solid; prefers-reduced-motion stops the working animation", async () => {
     const file = fresh();
     const page = await openDoc(file);
     const glass = () => page.evaluate(() => ({ filter: getComputedStyle(document.querySelector(".topbar")).backdropFilter, bg: getComputedStyle(document.querySelector(".topbar")).backgroundColor }));
     const before = await glass();
-    assert.notEqual(before.filter, "none", "glass blurs by default");
+    assert.equal(before.filter, "none", "the solid panes do not blur what is behind them");
+    assert.ok(Number((before.bg.match(/rgba?\(([^)]+)\)/)[1].split(",")[3] ?? "1").trim()) >= 0.9, `near-opaque by default (${before.bg})`);
     const emulated = await emulateReducedTransparency(br.ctx, page, "reduce");
     await page.waitForTimeout(300);
     const supported = emulated && (await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches));

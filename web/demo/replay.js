@@ -17,7 +17,7 @@ export function workingPlan(resultMs) {
 
 /** The working line, exactly as the design gives it. */
 export function workingText(plan) {
-  return plan.shortened ? `Agent working. The real agent took ${plan.seconds} seconds. This replay shows it in 6 seconds.` : "Agent working. This replay runs at the real speed.";
+  return plan.shortened ? "Agent working. This replay is shortened." : "Agent working. This replay runs at the real speed.";
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { glass } from "./lens.js";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
@@ -14,7 +13,6 @@ export function VoiceDialog({ title, testid, onClose, children }) {
   const ref = useRef(null);
   const close = useRef(onClose);
   close.current = onClose;
-  useEffect(() => glass(ref.current), []);
   useEffect(() => {
     const el = ref.current;
     const ae = document.activeElement;
@@ -48,7 +46,7 @@ export function VoiceDialog({ title, testid, onClose, children }) {
   }, []);
   return createPortal(
     <div className="scrim" data-testid={`${testid}-scrim`}>
-      <div ref={ref} className="dialog glass vc-dialog" data-lens="22 40" role="dialog" aria-modal="true" aria-labelledby={`${testid}-title`} tabIndex={-1} data-testid={testid}>
+      <div ref={ref} className="dialog glass vc-dialog" role="dialog" aria-modal="true" aria-labelledby={`${testid}-title`} tabIndex={-1} data-testid={testid}>
         <h2 id={`${testid}-title`}>{title}</h2>
         {children}
       </div>

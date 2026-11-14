@@ -2,5 +2,5 @@
 .qc { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .qc-line, .qc-why { margin: 0; min-width: 0; color: var(--ink-2); font-size: var(--text-xs); line-height: 1.4; overflow-wrap: anywhere; }
 .qc-why { color: var(--ink-3); }
-.qc-link { min-height: 28px; padding: 0; border: 0; background: none; color: var(--accent-ink); font-size: var(--text-xs); font-weight: 600; text-decoration: underline; }
-.qc-link:hover { color: var(--ink); }
+.qc-link { min-height: 28px; padding: 0; border: 0; background: none; color: var(--ink); font-size: var(--text-xs); font-weight: 600; text-decoration: underline; text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
+.qc-link:hover { text-decoration-color: currentColor; }

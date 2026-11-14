@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { parseSetupArgs, runSetup, skillTargets } from "../src/setup.js";
+import { claudePluginProvides, parseSetupArgs, runSetup, skillTargets } from "../src/setup.js";
 
 // temp HOME dirs only: the real home is never touched
 const roots = [];
@@ -153,4 +153,60 @@ test("voice.md beside the skill (the maintainer's own guide) is never installed 
   }
   const again = await runSetup(["--dry-run"], opts(home, { source }));
   assert.match(JSON.stringify(again), /up to date/);
+});
+
+// The Claude Code plugin route (/plugin install onionskin@onionskin) gives Claude Code the skill as onionskin:onionskin. With a user-scope
+// install record, setup leaves ~/.claude/skills/onionskin out (and removes its own old copy) so the skill does not show twice; every
+// other case installs the folder as before. The record's shape is what Claude Code 2.1.323 wrote in a real install.
+const pluginRecord = (home, { scope = "user", id = "onionskin@onionskin", enabled } = {}) => {
+  fs.mkdirSync(path.join(home, ".claude", "plugins"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { [id]: [{ scope, installPath: "/x", version: "3c07e7bd445a" }] } }));
+  if (enabled !== undefined) fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { [id]: enabled } }));
+};
+
+test("with the Claude Code plugin installed, setup skips the Claude Code skill folder, removes its own old copy, and leaves a foreign one", async () => {
+  const home = tmpHome();
+  const [claude, agents] = skillTargets(home);
+  pluginRecord(home);
+  assert.deepEqual(claudePluginProvides(home), { id: "onionskin@onionskin", dir: "/x" });
+  const r = await runSetup([], opts(home));
+  assert.equal(r.exit, 0, r.lines.join("\n"));
+  assert.equal(fs.existsSync(claude), false);
+  assert.ok(fs.existsSync(path.join(agents, "SKILL.md")), "the shared agents folder is still installed");
+  assert.ok(r.lines.includes(`${claude}: skipped (the Claude Code plugin onionskin@onionskin provides this skill)`), r.lines.join("\n"));
+  // an earlier install's copy is ours: removed (a dry run first changes nothing)
+  fs.cpSync(path.join(repo, "skills", "onionskin"), claude, { recursive: true });
+  const dry = await runSetup(["--dry-run"], opts(home));
+  assert.ok(fs.existsSync(claude) && dry.lines.some((l) => l.startsWith(`[dry run] ${claude}: removed`)), dry.lines.join("\n"));
+  await runSetup([], opts(home));
+  assert.equal(fs.existsSync(claude), false);
+  // a copy that differs (an older version, or edited) is removed only after a yes or with --force
+  fs.cpSync(path.join(repo, "skills", "onionskin"), claude, { recursive: true });
+  fs.appendFileSync(path.join(claude, "SKILL.md"), "\nedited\n");
+  const asked = [];
+  const kept = await runSetup([], opts(home, { ask: async (q) => (asked.push(q), false) }));
+  assert.equal(asked.length, 1);
+  assert.ok(fs.existsSync(claude) && kept.lines.some((l) => l.startsWith(`${claude}: kept`) && l.endsWith("onionskin setup --force")), kept.lines.join("\n"));
+  await runSetup(["--force"], opts(home));
+  assert.equal(fs.existsSync(claude), false);
+  // someone else's folder of that name is never touched
+  fs.mkdirSync(claude, { recursive: true });
+  fs.writeFileSync(path.join(claude, "SKILL.md"), "---\nname: something-else\n---\n");
+  const left = await runSetup([], opts(home));
+  assert.ok(fs.existsSync(path.join(claude, "SKILL.md")) && left.lines.some((l) => l.startsWith(`${claude}: left alone`)), left.lines.join("\n"));
+});
+
+test("the plugin skip fails toward installing: project scope, a disabled plugin, another plugin's name or an unreadable record", async () => {
+  const unreadable = (h) => {
+    fs.mkdirSync(path.join(h, ".claude", "plugins"), { recursive: true });
+    fs.writeFileSync(path.join(h, ".claude", "plugins", "installed_plugins.json"), "{not json");
+  };
+  for (const prepare of [(h) => pluginRecord(h, { scope: "project" }), (h) => pluginRecord(h, { enabled: false }), (h) => pluginRecord(h, { id: "other@onionskin" }), unreadable]) {
+    const home = tmpHome();
+    prepare(home);
+    assert.equal(claudePluginProvides(home), null);
+    const r = await runSetup([], opts(home));
+    assert.equal(r.exit, 0, r.lines.join("\n"));
+    assert.ok(fs.existsSync(path.join(skillTargets(home)[0], "SKILL.md")));
+  }
 });

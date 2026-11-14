@@ -89,7 +89,7 @@ main() {
   # The last lines are for the agent that ran this script: what was installed, and the one sentence to relay to the person.
   VER=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$TMPD/x/onionskin/package.json" 2>/dev/null | head -n 1)
   say ""
-  say "INSTALLED: Onionskin ${VER:-(version unknown)}. Command: ~/.local/bin/onionskin. Skill folders: ~/.claude/skills/onionskin and ~/.agents/skills/onionskin."
+  say "INSTALLED: Onionskin ${VER:-(version unknown)}. Command: ~/.local/bin/onionskin. Skill: set up for Claude Code and Codex (the setup lines above list the folders)."
   say "AGENT: run 'onionskin doctor' (use ~/.local/bin/onionskin if the command is not found yet), then tell the person this one sentence and nothing else:"
   say "Onionskin is installed. To use it, say: open <your file> in Onionskin"
 }

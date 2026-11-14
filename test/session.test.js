@@ -189,6 +189,18 @@ test("state machine: Send while working is queued (comments only, bytes refused)
   assert.equal(next.instructions.overall_note, "n2");
 });
 
+test("close: the closed tab stops being the editor, so the tab that reopens the file can edit", () => {
+  const S = new Sessions();
+  const f = path.join(root, "reopen-editor.docx");
+  fs.writeFileSync(f, docxBytes(["x"]));
+  const s = S.open(f);
+  assert.equal(S.claimEditor(s.key, "tab-old-1"), true);
+  S.close(s.key);
+  S.open(f); // reopened under the same name while the old tab is still on screen
+  assert.equal(S.claimEditor(s.key, "tab-new-1"), true, "the new tab edits");
+  assert.equal(S.claimEditor(s.key, "tab-old-1"), false, "the old tab does not take it back");
+});
+
 test("state machine: a new poll supersedes the old; close ends pollers", async () => {
   const S = new Sessions();
   const s = S.open(write("sm5.docx"));

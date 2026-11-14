@@ -136,8 +136,7 @@ function measure(canvas, want) {
     const w = Math.max(1, Math.min(cw - x, Math.ceil(r.width * q)));
     const h = Math.max(1, Math.min(ch - y, Math.ceil(r.height * q)));
     const fill = colorOf(cs.getPropertyValue("--g-fill"), { rgb: neutral, a: 0.6 });
-    const lt = colorOf(cs.getPropertyValue("--g-light-top"), { rgb: [255, 255, 255], a: 0 }).a;
-    regions.push({ extremes: extremesOf(ctx.getImageData(x, y, w, h).data), glass: fill.rgb, a: fill.a, lt, bright: parseFloat(cs.getPropertyValue("--g-bri")) || 1 });
+    regions.push({ extremes: extremesOf(ctx.getImageData(x, y, w, h).data), glass: fill.rgb, a: fill.a }); // the panes do not blur, brighten or light their face
   }
   return guardStrength({ regions: regions.filter((r) => r.extremes.length), neutral, ink, want });
 }

@@ -16,6 +16,66 @@ Paste this sentence into Claude Code or Codex:
 
 That is the whole install. Your agent does the rest and tells you when it is ready.
 
+### Other ways to install
+
+Pick one. The Terminal, npm and zip routes install the app and the skill. The two plugin routes bring the skill, and the skill installs the app the first time you use it.
+
+**Terminal.** Paste these two lines into Terminal:
+
+```sh
+RELEASE=https://github.com/abe238/onionskin/releases/latest/download
+curl -fsSL "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
+```
+
+**npm.** If you use npm, run:
+
+```sh
+npm install -g onionskin-cli
+onionskin setup
+```
+
+**Claude Code plugin.** Type these in Claude Code:
+
+```
+/plugin marketplace add abe238/onionskin
+/plugin install onionskin@onionskin
+```
+
+**Codex plugin.** Run these in Terminal:
+
+```sh
+codex plugin marketplace add abe238/onionskin
+codex plugin add onionskin@onionskin
+```
+
+A plugin brings the skill only. The first time you ask for Onionskin, your agent installs the rest with the Terminal command above.
+
+**Zip.** Download `onionskin.zip` from the [latest release](https://github.com/abe238/onionskin/releases/latest), unzip it, open Terminal in the `onionskin` folder and run `sh install.sh`.
+
+### Check it worked
+
+```sh
+onionskin doctor
+```
+
+Each line starts with `OK`, `NOTE` or `MISSING`. A `MISSING` line ends with the command that fixes it. If Terminal says the command is not found, run `~/.local/bin/onionskin doctor`.
+
+### Update
+
+- Terminal or zip install: run the same install again. Your snapshots are kept.
+- npm: `npm install -g onionskin-cli`, then `onionskin setup --force` to replace the older skill folders.
+- Claude Code plugin: `claude plugin marketplace update onionskin`, then `claude plugin update onionskin@onionskin`, then restart Claude Code.
+- Codex plugin: `codex plugin marketplace upgrade onionskin`.
+
+### Uninstall
+
+- Terminal or zip install: `sh ~/.onionskin/app/*/install.sh --uninstall`. This keeps your snapshots in `~/.onionskin`. To delete those too, add `--purge`.
+- npm: `onionskin setup --uninstall`, then `npm uninstall -g onionskin-cli`.
+- Claude Code plugin: `claude plugin uninstall onionskin@onionskin`.
+- Codex plugin: `codex plugin remove onionskin@onionskin`.
+
+Removing a plugin removes the skill only. The `onionskin` command stays until you remove it with the Terminal line above.
+
 ### For the agent doing the install
 
 You were asked to install Onionskin. Run this as one shell command from any folder. It needs no sudo and does not ask the person to type anything.
@@ -65,7 +125,7 @@ The background agent is limited on purpose. It can change your document only thr
 - Claude Code or Codex, already installed and signed in. The terminal start needs Claude Code; with Codex, you start from inside it.
 - For quick fixes only: macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without it, grammar fixes go to your agent.
 
-Limits: macOS only so far. This is a pre-release (0.0.1) and has been tested by one person. No Windows, no Linux, no real-time collaboration.
+Limits: macOS only so far. This is a pre-release (0.0.2) and has been tested by one person. No Windows, no Linux, no real-time collaboration.
 
 ## Privacy
 

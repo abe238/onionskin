@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-First public pre-release. Not on npm yet.
+## 0.0.2 (2026-11-14)
 
 ### Added
 - Line breaks in an Excel cell: while typing in a cell, Shift+Enter or Alt+Enter starts a new line inside the cell. Tried for real: the saved file had the line breaks 0.6 s after Send. In a narrow column the first line of a tall cell can be clipped until the column is widened.
@@ -19,6 +17,10 @@ First public pre-release. Not on npm yet.
 - Quick changes with no AI: type "Replace Acme with Initech" (or "Make every heading bold") as the overall note and the line under the box says how many places it will change; the Send button then reads "Replace in 12 places" (or "Change 9 headings") and Onionskin does it itself on this Mac in a moment. The number on the button is the number the run must find again, or nothing is written and the agent gets the note as usual. A match inside a longer word, or inside a spreadsheet formula, is left to the agent, and so is a note with comments or typed edits beside it, or one sent while an earlier Send still waits for the agent (comments the agent already finished do not count). "Ask the agent instead" sends it the ordinary way. A Revert of a quick change puts the note back and the next Send goes to the agent. New route `POST /api/quick`.
 
 ### Changed
+- Install options: besides pasting the sentence into Claude Code or Codex, you can install from Terminal, from npm, as a Claude Code plugin, as a Codex plugin, or from a zip.
+- `onionskin doctor` names the copy that is running and lists any other copies it finds.
+- The Try it demo line no longer shows a timing figure.
+- A calmer, more solid look: the bars, the review panel, menus and dialogs are near-opaque grey panes with a fine border, a thin line of light along the top and a soft shadow, with no blur. Blue is kept for Send, status, focus and the marks on the page; links and comment numbers in the panel are black (white in dark), and the default Paper background is grey. Every text still passes WCAG AA in both themes.
 - The engine is office-engine v0.13.2 plus our own additions. The owner's typing fix was merged upstream and is part of v0.13.2 (https://github.com/p10node/office-engine/pull/2).
 - A Send that carried only your own edits now ends with the summary "Your edits are saved. Nothing else needed changing." It said "No change needed", which read as if your edits were not kept.
 - Install is one sentence: paste "Install Onionskin from https://github.com/abe238/onionskin" into Claude Code or Codex. The README has a marked block for the agent doing the install, `AGENTS.md` (and a `CLAUDE.md` pointer to it) carries the same steps, and `scripts/get.sh` ends by saying what was installed and the one sentence to tell the person. `ONIONSKIN_BASE_URL` changes the folder `get.sh` downloads from.
@@ -34,6 +36,8 @@ First public pre-release. Not on npm yet.
 - The server protocol is 5 (the last build had 2) and covers question cards (`POST /api/answer`, the `asked` result), the milestone 2 routes (`/api/quick`, `/api/review`, `/api/suggestion`) and the `local` history kind, merging edits in every format (`POST /api/merge` with `edits`, `ops` on `/cli/agent-write`), `POST /api/export-tracked` and Build my voice guide (`POST /api/voice/build`, `POST /api/voice/draft/discard`, `voice_draft` in `done`), so a server left running by an older build is replaced on the next command.
 
 ### Fixed
+- Closing a session releases its editing tab, so a file you reopen is editable.
+- The closed message names the file.
 - The Ask and Comment chip no longer sits on the line of text above the selection: it goes beside the end of the selected words, else below them, else above, whichever covers the least text, and stays inside the page.
 - `onionskin <command> --help` (and `-h`) prints that command's own usage for every command, and runs nothing. `setup-rewriter --help` used to answer "unknown option --help".
 - A finished run whose comment you deleted lists that line as "A comment you deleted" (it said "A deleted comment"), with the status and the agent's note beside it.
@@ -134,3 +138,7 @@ First public pre-release. Not on npm yet.
 
 ### Fixed
 - The DOCX protected-paragraph test runs against the engine's own protection (`ro` and the reason) and the guard that makes `docx.edit` throw for a changed protected paragraph.
+
+## 0.0.1
+
+First public pre-release (2026-11-14).

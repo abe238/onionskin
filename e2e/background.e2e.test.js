@@ -267,14 +267,17 @@ describe("custom image", () => {
     await page.close();
   });
 
-  test("a picture too bright for the dark theme is held back and a one-line hint says so", async () => {
+  // The solid panes are near-opaque, so even pure white under the dark theme keeps every text AA (the hostile-image cases below measure it)
+  // and the guard has nothing to hold back. The guard itself stays as the safety net; its arithmetic is covered in test/guard.test.js.
+  test("a pure white picture under the dark theme keeps the requested strength: the solid panes keep the text readable, no hint", async () => {
     await reset();
     const page = await openPage({ theme: "dark" });
     await page.locator(q("bg-button")).click();
     await sendFile(page, { name: "white.png", mimeType: "image/png", buffer: solidPng([255, 255, 255], 800, 500) });
-    await page.locator(q("bg-hint")).waitFor({ timeout: 15000 });
-    assert.match(await page.locator(q("bg-hint")).innerText(), /^Held at \d+ so the text stays readable/);
-    assert.ok((await effective(page)) < 0.6, "held below the requested 0.6");
+    await page.waitForFunction(() => document.querySelector('[data-testid="backdrop"] .bgimg'), null, { timeout: 15000 });
+    await page.waitForTimeout(900); // the guard measures after the image is decoded
+    assert.ok(Math.abs((await effective(page)) - 0.6) < 0.01, "not held below the requested 0.6");
+    assert.equal(await page.locator(q("bg-hint")).count(), 0, "no held-back hint");
     await reset();
     await page.close();
   });

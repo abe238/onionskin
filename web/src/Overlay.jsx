@@ -1,6 +1,5 @@
 import React from "react";
 import { Icon } from "./Icons.jsx";
-import { glass } from "./lens.js";
 import { QuickAsk } from "./QuickAsk.jsx";
 import { IS_MAC } from "./keys.js";
 import { WriteIn } from "./WriteIn.jsx";
@@ -86,7 +85,7 @@ export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, ve
         </button>
       ))}
       {chip && (
-        <div className="chip glass" data-lens="12 24" ref={glass} data-testid="comment-chip-group" role="group" aria-label="Selection actions" style={{ left: chip.x, top: chip.y }}>
+        <div className="chip glass" data-testid="comment-chip-group" role="group" aria-label="Selection actions" style={{ left: chip.x, top: chip.y }}>
           <button type="button" className="chip-b" data-testid="comment-chip" onMouseDown={(e) => e.preventDefault()} onClick={onChip} aria-keyshortcuts="Control+Alt+M Meta+Alt+M" title={`Comment (${IS_MAC ? "\u2318\u2325M" : "Ctrl+Alt+M"})`}>
             <Icon name="comment" size={14} /> Comment
           </button>

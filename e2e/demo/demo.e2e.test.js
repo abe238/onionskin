@@ -268,7 +268,7 @@ describe("Try-it page", opts, () => {
     await waitText(page, v0Text, "the letter");
     for (const b of await page.getByTestId("demo-add").all()) await b.click();
     await page.getByTestId("demo-send").click();
-    assert.equal(await page.getByTestId("demo-working").textContent(), " Agent working. The real agent took 20 seconds. This replay shows it in 6 seconds.");
+    assert.equal(await page.getByTestId("demo-working").textContent(), " Agent working. This replay is shortened.");
     await page.getByTestId("demo-result").waitFor({ timeout: 30000 });
     await page.close();
   });

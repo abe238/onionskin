@@ -12,7 +12,7 @@ import { PRODUCT, SERVER_PROTOCOL } from "./constants.js";
 import { describeBackground, normalizeBackground } from "./settings.js";
 import { PROBE_REASONS, appleHelperState, appleStateLine, rewriterStatus } from "./rewriter.js";
 import { probeHelper } from "./rewriter-setup.js";
-import { SKILL_SOURCE, skillMatches, skillTargets } from "./setup.js";
+import { SKILL_SOURCE, claudePluginProvides, skillMatches, skillTargets } from "./setup.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BIN = PRODUCT.bin;
@@ -107,17 +107,19 @@ export async function runDoctor(o = {}) {
   };
   const checks = [];
   const add = (status, name, detail = "", { required = false, fix } = {}) => checks.push({ status, name: show(name), detail: show(detail), ...(fix && status !== "OK" ? { fix: show(fix) } : {}), required });
-  const which = (name) => {
+  const whichAll = (name) => {
+    const out = [];
     for (const d of (env.PATH || "").split(":")) {
       if (!d) continue;
       const p = path.join(d, name);
       try {
         fs.accessSync(p, fs.constants.X_OK);
-        if (fs.statSync(p).isFile()) return p;
+        if (fs.statSync(p).isFile()) out.push(p);
       } catch {}
     }
-    return null;
+    return out;
   };
+  const which = (name) => whichAll(name)[0] || null;
 
   let version = null;
   try {
@@ -153,19 +155,58 @@ export async function runDoctor(o = {}) {
     const v = run(launcher, ["--version"], env);
     add(v ? "OK" : "MISSING", `${BIN} --version`, v || "the launcher did not run", { required: true, fix: REINSTALL_FIX });
   } else add("MISSING", "launcher", `${launcher} not found`, { required: true, fix: REINSTALL_FIX });
+  // Which copy is answering, and any other onionskin command that could answer instead (npm's global one and the installer's
+  // ~/.local/bin one, for example): the first on PATH wins, so two copies can drift apart. Compared by the cli.js each one runs.
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const runs = (p) => {
+    try {
+      const t = (fs.readFileSync(p, "utf8").slice(0, 400).match(/exec node "([^"]+)"/) || [])[1]; // the installer's 2-line launcher
+      return real(t || p);
+    } catch {
+      return real(p);
+    }
+  };
+  const self = real(path.join(appRoot, "src", "cli.js"));
+  add("NOTE", "running from", self);
+  const others = new Map();
+  for (const p of [...whichAll(BIN), path.join(home, ".local", "bin", BIN)]) if (fs.existsSync(p) && runs(p) !== self && !others.has(runs(p))) others.set(runs(p), p);
+  for (const [t, p] of others) add("NOTE", `another ${BIN}`, `${p} runs ${t}, a different copy`, { fix: "keep one copy: remove the npm one with npm uninstall -g onionskin-cli, or the installer one with sh ~/.onionskin/app/*/install.sh --uninstall" });
   const launcherDir = path.dirname(launcher);
   const onPath = (env.PATH || "").split(":").includes(launcherDir);
   add(onPath ? "OK" : "NOTE", `${launcherDir} on PATH`, onPath ? "yes" : "no: Terminal cannot find the command by name", { fix: PATH_FIX });
 
   // skills
+  const plugin = claudePluginProvides(home);
+  const appSkill = appRoot === DEFAULT_APP_ROOT ? SKILL_SOURCE : path.join(appRoot, "skills", BIN);
   for (const [label, dir] of [["Claude Code", skillTargets(home)[0]], ["Codex / agents", skillTargets(home)[1]]]) {
+    if (plugin && label === "Claude Code") {
+      // the same rule `setup` uses: with the plugin installed, the folder is left out on purpose. The plugin's copy follows the
+      // repository, the app's copy follows the release, so a difference between them is only a NOTE.
+      const id = plugin.id;
+      if (fs.existsSync(dir)) add("NOTE", `skill for ${label}`, `the Claude Code plugin ${id} provides it and ${dir} is a second copy, so it can show twice`, { fix: `${BIN} setup --force` });
+      else {
+        let match = false;
+        try {
+          match = !!plugin.dir && skillMatches(plugin.dir, appSkill);
+        } catch {}
+        if (match) add("OK", `skill for ${label}`, `provided by the Claude Code plugin ${id}, the same as this app's copy`);
+        else add("NOTE", `skill for ${label}`, `provided by the Claude Code plugin ${id}, which differs from this app's copy`, { fix: `claude plugin marketplace update ${id.split("@")[1]}, then claude plugin update ${id}, or reinstall Onionskin` });
+      }
+      continue;
+    }
     if (!fs.existsSync(dir)) {
       add("MISSING", `skill for ${label}`, `${dir} not found`, { required: true, fix: `${BIN} setup` });
       continue;
     }
     let same = false;
     try {
-      same = skillMatches(dir, appRoot === DEFAULT_APP_ROOT ? SKILL_SOURCE : path.join(appRoot, "skills", BIN));
+      same = skillMatches(dir, appSkill);
     } catch {}
     add(same ? "OK" : "MISSING", `skill for ${label}`, `${dir} ${same ? "matches this app's copy" : "differs from this app's copy"}`, { required: true, fix: `${BIN} setup --force` });
   }

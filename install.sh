@@ -55,7 +55,7 @@ if [ "$UNINSTALL" = 1 ]; then
   if [ "$PURGE" = 1 ]; then
     if [ -d "$STATE" ]; then do_ rm -rf "$STATE"; say "  removed $STATE (snapshots and checker environment included)"; fi
   elif [ -d "$STATE" ]; then
-    say "  kept $STATE (your snapshots and the checker environment); delete it with: sh install.sh --uninstall --purge"
+    say "  kept $STATE (your snapshots and the checker environment); to delete it: rm -rf $STATE"
   fi
   say "Your documents were not touched."
   exit 0
@@ -237,7 +237,7 @@ fi
 say ""
 say "Check that it works:"
 say "  $CMD --version             should print $VERSION"
-say "  $CMD setup --dry-run       should say both skill folders are already up to date"
+say "  $CMD setup --dry-run       should say the skill folders are already up to date"
 say "  $CMD $APP/samples/sample.docx"
 say "                                  opens it in your browser and starts Claude Code on it in the background"
 say "  $CMD doctor                prints a status report you can send back if something is wrong"

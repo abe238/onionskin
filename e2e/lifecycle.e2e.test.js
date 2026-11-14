@@ -182,7 +182,16 @@ describe("unsent edits are not lost silently", () => {
     await p2.locator('[data-testid="close"]').click();
     await p2.locator('[data-testid="close-anyway"]').click();
     await p2.locator('[data-testid="banner-closed"]').waitFor();
+    assert.match(await p2.locator('[data-testid="banner-closed"] code').textContent(), /^onionskin "?[^<>]+\.docx"?$/, "the closed banner names the real file, a command that runs as written");
     assert.equal(await p2.locator('[data-testid="closed-download"]').count(), 1, "the closed banner still offers the edits");
+
+    // reopen the same file while the closed tab is still on screen: the new tab edits, it is not locked out by the old one
+    const p3 = await br.page();
+    await p3.goto(await w.open(file));
+    await waitDoc(p3);
+    await p3.waitForTimeout(1200);
+    assert.equal(await p3.locator('[data-testid="banner-readonly"]').count(), 0, "the reopened tab is not read-only");
+    assert.equal(await p3.locator('[data-testid="banner-closed"]').count(), 0);
   });
 
   test("when the server is gone the error banner offers the edits as a download", async () => {

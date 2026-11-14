@@ -148,7 +148,7 @@ test("the working state runs at the real speed up to 12 seconds, and is shown in
   assert.deepEqual(workingPlan(12000), { ms: 12000, shortened: false, seconds: 12 });
   assert.deepEqual(workingPlan(95400), { ms: 6000, shortened: true, seconds: 95 });
   assert.deepEqual(workingPlan(undefined), { ms: 0, shortened: false, seconds: 0 });
-  assert.equal(workingText(workingPlan(95400)), "Agent working. The real agent took 95 seconds. This replay shows it in 6 seconds.");
+  assert.equal(workingText(workingPlan(95400)), "Agent working. This replay is shortened.");
   assert.equal(workingText(workingPlan(8000)), "Agent working. This replay runs at the real speed.");
 });
 
