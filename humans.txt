@@ -11,4 +11,4 @@ scroll-craft by Nate Herk (MIT): https://github.com/nateherkai/scroll-craft
 
 /* SITE */
 Standards: HTML, CSS, a little JavaScript, no framework, no build step
-Fonts: Geist, JetBrains Mono (SIL Open Font License)
+Fonts: Geist, Rysana Mono (SIL Open Font License)
