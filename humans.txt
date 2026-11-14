@@ -1,0 +1,13 @@
+/* TEAM */
+Author: abe238
+Site: https://abediaz.com
+GitHub: https://github.com/abe238
+X: https://x.com/abe238
+
+/* THANKS */
+office-engine by p10node: https://github.com/p10node/office-engine
+human-review by Peter Yang: https://github.com/petergyang/human-review
+
+/* SITE */
+Standards: HTML, CSS, a little JavaScript, no framework, no build step
+Fonts: Geist, JetBrains Mono (SIL Open Font License)

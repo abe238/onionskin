@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en" class="no-js" data-launched="true">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--gen:head--><title>Onionskin: edit Office files with your coding agent</title>
+<meta name="description" content="Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.">
+<link rel="canonical" href="https://onionskin.abediaz.ai/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Onionskin">
+<meta property="og:title" content="Onionskin: edit Office files with your coding agent">
+<meta property="og:description" content="Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.">
+<meta property="og:url" content="https://onionskin.abediaz.ai/">
+<meta property="og:image" content="https://onionskin.abediaz.ai/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Onionskin: Edit Word, Excel and PowerPoint files with your coding agent.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:creator" content="@abe238">
+<meta name="twitter:title" content="Onionskin: edit Office files with your coding agent">
+<meta name="twitter:description" content="Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.">
+<meta name="twitter:image" content="https://onionskin.abediaz.ai/og.png">
+<meta name="twitter:image:alt" content="Onionskin: Edit Word, Excel and PowerPoint files with your coding agent."><!--/gen:head-->
+<meta name="author" content="abe238">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F5F6F9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1218" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="alternate" type="text/markdown" href="/index.md" title="Onionskin (Markdown)">
+<link rel="describedby" href="/llms.txt" type="text/plain">
+<link rel="author" href="/humans.txt" type="text/plain">
+<link rel="stylesheet" href="/assets/site.css">
+<script>(function(){var d=document.documentElement;d.className=d.className.replace("no-js","js");var t=null;try{var m=location.search.match(/[?&]theme=(light|dark)/);t=m?m[1]:localStorage.getItem("theme")}catch(e){}if(t==="light"||t==="dark")d.setAttribute("data-theme",t)})();</script>
+<!--gen:jsonld--><script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@graph": [
+  {
+   "@type": "WebSite",
+   "@id": "https://onionskin.abediaz.ai/#website",
+   "url": "https://onionskin.abediaz.ai/",
+   "name": "Onionskin",
+   "description": "Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.",
+   "inLanguage": "en-US",
+   "publisher": {
+    "@id": "https://onionskin.abediaz.ai/#author"
+   }
+  },
+  {
+   "@type": "Person",
+   "@id": "https://onionskin.abediaz.ai/#author",
+   "name": "abe238",
+   "url": "https://abediaz.com",
+   "sameAs": [
+    "https://github.com/abe238",
+    "https://x.com/abe238"
+   ]
+  },
+  {
+   "@type": "SoftwareApplication",
+   "@id": "https://onionskin.abediaz.ai/#app",
+   "name": "Onionskin",
+   "description": "Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.",
+   "url": "https://onionskin.abediaz.ai/",
+   "applicationCategory": "DeveloperApplication",
+   "creativeWorkStatus": "Available now. Open source under the MIT license.",
+   "license": "https://spdx.org/licenses/MIT.html",
+   "isAccessibleForFree": true,
+   "author": {
+    "@id": "https://onionskin.abediaz.ai/#author"
+   },
+   "featureList": [
+    "Edit directly",
+    "Comment on anything",
+    "Drop numbered pins",
+    "One overall note",
+    "One-tap stamps",
+    "The agent can ask you",
+    "Review first",
+    "History and revert",
+    "Changes shown in place",
+    "Real tracked changes",
+    "Your own voice guide",
+    "Table rows, columns and slides",
+    "Merged cells in Excel",
+    "Watch the agent work"
+   ],
+   "image": "https://onionskin.abediaz.ai/og.png"
+  },
+  {
+   "@type": "SoftwareSourceCode",
+   "@id": "https://onionskin.abediaz.ai/#source",
+   "name": "Onionskin",
+   "description": "Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.",
+   "codeRepository": "https://github.com/abe238/onionskin",
+   "creativeWorkStatus": "Available now. Open source under the MIT license.",
+   "license": "https://spdx.org/licenses/MIT.html",
+   "author": {
+    "@id": "https://onionskin.abediaz.ai/#author"
+   },
+   "targetProduct": {
+    "@id": "https://onionskin.abediaz.ai/#app"
+   }
+  },
+  {
+   "@type": "FAQPage",
+   "@id": "https://onionskin.abediaz.ai/#faq",
+   "url": "https://onionskin.abediaz.ai/",
+   "mainEntity": [
+    {
+     "@type": "Question",
+     "name": "Is Onionskin released?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is pre-release 0.0.1."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can I try it without installing anything?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes. The Try-it demo page replays one real recorded agent session in your browser. No install, and no AI runs."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Which coding agents does it work with?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Claude Code and Codex, in two different ways. Type onionskin report.docx in a terminal and Onionskin starts its own background agent, which is Claude Code only and runs on your Claude plan. Or tell Claude Code or Codex: open report.docx in Onionskin, and the agent you are talking to does the work. We exercised both in real agent runs."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Does my file leave my computer?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "The editor and its small server run on your computer, and the page makes no outside requests. When you press Send, your document goes to the coding agent you already use, Claude Code or Codex, so whatever that agent normally sends to its model provider still applies. Every batch carries the text of the whole document, not only the part you commented on, because the agent needs it to find the right place. Only quick fixes and the plain quick commands stay entirely on your Mac."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Which file formats does it support?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Word (.docx), Excel (.xlsx) and PowerPoint (.pptx). All three run the whole loop, and the file's own formatting is kept because edits go through the same engine that renders it."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What does it need, and what is missing?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Claude Code or Codex already installed: Onionskin is for people who already use one of them. macOS only so far, because it is the only platform tested, and Node.js 22 or newer. There is no Windows or Linux version and no real-time collaboration. Quick fixes also need macOS 26 or later, Apple silicon and Apple Intelligence turned on. If something is off, run onionskin doctor to check the install."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How well is it tested?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Over 1,000 unit tests and 300 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can the background agent see my other files?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "No. It can change your document only through Onionskin's own commands. In our tests, reading outside its two folders, your home folder, network fetches and writes elsewhere were all refused. It is started without API keys in its environment. It can run read-only commands and read files inside its own work folder and the skill's reference folder."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can the agent add table rows or slides? What about charts?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes to the first two: it can add or delete a table row or column in Word, and copy, delete or move a slide in PowerPoint. Charts are declined with a plain message that says to insert the chart in Word or PowerPoint. A file produced by the new table edits was opened in Microsoft Word, and one with the new slide edits was checked with LibreOffice and a Python reader. It has not been opened in Microsoft PowerPoint."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What is the license?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "MIT. Onionskin builds on a fork of the office-engine document engine by p10node (MIT) and on ideas from Peter Yang's human-review (MIT)."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How is this different from pasting a document into a chat?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "A chat hands you text back, and you copy it into the file yourself. With Onionskin, each note is anchored to the exact spot in the document, your agent edits the real .docx, .xlsx or .pptx file, and you see every change land in place with a revert button."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Who made it?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "abe238. You can find him at abediaz.com, on GitHub as abe238 and on X as @abe238."
+     }
+    }
+   ]
+  }
+ ]
+}
+</script><!--/gen:jsonld-->
+<script src="/assets/site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="dock-wrap">
+  <div class="dock" data-lens="18 52" data-spec data-adapt>
+    <a class="brand" href="/" aria-label="Onionskin home">
+        <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.5h6.5L19 7v10.5a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1Z" opacity=".55"/><path d="M5.8 6h6.4l3.3 3.3v10.2a1 1 0 0 1-1 1H5.8a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" fill="rgba(255,255,255,.22)"/><path d="M12 6v3.5h3.5M7.5 13h5M7.5 16h3.5"/></svg></span>
+        <span>Onionskin</span>
+      </a>
+    <a class="onion" href="#onionskin-paper" data-fact aria-haspopup="dialog" aria-label="Why is it called Onionskin?" title="Why is it called Onionskin?">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="bulb" d="M12 6.2C7.4 9.4 5.4 12.4 5.8 15.6c.4 3.2 3.1 4.9 6.2 4.9s5.8-1.7 6.2-4.9c.4-3.2-1.6-6.2-6.2-9.4Z"/><path d="M12 6.2c-2.2 3.6-2.9 6.8-2.6 9.6.2 2.4 1.2 4.1 2.6 4.7M12 6.2c2.2 3.6 2.9 6.8 2.6 9.6-.2 2.4-1.2 4.1-2.6 4.7M12 6.2V3M12 4.6c.9-1.2 2-1.6 3.3-1.5M10.6 20.4l-.7 1.2M13.4 20.4l.7 1.2"/></svg>
+      </a>
+    <nav class="nav" aria-label="Primary">
+      <a class="lnk" href="#how">How it works</a>
+      <a class="lnk" href="/try/">Try it</a>
+      <a class="lnk" href="#privacy">Privacy</a>
+      <a class="lnk" href="#faq">FAQ</a>
+    </nav>
+    <button class="iconbtn" id="theme-toggle" type="button" aria-label="Switch theme" hidden>
+          <svg class="i theme-light-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.2A7.5 7.5 0 0 1 9.8 4.5a7.5 7.5 0 1 0 9.7 9.7Z"/></svg>
+          <svg class="i theme-dark-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
+        </button>
+    <a class="pill pill-ink" href="https://github.com/abe238/onionskin"><svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span>Star<span class="long"> on GitHub</span></span></a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="hero-h">
+    <div class="hero-copy">
+      <p class="status"><span class="dot" aria-hidden="true"></span><!--gen:status-->Available now. Open source under the MIT license.<!--/gen:status--></p>
+      <h1 id="hero-h"><!--gen:headline-->Edit Word, Excel and PowerPoint files with your coding agent.<!--/gen:headline--></h1>
+      <p class="sub"><!--gen:subhead-->Type <code>onionskin report.docx</code> in a terminal, or tell Claude Code or Codex: <code>open report.docx in Onionskin</code>. The file opens in a browser editor with a review panel. Edit it, comment on a selection, cell, range, shape or slide, drop numbered pins, write one overall note, then press Send. The agent changes the real file, and the page reloads in place and keeps your position.<!--/gen:subhead--></p>
+    </div>
+
+    <div class="stage">
+      <div class="field" aria-hidden="true">
+<div class="sheet doc"><svg viewBox="0 0 300 390" focusable="false">
+<rect class="pg" width="300" height="390" rx="8"/><rect class="pg-edge" x=".5" y=".5" width="299" height="389" rx="8"/>
+<rect class="ink" x="34" y="36" width="132" height="13" rx="3"/><rect class="mut" x="34" y="58" width="84" height="6" rx="3"/>
+<rect class="hl" x="34" y="159" width="150" height="15" rx="2"/>
+<g class="mut2"><rect x="34" y="86" width="186" height="6" rx="3"/><rect x="34" y="100" width="178" height="6" rx="3"/><rect x="34" y="114" width="186" height="6" rx="3"/><rect x="34" y="128" width="132" height="6" rx="3"/><rect x="34" y="150" width="232" height="6" rx="3"/><rect x="34" y="164" width="212" height="6" rx="3" class="mut"/><rect x="34" y="178" width="232" height="6" rx="3"/><rect x="34" y="192" width="120" height="6" rx="3"/></g>
+<rect x="34" y="216" width="232" height="22" fill="var(--c-doc)" fill-opacity=".16"/>
+<path class="gl" d="M34 216h232v66H34zM111 216v66M188 216v66M34 238h232M34 260h232"/>
+<g class="mut"><rect x="44" y="224" width="38" height="6" rx="3"/><rect x="121" y="224" width="30" height="6" rx="3"/><rect x="198" y="224" width="36" height="6" rx="3"/><rect x="44" y="246" width="44" height="6" rx="3"/><rect x="121" y="246" width="26" height="6" rx="3"/><rect x="44" y="268" width="34" height="6" rx="3"/><rect x="121" y="268" width="40" height="6" rx="3"/></g>
+<g class="mut2"><rect x="34" y="304" width="232" height="6" rx="3"/><rect x="34" y="318" width="220" height="6" rx="3"/><rect x="34" y="332" width="232" height="6" rx="3"/><rect x="34" y="346" width="140" height="6" rx="3"/></g>
+<path d="M236 101C214 128 196 148 184 164" class="s-doc" stroke-width="1.4" stroke-dasharray="3 3"/>
+<g transform="translate(236 70)"><path class="t-doc" d="M9 0h34a9 9 0 0 1 9 9v16a9 9 0 0 1-9 9H22l-12 10 2-10h-3A9 9 0 0 1 0 25V9a9 9 0 0 1 9-9z"/><rect x="11" y="11" width="30" height="4" rx="2" fill="#fff" fill-opacity=".92"/><rect x="11" y="20" width="19" height="4" rx="2" fill="#fff" fill-opacity=".92"/></g>
+<g transform="translate(226 262)"><path class="pin" d="M0-17a8.5 8.5 0 0 1 8.5 8.5C8.5-2.5 0 6.5 0 6.5S-8.5-2.5-8.5-8.5A8.5 8.5 0 0 1 0-17z"/><circle cy="-8.5" r="3" fill="#fff"/></g>
+</svg></div>
+<div class="sheet grid"><svg viewBox="0 0 360 250" focusable="false">
+<defs><clipPath id="xl-c"><rect width="360" height="250" rx="8"/></clipPath></defs>
+<rect class="pg" width="360" height="250" rx="8"/>
+<g clip-path="url(#xl-c)">
+<rect width="360" height="26" class="t-grid"/><rect x="10" y="6" width="44" height="14" rx="3" fill="#fff" fill-opacity=".9"/><rect x="62" y="6" width="210" height="14" rx="3" fill="#fff" fill-opacity=".28"/>
+<rect y="26" width="360" height="20" fill="oklch(94% .006 262)"/><rect y="46" width="28" height="204" fill="oklch(94% .006 262)"/>
+<rect x="118" y="118" width="150" height="48" fill="var(--c-grid)" fill-opacity=".1"/>
+<path class="gl" d="M28 26V250M108 26V250M188 26V250M268 26V250M348 26V250M0 46H360M0 70H360M0 94H360M0 118H360M0 142H360M0 166H360M0 190H360M0 214H360M0 238H360"/>
+<g class="mut"><rect x="62" y="33" width="9" height="5" rx="2.5"/><rect x="142" y="33" width="9" height="5" rx="2.5"/><rect x="222" y="33" width="9" height="5" rx="2.5"/><rect x="302" y="33" width="9" height="5" rx="2.5"/></g>
+<g class="ink"><rect x="38" y="54" width="46" height="7" rx="3"/><rect x="118" y="54" width="40" height="7" rx="3"/><rect x="198" y="54" width="44" height="7" rx="3"/><rect x="278" y="54" width="38" height="7" rx="3"/></g>
+<g class="mut"><rect x="38" y="78" width="40" height="6" rx="3"/><rect x="38" y="102" width="52" height="6" rx="3"/><rect x="38" y="126" width="34" height="6" rx="3"/><rect x="38" y="150" width="46" height="6" rx="3"/><rect x="38" y="174" width="42" height="6" rx="3"/>
+<rect x="64" y="78" width="34" height="6" rx="3"/><rect x="54" y="102" width="44" height="6" rx="3"/><rect x="60" y="126" width="38" height="6" rx="3"/><rect x="48" y="150" width="50" height="6" rx="3"/><rect x="62" y="174" width="36" height="6" rx="3"/>
+<rect x="150" y="78" width="28" height="6" rx="3"/><rect x="144" y="126" width="34" height="6" rx="3"/><rect x="152" y="150" width="26" height="6" rx="3"/><rect x="146" y="174" width="32" height="6" rx="3"/>
+<rect x="226" y="78" width="32" height="6" rx="3"/><rect x="230" y="126" width="28" height="6" rx="3"/><rect x="222" y="150" width="36" height="6" rx="3"/><rect x="228" y="174" width="30" height="6" rx="3"/>
+<rect x="302" y="78" width="36" height="6" rx="3"/><rect x="298" y="102" width="40" height="6" rx="3"/><rect x="306" y="126" width="32" height="6" rx="3"/><rect x="300" y="150" width="38" height="6" rx="3"/><rect x="304" y="174" width="34" height="6" rx="3"/></g>
+<path d="M0 190H360" stroke="oklch(30% .03 265)" stroke-width="1.6"/>
+<g class="ink"><rect x="38" y="198" width="40" height="7" rx="3"/><rect x="146" y="198" width="32" height="7" rx="3"/><rect x="226" y="198" width="32" height="7" rx="3"/><rect x="298" y="198" width="40" height="7" rx="3"/></g>
+<rect x="188.8" y="94.8" width="78.4" height="22.4" fill="var(--c-grid)" fill-opacity=".14" class="s-grid" stroke-width="2.4"/>
+<rect x="263" y="113" width="7" height="7" fill="var(--c-grid)" stroke="#fff" stroke-width="1.4"/>
+<path class="pin" d="M259 95h8v8z"/>
+<g class="mut"><rect x="204" y="102" width="40" height="6" rx="3"/></g>
+</g>
+<rect class="pg-edge" x=".5" y=".5" width="359" height="249" rx="8"/>
+</svg></div>
+<div class="sheet slide"><svg viewBox="0 0 360 202" focusable="false">
+<rect class="pg" width="360" height="202" rx="8"/><rect class="pg-edge" x=".5" y=".5" width="359" height="201" rx="8"/>
+<path class="t-slide" d="M0 8a8 8 0 0 1 8-8h8v202H8a8 8 0 0 1-8-8z"/>
+<rect class="ink" x="42" y="36" width="184" height="15" rx="3"/><rect class="ink" x="42" y="58" width="116" height="15" rx="3"/>
+<rect x="34" y="28" width="202" height="52" fill="none" stroke="var(--c-doc)" stroke-width="1.3" stroke-dasharray="4 3"/>
+<g fill="#fff" stroke="var(--c-doc)" stroke-width="1.3"><rect x="31" y="25" width="6" height="6"/><rect x="132" y="25" width="6" height="6"/><rect x="233" y="25" width="6" height="6"/><rect x="31" y="51" width="6" height="6"/><rect x="233" y="51" width="6" height="6"/><rect x="31" y="77" width="6" height="6"/><rect x="132" y="77" width="6" height="6"/><rect x="233" y="77" width="6" height="6"/></g>
+<g class="t-slide"><circle cx="46" cy="108" r="3.2"/><circle cx="46" cy="130" r="3.2"/><circle cx="46" cy="152" r="3.2"/></g>
+<g class="mut"><rect x="58" y="105" width="150" height="6" rx="3"/><rect x="58" y="127" width="128" height="6" rx="3"/><rect x="58" y="149" width="160" height="6" rx="3"/></g>
+<path class="gl" d="M244 112H340M244 138H340"/><path d="M244 172H340" stroke="oklch(30% .03 265)" stroke-width="1.4"/>
+<g class="mut2"><rect x="250" y="136" width="16" height="36"/><rect x="274" y="116" width="16" height="56"/><rect x="298" y="144" width="16" height="28"/></g>
+<rect class="t-slide" x="322" y="98" width="16" height="74"/>
+<g transform="translate(316 10) scale(.78)"><path class="t-doc" d="M9 0h34a9 9 0 0 1 9 9v16a9 9 0 0 1-9 9H22l-12 10 2-10h-3A9 9 0 0 1 0 25V9a9 9 0 0 1 9-9z"/><rect x="11" y="11" width="30" height="4" rx="2" fill="#fff" fill-opacity=".92"/><rect x="11" y="20" width="19" height="4" rx="2" fill="#fff" fill-opacity=".92"/></g>
+</svg></div>
+      </div>
+      <div class="cluster" data-lens="46 130" data-spec>
+        <div class="ctas">
+          <a class="pill pill-ink big" href="https://github.com/abe238/onionskin"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>Star on GitHub</a>
+          <a class="pill pill-clear big" href="/try/"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2Z"/></svg>Try the demo</a>
+        </div>
+        <div class="reg">
+          <p class="meta"><!--gen:reponote--><!--/gen:reponote--> <span class="byline">An open-source project by <a href="https://github.com/abe238">abe238</a>.</span></p>
+          <div class="install" role="group" aria-label="Install commands">
+<!--gen:install--><div class="install-h">Install</div>
+<p class="cmd-l">Once: paste this sentence into Claude Code or Codex</p>
+<div class="cmd"><span class="p" aria-hidden="true">&gt;</span><code>Install Onionskin from https://github.com/abe238/onionskin</code><button class="copy" type="button" data-copy="Install Onionskin from https://github.com/abe238/onionskin" aria-label="Copy Install Onionskin from https://github.com/abe238/onionskin">Copy</button></div>
+<p class="cmd-l">Then, in a terminal. Or tell your agent: open report.docx in Onionskin</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>onionskin report.docx</code><button class="copy" type="button" data-copy="onionskin report.docx" aria-label="Copy onionskin report.docx">Copy</button></div><!--/gen:install-->
+          </div>
+        </div>
+      </div>
+    </div>
+    <figure class="shot">
+        <div class="frame" data-tone="light">
+          <img class="img-light" src="/assets/img/editor-light-1080.webp" srcset="/assets/img/editor-light-640.webp 640w, /assets/img/editor-light-1080.webp 1080w, /assets/img/editor-light-1600.webp 1600w" sizes="(max-width: 1260px) calc(100vw - 32px), 1180px" width="1600" height="1000" alt="The Onionskin editor: a quarterly operations report in Word on the left with a numbered comment on a sentence just under the orders table; the Review panel on the right shows the background agent listening, the comment, an overall note asking for a new table row, and a Send to Agent button." loading="eager" decoding="async">
+          <img class="img-dark" src="/assets/img/editor-dark-1080.webp" srcset="/assets/img/editor-dark-640.webp 640w, /assets/img/editor-dark-1080.webp 1080w, /assets/img/editor-dark-1600.webp 1600w" sizes="(max-width: 1260px) calc(100vw - 32px), 1180px" width="1600" height="1000" alt="The Onionskin editor in dark mode: a quarterly operations report in Word on the left with a numbered comment on a sentence just under the orders table; the Review panel on the right shows the background agent listening, the comment, an overall note asking for a new table row, and a Send to Agent button." loading="eager" decoding="async">
+        </div>
+        <figcaption>The editor, running on a sample report, with the background agent listening.</figcaption>
+    </figure>
+  </section>
+
+  <section class="sec how" id="how" aria-labelledby="how-h">
+    <div class="wrap how-grid">
+      <div class="head">
+        <h2 id="how-h">How it works</h2>
+        <p>Three steps, and your agent does the typing in the file.</p>
+      </div>
+      <ol class="steps">
+<!--gen:steps--><li><span class="n" aria-hidden="true">1</span><h3>Open a file</h3><p>In a terminal, type <code>onionskin report.docx</code>. Or tell Claude Code or Codex: <code>open report.docx in Onionskin</code>. The file opens in a browser editor on your computer, with the document on the left and a review panel on the right.</p></li>
+<li><span class="n" aria-hidden="true">2</span><h3>Mark it up</h3><p>Edit text directly. Comment on a selection, cell, range, shape or slide, drop numbered pins, tap a one-tap request like Shorter or Friendlier, or write one overall note.</p></li>
+<li><span class="n" aria-hidden="true">3</span><h3>Press Send</h3><p>The agent changes the real file. The page reloads in place and keeps your position, shows what changed, and lets you revert the last run.</p></li><!--/gen:steps-->
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec feats-sec" id="features" aria-labelledby="features-h">
+    <div class="wrap">
+      <div class="head wide">
+        <h2 id="features-h">What you can do in the editor</h2>
+        <p>Everything you mark up lands in the review panel, so you can see the full request before you press Send.</p>
+      </div>
+      <ul class="feats">
+<!--gen:features--><li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 4.5 5 5-10 10H4.5v-5Z"/><path d="m12 7 5 5"/></svg></span><h3>Edit directly</h3><p>Type in the document like any editor. Your own edits are saved to the file and listed in the review panel.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5Z"/></svg></span><h3>Comment on anything</h3><p>Select a sentence, a cell, a range, a shape or a slide, and tell the agent what to change there.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.3"/></svg></span><h3>Drop numbered pins</h3><p>Pin a note to a spot on the page when a selection is not the right shape for the request.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.6 4.3 2.7 6.4 7 7-4.3.6-6.4 2.7-7 7-.6-4.3-2.7-6.4-7-7 4.3-.6 6.4-2.7 7-7Z"/></svg></span><h3>One overall note</h3><p>Ask for changes across the whole file, like making every heading bold or fixing inconsistent spacing.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 4h7v6l2.5 3.5H6L8.5 10Z"/><path d="M5 17h14"/><path d="M7 20.5h10"/></svg></span><h3>One-tap stamps</h3><p>Shorter, Friendlier, Fix grammar and Translate are one tap on a selection. You can edit the list.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.7a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2.9-1.2 1.8"/><path d="M12 16.7v.1"/></svg></span><h3>The agent can ask you</h3><p>When the agent needs an answer, it shows a question as a card in the panel, and you answer in place.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.6"/></svg></span><h3>Review first</h3><p>The agent reads the file and suggests changes as cards. Nothing changes until you accept.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/></svg></span><h3>History and revert</h3><p>The last 20 updates are listed with a red and green change view and a What changed note. Revert the last run in one click.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h8"/><path d="M6 12h12"/><path d="M6 17h6"/><path d="M17 15v4M15 17h4"/></svg></span><h3>Changes shown in place</h3><p>After a run, the new words are drawn in where they stand, and the old words show briefly.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/></svg></span><h3>Real tracked changes</h3><p>Export a Word file with real tracked changes. We checked it by opening it in Microsoft Word.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="10" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg></span><h3>Your own voice guide</h3><p>Ask the agent to build your voice guide. It drafts 12 sections, you review them, and nothing is saved without your approval.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M4 14.5h16M10 5v14"/></svg></span><h3>Table rows, columns and slides</h3><p>The agent can add or delete a table row or column in Word, and copy, delete or move a slide in PowerPoint. Charts are declined with a plain message: the agent says to insert the chart in Word or PowerPoint.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.5"/><path d="M4 12h16M9 6v3M15 6v3M9 15v3M15 15v3"/></svg></span><h3>Merged cells in Excel</h3><p>The agent is told which cells are merged, and a write into a covered cell is refused.</p></li>
+<li><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="m7.5 10 3 2.5-3 2.5M13 15h4"/></svg></span><h3>Watch the agent work</h3><p>A Show the agent switch lists what the background agent is doing. Open in Terminal opens the same conversation in Terminal.</p></li><!--/gen:features-->
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec priv-sec" id="agent-modes" aria-labelledby="agent-h">
+    <div class="wrap priv">
+<!--gen:agent--><div><h2 id="agent-h">Two ways to start</h2><p class="lead">Start from a terminal and Onionskin starts its own background agent. Start from inside Claude Code or Codex and the agent you are talking to does the work.</p><p class="small">With the background agent, a real round from Send to the file changing took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session a warm round took about 2 to 3 seconds. Onionskin needs Claude Code or Codex already installed.</p></div>
+<ul class="facts"><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>From a terminal</b><span>Type onionskin report.docx. The background agent is Claude Code only: it needs Claude Code installed and signed in, and it runs on your own Claude plan. If the plan limit is reached, the panel says so.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>From inside an agent</b><span>Say open report.docx in Onionskin to Claude Code or Codex. We exercised both in real agent runs; a Codex round took about 26 seconds from Send to the file changing, in one run.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Limited on purpose</b><span>The background agent can change your document only through Onionskin's own commands. It cannot read your other files: in our tests, reading outside its two folders, your home folder, network fetches and writes elsewhere were all refused. It is started without API keys in its environment. It can run read-only commands and read files inside its own work folder and the skill's reference folder.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>See what it does</b><span>The Show the agent switch lists what it is doing. Open in Terminal opens the same conversation in Terminal.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Codex without Claude Code</b><span>On a Mac with Codex but no Claude Code, the terminal start says so in plain words and tells you to ask Codex.</span></li></ul><!--/gen:agent-->
+    </div>
+  </section>
+
+  <section class="sec priv-sec" id="keep-working" aria-labelledby="live-h">
+    <div class="wrap priv">
+<!--gen:live--><div><h2 id="live-h">Keep working while the agent works</h2><p class="lead">You do not have to wait for a run to finish. Keep typing, and your edits are merged with the agent's version when it is done.</p></div>
+<ul class="facts"><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Word</b><span>A paragraph-level three-way merge, including formatting and moved paragraphs.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Excel and PowerPoint</b><span>A strict merge: your edit is carried over only onto a place the agent did not touch.</span></li></ul><!--/gen:live-->
+    </div>
+  </section>
+
+  <section class="sec priv-sec" id="quick" aria-labelledby="quick-h">
+    <div class="wrap priv">
+<!--gen:quick--><div><h2 id="quick-h">Quick fixes, answered on your Mac</h2><p class="lead">Select one sentence in a Word or PowerPoint file and ask for Fix grammar. Apple's built-in on-device model answers on your Mac. Nothing is downloaded, and nothing changes until you tap Use this.</p><p class="small">Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to your coding agent.</p></div>
+<ul class="facts"><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Usually ready by the time you tap</b><span>The fix starts when the Quick ask box opens and takes about 0.85 seconds per sentence. On the first fix of a session, or an immediate tap, the card took about 0.3 to 0.4 seconds.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Guarded text</b><span>Text inside quotation marks, numbers, dates and names are guarded. A suggestion that changes them is withheld.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Plain commands use no AI</b><span>Replace in N places and other plain quick commands run on your Mac with no AI at all.</span></li></ul><!--/gen:quick-->
+    </div>
+  </section>
+
+  <section class="sec arch" id="architecture" aria-labelledby="arch-h">
+    <div class="wrap">
+      <div class="head wide">
+        <h2 id="arch-h">How the pieces fit</h2>
+        <p>Your edits start in a browser tab and finish in the file on disk. The editor and the server run on your computer, and your coding agent edits the file there.</p>
+      </div>
+      <figure class="diagram">
+
+        <svg class="d-wide" viewBox="0 0 1000 400" role="img" aria-labelledby="dw-t">
+          <title id="dw-t">Diagram: the browser editor, the Onionskin local server and your coding agent, all on your computer, passing a batch of changes around a five step loop.</title>
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head" d="M0 0 10 5 0 10Z"/></marker>
+            <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path fill="var(--ink-3)" d="M0 0 10 5 0 10Z"/></marker>
+          </defs>
+          <rect class="d-frame" x="8" y="8" width="984" height="384" rx="22"/>
+          <text class="d-gl" x="30" y="36">Your computer</text>
+          <rect class="d-group" x="30" y="56" width="290" height="314" rx="18"/>
+          <text class="d-gl" x="50" y="82">Browser tab</text>
+          <rect class="d-group" x="355" y="56" width="290" height="314" rx="18"/>
+          <text class="d-gl" x="375" y="82">Onionskin</text>
+          <rect class="d-group" x="680" y="56" width="290" height="314" rx="18"/>
+          <text class="d-gl" x="700" y="82">Your agent and disk</text>
+
+          <rect class="d-node hot" x="50" y="100" width="250" height="92" rx="14"/>
+          <text class="d-t" x="70" y="140">Editor and sidebar</text>
+          <text class="d-s" x="70" y="164">edits, comments, pins</text>
+          <rect class="d-node" x="50" y="256" width="250" height="92" rx="14"/>
+          <text class="d-t" x="70" y="296">Change feed</text>
+          <text class="d-s" x="70" y="320">what changed, revert</text>
+
+          <rect class="d-node" x="375" y="100" width="250" height="92" rx="14"/>
+          <text class="d-t" x="395" y="140">Local server</text>
+          <text class="d-s" x="395" y="164">loopback only</text>
+          <rect class="d-node" x="375" y="256" width="250" height="92" rx="14"/>
+          <text class="d-t" x="395" y="296">Snapshots and checks</text>
+          <text class="d-s" x="395" y="320">original kept for revert</text>
+
+          <rect class="d-node" x="700" y="100" width="250" height="92" rx="14"/>
+          <text class="d-t" x="720" y="140">Coding agent</text>
+          <text class="d-s" x="720" y="164">Claude Code or Codex</text>
+          <rect class="d-node hot" x="700" y="256" width="250" height="92" rx="14"/>
+          <text class="d-t" x="720" y="296">report.docx</text>
+          <text class="d-s" x="720" y="320">the real file on disk</text>
+
+          <path class="d-e" d="M300 128H369" marker-end="url(#ah)"/>
+          <path class="d-e" d="M375 166H306" marker-end="url(#ah)"/>
+          <path class="d-e" d="M625 128H694" marker-end="url(#ah)"/>
+          <path class="d-e" d="M700 166H631" marker-end="url(#ah)"/>
+          <path class="d-e" d="M825 192V250" marker-end="url(#ah)"/>
+          <path class="d-e2" d="M500 192V250" marker-end="url(#ah2)"/>
+          <path class="d-e2" d="M175 192V250" marker-end="url(#ah2)"/>
+
+          <g><circle class="d-num" cx="336" cy="128" r="11"/><text class="d-numt" x="336" y="132" text-anchor="middle">1</text></g>
+          <g><circle class="d-num" cx="661" cy="128" r="11"/><text class="d-numt" x="661" y="132" text-anchor="middle">2</text></g>
+          <g><circle class="d-num" cx="825" cy="220" r="11"/><text class="d-numt" x="825" y="224" text-anchor="middle">3</text></g>
+          <g><circle class="d-num" cx="664" cy="166" r="11"/><text class="d-numt" x="664" y="170" text-anchor="middle">4</text></g>
+          <g><circle class="d-num" cx="339" cy="166" r="11"/><text class="d-numt" x="339" y="170" text-anchor="middle">5</text></g>
+        </svg>
+        <svg class="d-tall" viewBox="0 0 400 700" role="img" aria-labelledby="dt-t">
+          <title id="dt-t">Diagram: the browser editor, the Onionskin local server, your coding agent and the file on disk, stacked top to bottom, passing a batch of changes around a five step loop.</title>
+          <defs>
+            <marker id="ahv" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head" d="M0 0 10 5 0 10Z"/></marker>
+          </defs>
+          <rect class="d-frame" x="6" y="6" width="388" height="688" rx="22"/>
+          <text class="d-gl" x="28" y="34">Your computer</text>
+          <text class="d-gl" x="40" y="66">Browser tab</text>
+          <rect class="d-node hot" x="40" y="78" width="320" height="84" rx="14"/>
+          <text class="d-t" x="60" y="114">Editor and sidebar</text>
+          <text class="d-s" x="60" y="138">edits, comments, pins, revert</text>
+          <text class="d-gl" x="40" y="250">Onionskin</text>
+          <rect class="d-node" x="40" y="262" width="320" height="84" rx="14"/>
+          <text class="d-t" x="60" y="298">Local server</text>
+          <text class="d-s" x="60" y="322">loopback only, keeps snapshots</text>
+          <text class="d-gl" x="40" y="434">Your agent</text>
+          <rect class="d-node" x="40" y="446" width="320" height="84" rx="14"/>
+          <text class="d-t" x="60" y="482">Coding agent</text>
+          <text class="d-s" x="60" y="506">Claude Code or Codex</text>
+          <rect class="d-node hot" x="40" y="586" width="320" height="84" rx="14"/>
+          <text class="d-t" x="60" y="622">report.docx</text>
+          <text class="d-s" x="60" y="646">the real file on disk</text>
+
+          <path class="d-e" d="M150 162V256" marker-end="url(#ahv)"/>
+          <path class="d-e" d="M250 262V168" marker-end="url(#ahv)"/>
+          <path class="d-e" d="M150 346V440" marker-end="url(#ahv)"/>
+          <path class="d-e" d="M250 446V352" marker-end="url(#ahv)"/>
+          <path class="d-e" d="M200 530V580" marker-end="url(#ahv)"/>
+          <g><circle class="d-num" cx="150" cy="208" r="11"/><text class="d-numt" x="150" y="212" text-anchor="middle">1</text></g>
+          <g><circle class="d-num" cx="250" cy="214" r="11"/><text class="d-numt" x="250" y="218" text-anchor="middle">5</text></g>
+          <g><circle class="d-num" cx="150" cy="392" r="11"/><text class="d-numt" x="150" y="396" text-anchor="middle">2</text></g>
+          <g><circle class="d-num" cx="250" cy="398" r="11"/><text class="d-numt" x="250" y="402" text-anchor="middle">4</text></g>
+          <g><circle class="d-num" cx="200" cy="555" r="11"/><text class="d-numt" x="200" y="559" text-anchor="middle">3</text></g>
+        </svg>
+        
+        <figcaption>
+          <ol class="loop">
+<!--gen:loop--><li>You press Send. The editor hands your edits, comments, pins and overall note to the Onionskin server on your computer.</li>
+<li>Your coding agent picks up that batch: Onionskin's own background agent (Claude Code) when you started from a terminal, or the agent you are talking to when you started from inside Claude Code or Codex.</li>
+<li>The agent edits the real file on disk.</li>
+<li>The agent reports back, and Onionskin checks the file against the snapshot it took before the run.</li>
+<li>The editor reloads in place and keeps your position, with a feed of what changed and a revert button.</li><!--/gen:loop-->
+          </ol>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="sec privacy" id="privacy" aria-labelledby="privacy-h">
+    <div class="wrap priv">
+<!--gen:privacy--><div><h2 id="privacy-h">The editor runs on your machine</h2><p class="lead">The editor and its small server run on your computer, on the loopback address only, and the page makes no outside requests. When you press Send, your document goes to the coding agent you already use, Claude Code or Codex. Every batch carries the text of the whole document, not only the part you commented on, because the agent needs it to find the right place.</p><p class="small">Your coding agent works the way it already does. Whatever it normally sends to its model provider still applies.</p></div>
+<ul class="facts"><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>No Onionskin cloud</b><span>Onionskin itself does not upload your files. There is no Onionskin account and no Onionskin cloud.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Loopback only</b><span>The local server listens on loopback, so other machines on your network cannot reach it.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Snapshots before changes</b><span>Onionskin keeps snapshots of your file, including the original, so a revert is one click.</span></li><li><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><b>Some things never leave the Mac</b><span>Quick fixes and the plain quick commands are answered on your Mac and go nowhere else.</span></li></ul><!--/gen:privacy-->
+    </div>
+  </section>
+
+  <section class="sec formats-sec" id="formats" aria-labelledby="formats-h">
+    <div class="wrap">
+      <div class="head wide">
+        <h2 id="formats-h">Works with the files you already have</h2>
+        <p>Open a Word, Excel or PowerPoint file. The agent edits that same file.</p>
+      </div>
+      <ul class="formats">
+<!--gen:formats--><li><span class="fmt">DOCX</span><div><b>Word (.docx)</b><span>Documents and reports</span></div></li>
+<li><span class="fmt">XLSX</span><div><b>Excel (.xlsx)</b><span>Workbooks and sheets</span></div></li>
+<li><span class="fmt">PPTX</span><div><b>PowerPoint (.pptx)</b><span>Decks and slides</span></div></li><!--/gen:formats-->
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec faq-sec" id="faq" aria-labelledby="faq-h">
+    <div class="wrap faq-grid">
+      <h2 id="faq-h">Questions</h2>
+      <div class="faq">
+<!--gen:faq--><details><summary>Is Onionskin released?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is pre-release 0.0.1.</p></details>
+<details><summary>Can I try it without installing anything?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Yes. The Try-it demo page replays one real recorded agent session in your browser. No install, and no AI runs.</p></details>
+<details><summary>Which coding agents does it work with?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Claude Code and Codex, in two different ways. Type <code>onionskin report.docx</code> in a terminal and Onionskin starts its own background agent, which is Claude Code only and runs on your Claude plan. Or tell Claude Code or Codex: <code>open report.docx in Onionskin</code>, and the agent you are talking to does the work. We exercised both in real agent runs.</p></details>
+<details><summary>Does my file leave my computer?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>The editor and its small server run on your computer, and the page makes no outside requests. When you press Send, your document goes to the coding agent you already use, Claude Code or Codex, so whatever that agent normally sends to its model provider still applies. Every batch carries the text of the whole document, not only the part you commented on, because the agent needs it to find the right place. Only quick fixes and the plain quick commands stay entirely on your Mac.</p></details>
+<details><summary>Which file formats does it support?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Word (.docx), Excel (.xlsx) and PowerPoint (.pptx). All three run the whole loop, and the file's own formatting is kept because edits go through the same engine that renders it.</p></details>
+<details><summary>What does it need, and what is missing?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Claude Code or Codex already installed: Onionskin is for people who already use one of them. macOS only so far, because it is the only platform tested, and Node.js 22 or newer. There is no Windows or Linux version and no real-time collaboration. Quick fixes also need macOS 26 or later, Apple silicon and Apple Intelligence turned on. If something is off, run onionskin doctor to check the install.</p></details>
+<details><summary>How well is it tested?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Over 1,000 unit tests and 300 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds.</p></details>
+<details><summary>Can the background agent see my other files?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>No. It can change your document only through Onionskin's own commands. In our tests, reading outside its two folders, your home folder, network fetches and writes elsewhere were all refused. It is started without API keys in its environment. It can run read-only commands and read files inside its own work folder and the skill's reference folder.</p></details>
+<details><summary>Can the agent add table rows or slides? What about charts?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>Yes to the first two: it can add or delete a table row or column in Word, and copy, delete or move a slide in PowerPoint. Charts are declined with a plain message that says to insert the chart in Word or PowerPoint. A file produced by the new table edits was opened in Microsoft Word, and one with the new slide edits was checked with LibreOffice and a Python reader. It has not been opened in Microsoft PowerPoint.</p></details>
+<details><summary>What is the license?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>MIT. Onionskin builds on a fork of the office-engine document engine by p10node (MIT) and on ideas from Peter Yang's human-review (MIT).</p></details>
+<details><summary>How is this different from pasting a document into a chat?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>A chat hands you text back, and you copy it into the file yourself. With Onionskin, each note is anchored to the exact spot in the document, your agent edits the real .docx, .xlsx or .pptx file, and you see every change land in place with a revert button.</p></details>
+<details><summary>Who made it?<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary><p>abe238. You can find him at abediaz.com, on GitHub as abe238 and on X as @abe238.</p></details><!--/gen:faq-->
+      </div>
+    </div>
+  </section>
+
+  <section class="sec credits" id="credits" aria-labelledby="credits-h">
+    <div class="wrap">
+      <h2 id="credits-h">Built in the open</h2>
+      <div class="two">
+        <div class="panel">
+          <h3>Credits</h3>
+          <p>Onionskin stands on two MIT projects.</p>
+          <ul>
+<!--gen:credits--><li><a href="https://github.com/p10node/office-engine">office-engine</a> by p10node (MIT): the document engine that renders and edits .docx, .xlsx and .pptx in the browser; Onionskin builds on a fork of it.</li>
+<li><a href="https://github.com/petergyang/human-review">human-review</a> by Peter Yang (MIT): the human review loop idea: a command line tool and local server your agent waits on while you mark things up.</li><!--/gen:credits-->
+          </ul>
+        </div>
+        <!-- BEGIN agent-install: instructions for AI coding agents -->
+        <div class="panel" id="agents">
+          <h3>For AI coding agents</h3>
+<!--gen:agentinstall--><p>Install steps for AI coding agents.</p>
+<ol><li>Install once: paste this sentence into Claude Code or Codex: Install Onionskin from https://github.com/abe238/onionskin</li><li>Open a file: say &quot;<code>open report.docx in Onionskin</code>&quot; (use the real file name), or run <code>onionskin report.docx</code> in a terminal.</li><li>The editor opens in the user's browser. When the user presses Send, apply their edits, comments, pins and overall note to that file.</li></ol><!--/gen:agentinstall-->
+          <p>Machine-readable versions of this page: <a href="/llms.txt">llms.txt</a>, <a href="/llms-full.txt">llms-full.txt</a> and <a href="/index.md">index.md</a>.</p>
+        </div>
+        <!-- END agent-install -->
+      </div>
+    </div>
+  </section>
+
+  <section class="sec fact-fallback" id="onionskin-paper" aria-labelledby="fact-fallback-h">
+    <div class="wrap fact-card">
+<!--gen:factfallback--><h2 id="fact-fallback-h">Why Onionskin?</h2>
+<p>Onionskin is a thin, strong, translucent writing paper with a high cotton content. Offices used it for typewritten carbon copies, permanent files and airmail. Thin sheets helped businesses save money on storage space, postage and copy typists. It was widely sold for office work from the 1920s to the 1970s.</p>
+<p>Animators drew on it too. With the previous and next drawings placed under a sheet over a light, they could draw the frame in between. Animation software still calls that view onion skinning.</p>
+<p>The name fits this tool: you lay your notes over the document, and the agent works through them, like tracing over a sheet you can see through.</p>
+<p class="src">Sources: <a href="https://cameo.mfa.org/wiki/Onionskin_paper">CAMEO, Museum of Fine Arts, Boston</a>, <a href="https://ajhs.org/blog/old-office-document-formats-hias-archive">American Jewish Historical Society</a>, <a href="https://en.wikipedia.org/wiki/Onion_skinning">Wikipedia: Onion skinning</a></p><!--/gen:factfallback-->
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p class="by">Made by <a href="https://github.com/abe238">abe238</a></p>
+    <p class="foot-note">Onionskin is an independent open-source project. <a href="#onionskin-paper" data-fact aria-haspopup="dialog">Why the name Onionskin?</a></p>
+    <div class="foot-cols">
+      <div><h2>Follow</h2><ul>
+          <li><a href="https://github.com/abe238">GitHub: abe238</a></li>
+          <li><a href="https://x.com/abe238">X: @abe238</a></li>
+          <li><a href="https://abediaz.com">abediaz.com</a></li>
+        </ul></div>
+      <div><h2>For AI agents</h2><ul>
+          <li><a href="/llms.txt">llms.txt</a></li>
+          <li><a href="/llms-full.txt">llms-full.txt</a></li>
+          <li><a href="/index.md">Page as Markdown</a></li>
+          <li><a href="#agents">Install steps for agents</a></li>
+        </ul></div>
+    </div>
+    <p class="fine"><!--gen:status-->Available now. Open source under the MIT license.<!--/gen:status--> Onionskin is open source under the MIT license. Fonts: Geist and JetBrains Mono (SIL Open Font License, <a href="/assets/fonts/Geist-OFL.txt">Geist</a>, <a href="/assets/fonts/JetBrainsMono-OFL.txt">JetBrains Mono</a>). This page makes no outside requests and sets no cookies.</p>
+  </div>
+</footer>
+
+<dialog class="fact fact-card" id="fact-dialog" aria-labelledby="fact-h" data-lens="26 64" data-spec>
+  <button class="iconbtn close" type="button" data-close aria-label="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <div class="fact-body">
+<!--gen:fact--><h2 id="fact-h" tabindex="-1" autofocus>Why Onionskin?</h2>
+<p>Onionskin is a thin, strong, translucent writing paper with a high cotton content. Offices used it for typewritten carbon copies, permanent files and airmail. Thin sheets helped businesses save money on storage space, postage and copy typists. It was widely sold for office work from the 1920s to the 1970s.</p>
+<p>Animators drew on it too. With the previous and next drawings placed under a sheet over a light, they could draw the frame in between. Animation software still calls that view onion skinning.</p>
+<p>The name fits this tool: you lay your notes over the document, and the agent works through them, like tracing over a sheet you can see through.</p>
+<p class="src">Sources: <a href="https://cameo.mfa.org/wiki/Onionskin_paper">CAMEO, Museum of Fine Arts, Boston</a>, <a href="https://ajhs.org/blog/old-office-document-formats-hias-archive">American Jewish Historical Society</a>, <a href="https://en.wikipedia.org/wiki/Onion_skinning">Wikipedia: Onion skinning</a></p><!--/gen:fact-->
+<!--gen:factcta--><p class="fact-cta"><a class="btn btn-primary" href="https://github.com/abe238/onionskin">Star on GitHub</a></p><!--/gen:factcta-->
+  </div>
+</dialog>
+
+<div id="live" class="visually-hidden" aria-live="polite"></div>
+<!--gen:sitedata--><script type="application/json" id="site-data">{"name":"Onionskin","url":"https://onionskin.abediaz.ai/","description":"Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.","status":"Available now. Open source under the MIT license.","launched":true,"formats":[".docx",".xlsx",".pptx"],"agents":["Claude Code","Codex"],"license":"MIT","author":{"name":"abe238","url":"https://abediaz.com"},"links":{"site":"https://onionskin.abediaz.ai/","demo":"https://onionskin.abediaz.ai/try/","repo":"https://github.com/abe238/onionskin","repoPublic":true,"authorSite":"https://abediaz.com","github":"https://github.com/abe238","x":"https://x.com/abe238"},"install":{"note":"Install steps for AI coding agents.","setup":"Install Onionskin from https://github.com/abe238/onionskin","skill":"open \u003cfile> in Onionskin","example":"onionskin report.docx","steps":["Install once: paste this sentence into Claude Code or Codex: Install Onionskin from https://github.com/abe238/onionskin","Open a file: say \"open report.docx in Onionskin\" (use the real file name), or run onionskin report.docx in a terminal.","The editor opens in the user's browser. When the user presses Send, apply their edits, comments, pins and overall note to that file."]},"faq":[{"question":"Is Onionskin released?","answer":"Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is pre-release 0.0.1."},{"question":"Can I try it without installing anything?","answer":"Yes. The Try-it demo page replays one real recorded agent session in your browser. No install, and no AI runs."},{"question":"Which coding agents does it work with?","answer":"Claude Code and Codex, in two different ways. Type onionskin report.docx in a terminal and Onionskin starts its own background agent, which is Claude Code only and runs on your Claude plan. Or tell Claude Code or Codex: open report.docx in Onionskin, and the agent you are talking to does the work. We exercised both in real agent runs."},{"question":"Does my file leave my computer?","answer":"The editor and its small server run on your computer, and the page makes no outside requests. When you press Send, your document goes to the coding agent you already use, Claude Code or Codex, so whatever that agent normally sends to its model provider still applies. Every batch carries the text of the whole document, not only the part you commented on, because the agent needs it to find the right place. Only quick fixes and the plain quick commands stay entirely on your Mac."},{"question":"Which file formats does it support?","answer":"Word (.docx), Excel (.xlsx) and PowerPoint (.pptx). All three run the whole loop, and the file's own formatting is kept because edits go through the same engine that renders it."},{"question":"What does it need, and what is missing?","answer":"Claude Code or Codex already installed: Onionskin is for people who already use one of them. macOS only so far, because it is the only platform tested, and Node.js 22 or newer. There is no Windows or Linux version and no real-time collaboration. Quick fixes also need macOS 26 or later, Apple silicon and Apple Intelligence turned on. If something is off, run onionskin doctor to check the install."},{"question":"How well is it tested?","answer":"Over 1,000 unit tests and 300 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds."},{"question":"Can the background agent see my other files?","answer":"No. It can change your document only through Onionskin's own commands. In our tests, reading outside its two folders, your home folder, network fetches and writes elsewhere were all refused. It is started without API keys in its environment. It can run read-only commands and read files inside its own work folder and the skill's reference folder."},{"question":"Can the agent add table rows or slides? What about charts?","answer":"Yes to the first two: it can add or delete a table row or column in Word, and copy, delete or move a slide in PowerPoint. Charts are declined with a plain message that says to insert the chart in Word or PowerPoint. A file produced by the new table edits was opened in Microsoft Word, and one with the new slide edits was checked with LibreOffice and a Python reader. It has not been opened in Microsoft PowerPoint."},{"question":"What is the license?","answer":"MIT. Onionskin builds on a fork of the office-engine document engine by p10node (MIT) and on ideas from Peter Yang's human-review (MIT)."},{"question":"How is this different from pasting a document into a chat?","answer":"A chat hands you text back, and you copy it into the file yourself. With Onionskin, each note is anchored to the exact spot in the document, your agent edits the real .docx, .xlsx or .pptx file, and you see every change land in place with a revert button."},{"question":"Who made it?","answer":"abe238. You can find him at abediaz.com, on GitHub as abe238 and on X as @abe238."}],"openRepoDescription":"Navigates this tab to the Onionskin GitHub repository at https://github.com/abe238/onionskin."}</script><!--/gen:sitedata-->
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Onionskin
+
+> Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.
+
+Status: Available now. Open source under the MIT license.
+
+Type onionskin report.docx in a terminal, or tell Claude Code or Codex: open report.docx in Onionskin. The file opens in a browser editor with a review panel. Edit it, comment on a selection, cell, range, shape or slide, drop numbered pins, write one overall note, then press Send. The agent changes the real file, and the page reloads in place and keeps your position.
+
+Install for AI coding agents. Install steps for AI coding agents.
+
+1. Install once: paste this sentence into Claude Code or Codex: Install Onionskin from https://github.com/abe238/onionskin
+2. Open a file: say "open report.docx in Onionskin" (use the real file name), or run onionskin report.docx in a terminal.
+3. The editor opens in the user's browser. When the user presses Send, apply their edits, comments, pins and overall note to that file.
+
+## Docs
+
+- [Landing page in Markdown](https://onionskin.abediaz.ai/index.md): How it works, features, privacy, formats, FAQ and credits
+- [Full text](https://onionskin.abediaz.ai/llms-full.txt): The same content in one file, including install steps and the FAQ
+
+## Project
+
+- [Try-it demo](https://onionskin.abediaz.ai/try/): A recorded agent session replayed in the browser, no install
+- [GitHub repository](https://github.com/abe238/onionskin): Source code under the MIT license
+- [abe238](https://abediaz.com): Author's website
+
+## Optional
+
+- [abe238 on GitHub](https://github.com/abe238): Author's GitHub profile
+- [abe238 on X](https://x.com/abe238): Author's posts
+- [office-engine](https://github.com/p10node/office-engine): MIT project by p10node that Onionskin builds on
+- [human-review](https://github.com/petergyang/human-review): MIT project by Peter Yang that Onionskin builds on

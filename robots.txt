@@ -1,0 +1,24 @@
+# Onionskin: search engines and AI crawlers and agents are welcome.
+# Tokens below are the ones each vendor documents; see AGENT-SURFACES.md for sources.
+
+User-agent: Googlebot
+User-agent: Google-Extended
+User-agent: Applebot
+User-agent: Applebot-Extended
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: ClaudeBot
+User-agent: Claude-User
+User-agent: Claude-SearchBot
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: CCBot
+Allow: /
+Disallow: /_preview/
+
+User-agent: *
+Allow: /
+Disallow: /_preview/
+
+Sitemap: https://onionskin.abediaz.ai/sitemap.xml
