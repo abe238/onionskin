@@ -160,7 +160,7 @@ The name fits this tool: you lay your notes over the document, and the agent wor
 Sources:
 
 - [CAMEO, Museum of Fine Arts, Boston](https://cameo.mfa.org/wiki/Onionskin_paper)
-- [American Jewish Historical Society](https://ajhs.org/blog/old-office-document-formats-hias-archive)
+- [American Jewish Historical Society, HIAS archives project](https://ontherescuefront.wordpress.com/2016/03/04/old-office-document-formats-from-the-hias-archive/)
 - [Wikipedia: Onion skinning](https://en.wikipedia.org/wiki/Onion_skinning)
 
 ## Credits
