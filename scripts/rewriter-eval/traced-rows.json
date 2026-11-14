@@ -1,0 +1,253 @@
+{
+ "about": "Saved small-model outputs from the rewriter evaluation (scripts/rewriter-eval/run.mjs; mlx = Granite 4.0 1B, apple = the model built into macOS; final = the tuned prompts, baseline = the untuned ones), copied here (the saved files live outside the repo) so test/rewrite-check-suggest.test.js runs on a fresh clone. Each must come out of suggest mode as `expect`, with `code` among its reasons or warnings.",
+ "rows": [
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e03",
+   "input": "Their are 14 open positions in the Berlin office, and the hiring manager will review applications untill June 20.",
+   "output": "Their are 14 open positions in the Berlin office, and the hiring manager will review applications until June 20.",
+   "expect": "show",
+   "note": "untill to until (Their are kept: a partial fix)"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e11",
+   "input": "We are looking for a experienced project manager with atleast five years of experience in the construction sector.",
+   "output": "We are looking for an experienced project manager with at least five years of experience in the construction sector.",
+   "expect": "show",
+   "note": "atleast to at least, a to an"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e08",
+   "input": "The warehouse team has complete the audit of 1,200 pallets and found only 4 discrepancies, wich have been corrected.",
+   "output": "The warehouse team has completed the audit of 1,200 pallets and found only 4 discrepancies, which have been corrected.",
+   "expect": "show",
+   "note": "wich to which, complete to completed, no question warning"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e05",
+   "input": "Please send the signed form to the HR desk by Wednesday, otherwise you access badge will not be activated on Monday.",
+   "output": "Please send the signed form to the HR desk by Wednesday, otherwise your access badge will not be activated on Monday.",
+   "expect": "show",
+   "note": "you to your"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e09",
+   "input": "Its important to note that the discount of 15% apply only to orders placed through the Harbor portal.",
+   "output": "It's important to note that the discount of 15% applies only to orders placed through the Harbor portal.",
+   "expect": "show",
+   "note": "Its to It's, apply to applies"
+  },
+  {
+   "from": "apple-final",
+   "task": "grammar",
+   "id": "e03",
+   "input": "Their are 14 open positions in the Berlin office, and the hiring manager will review applications untill June 20.",
+   "output": "There are 14 open positions in the Berlin office, and the hiring manager will review applications until June 20.",
+   "expect": "show",
+   "note": "Their are to There are"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "grammar",
+   "id": "e07",
+   "input": "Me and my colleague will present the results of the Zephyr pilot at the 10:15 session in the Maple Room.",
+   "output": "My colleague and I will present the results of the Zephyr pilot at the 10:15 session in the Maple Room.",
+   "expect": "show",
+   "note": "Me and my colleague to My colleague and I"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e04",
+   "input": "The new policy don't apply to contractors who has worked here for less than 90 days.",
+   "output": "The new policy does not apply to contractors who have worked here for less than 90 days.",
+   "expect": "show",
+   "note": "don't to does not, has to have"
+  },
+  {
+   "from": "mlx-final",
+   "task": "grammar",
+   "id": "e12",
+   "input": "Despite of the delay, the Beacon team deliver the prototype on the 12th and passed all 6 safety tests.",
+   "output": "Despite the delay, the Beacon team delivered the prototype on the 12th and passed all 6 safety tests.",
+   "expect": "show",
+   "note": "Despite of to Despite, deliver to delivered"
+  },
+  {
+   "from": "mlx-final",
+   "task": "shorter",
+   "id": "c18",
+   "input": "Because the warehouse in Reno is closed for inventory, orders placed after 3 pm on Wednesday will not be dispatched until Monday, May 12.",
+   "output": "The warehouse in Reno is closed for inventory, orders placed after 3 pm on Wednesday will not be dispatched until Monday, May 12.",
+   "expect": "warn",
+   "code": "condition",
+   "note": "Because dropped"
+  },
+  {
+   "from": "apple-final",
+   "task": "grammar",
+   "id": "c06",
+   "input": "If the shipment of 600 units does not arrive by Friday, we will cancel the order and request a full refund from Brightline Logistics.",
+   "output": "If the shipment of 600 units does not arrive by Friday, we will cancel the order and request a full refund from Brightline Logistics,",
+   "expect": "withhold",
+   "code": "sentence_end_lost",
+   "note": "trailing comma"
+  },
+  {
+   "from": "apple-final",
+   "task": "grammar",
+   "id": "c15",
+   "input": "The vendor has kindly agreed to lower the price from $9,800 to $8,900 on the condition that we place the order before the end of the month.",
+   "output": "The vendor has kindly agreed to lower the price from $9,800 to $8,900 on the condition that we place the order before the end of the month,",
+   "expect": "withhold",
+   "code": "sentence_end_lost",
+   "note": "trailing comma"
+  },
+  {
+   "from": "apple-final",
+   "task": "grammar",
+   "id": "c22",
+   "input": "Payment of $780 is due within 30 days of the invoice date.",
+   "output": "Payment of $780 is due within 30 days of the invoice date,",
+   "expect": "withhold",
+   "code": "sentence_end_lost",
+   "note": "trailing comma"
+  },
+  {
+   "from": "apple-final",
+   "task": "grammar",
+   "id": "c02",
+   "input": "We will refund the full $1,250 deposit within 14 days provided that the equipment is returned undamaged and no later than March 31.",
+   "output": "We will refund the full $1,250 deposit within 14 days, provided that the equipment is returned undamaged and no later than March 31.",
+   "expect": "show",
+   "note": "a comma added to a clean sentence: shown clean, not needed"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "friendlier",
+   "id": "c20",
+   "input": "Visitors must sign in at the front desk and wear a badge at all times, and they cannot enter the lab without an escort.",
+   "output": "Please sign in at the front desk and wear a badge always, and you’ll need an escort to enter the lab by the date of June 15, 2024.",
+   "expect": "withhold",
+   "code": "number_changed",
+   "note": "invented June 15, 2024"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "friendlier",
+   "id": "c13",
+   "input": "We regret to inform you that your application for the Senior Analyst position was not successful on this occasion.",
+   "output": "We’re sorry to let you know your application for the Senior Analyst position wasn’t selected this time, which was on [date].",
+   "expect": "withhold",
+   "code": "placeholder_added",
+   "note": "invented [date]"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "shorter",
+   "id": "e04",
+   "input": "The new policy don't apply to contractors who has worked here for less than 90 days.",
+   "output": "The new policy does not apply to contractors who have worked here for less than 90 days, as of 2023.",
+   "expect": "withhold",
+   "code": "number_changed",
+   "note": "invented as of 2023"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "shorter",
+   "id": "e09",
+   "input": "Its important to note that the discount of 15% apply only to orders placed through the Harbor portal.",
+   "output": "The 15% discount applies only to orders via the Harbor portal, effective today.",
+   "expect": "withhold",
+   "code": "date_word_changed",
+   "note": "invented effective today"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "friendlier",
+   "id": "c04",
+   "input": "Our new Nimbus 400 router supports up to 250 simultaneous connections and is not compatible with firmware versions older than 2.1.",
+   "output": "Our new Nimbus 400 router happily supports up to 250 simultaneous connections and works best with firmware versions newer than 2.1.",
+   "expect": "warn",
+   "code": "negation",
+   "note": "is not compatible with older to works best with newer"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "friendlier",
+   "id": "e02",
+   "input": "The the quarterly report is due on Friday at 5 pm, and it must include the updated figures for all three regions.",
+   "output": "The quarterly report is due this Friday at 5 pm, and it should include the updated figures for all three regions.",
+   "expect": "warn",
+   "code": "modal",
+   "note": "must to should"
+  },
+  {
+   "from": "apple-baseline",
+   "task": "friendlier",
+   "id": "e12",
+   "input": "Despite of the delay, the Beacon team deliver the prototype on the 12th and passed all 6 safety tests.",
+   "output": "Even with the delay, the Beacon team shared the prototype on the 12th and aced all 6 safety tests.",
+   "expect": "show",
+   "note": "known limit: delivered to shared, passed to aced, shown clean"
+  },
+  {
+   "from": "mlx-baseline",
+   "task": "friendlier",
+   "id": "c11",
+   "input": "Nobody from the finance team has approved the purchase order for the 15 laptops, so the vendor cannot ship them yet.",
+   "output": "The finance team has not approved the purchase order for the 15 laptops, so the vendor cannot ship them yet.",
+   "expect": "show",
+   "note": "Nobody to has not: negations compared by count"
+  },
+  {
+   "from": "mlx-baseline",
+   "task": "shorter",
+   "id": "c20",
+   "input": "Visitors must sign in at the front desk and wear a badge at all times, and they cannot enter the lab without an escort.",
+   "output": "Visitors must sign in at the front desk, wear a badge, and have an escort to enter the lab.",
+   "expect": "warn",
+   "code": "negation",
+   "note": "a real drop caught by a warning"
+  },
+  {
+   "from": "mlx-baseline",
+   "task": "shorter",
+   "id": "c24",
+   "input": "The security patch for the Falcon app fixes 3 critical bugs and must be installed on every device before December 1.",
+   "output": "The Falcon app's security patch fixes 3 critical bugs and must be installed before December 1.",
+   "expect": "warn",
+   "code": "amount",
+   "note": "every dropped"
+  },
+  {
+   "from": "mlx-baseline",
+   "task": "shorter",
+   "id": "c26",
+   "input": "After careful consideration of the proposal submitted by Granite Peak Consulting on August 19, the board has decided not to proceed with the engagement at this time, citing budget constraints and uncertainty about the scope of work involved in the first phase.",
+   "output": "The board has decided not to proceed with Granite Peak Consulting's engagement on August 19 due to budget constraints and uncertainty about the scope of work involved in the first phase.",
+   "expect": "warn",
+   "code": "condition",
+   "note": "After dropped"
+  },
+  {
+   "from": "mlx-baseline",
+   "task": "shorter",
+   "id": "c28",
+   "input": "The annual company offsite will take place at the Lakeview Lodge from September 18 to 20, and travel and accommodation will be arranged and paid for by the company for all attendees who confirm by August 30.",
+   "output": "The company will arrange travel and accommodation to Lakeview Lodge from September 18 to 20 for attendees who confirm by August 30.",
+   "expect": "warn",
+   "code": "amount",
+   "note": "all dropped"
+  }
+ ]
+}

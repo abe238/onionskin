@@ -1,0 +1,46 @@
+Third-party notices
+
+Onionskin itself is MIT licensed (see LICENSE). It builds on the work below.
+
+1. human-review
+
+human-review (MIT), https://github.com/petergyang/human-review
+Copyright (c) 2026 Peter Yang
+The CLI + local server + blocking poll + lease/state-file design in src/ (poll/ack semantics, state names idle/listening/working/queued/stranded/closed/superseded/timeout,
+detached-server startup, exclusive temp-file writes) is ported from human-review. The MIT license text follows.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+The vendored engine in vendor/engine (office-engine fork, MIT) ships its own THIRD_PARTY_LICENSES.txt next to the code.
+
+2. office-engine (MIT), by p10node
+The Word, Excel and PowerPoint viewer and editor engine that runs in the browser, and its DOM-free core that `onionskin apply` runs under Node. Onionskin vendors a fork of it:
+vendor/engine (browser build) and vendor/engine-node (Node build), both pinned by vendor/engine.lock.json to one engine commit.
+Copyright (c) 2026 p10node. The license text is in vendor/engine-node/LICENSE; vendor/engine/THIRD_PARTY_LICENSES.txt lists what the engine bundles in turn.
+
+3. React and React DOM (MIT)
+Copyright (c) Meta Platforms, Inc. and affiliates. The web app (web/src) is built with React 19 and Vite; React is bundled into web/dist. Its license notice is in
+vendor/engine/THIRD_PARTY_LICENSES.txt and in node_modules/react/LICENSE.
+
+4. The agent skill (skills/onionskin) descends from the human-review skill (see 1): the loop wording for Claude Code (background poll) and for Codex and other agents
+(foreground, bounded polls) is adapted from it.
+
+5. Quick fixes (Apple's built-in model; nothing is downloaded)
+Quick fixes use the on-device model that is part of macOS, under Apple's terms, through the small helper scripts/rewriter/apple/onionskin-fm, which
+Onionskin builds from its own source (scripts/rewriter/apple/main.swift, MIT, like the rest of Onionskin) and ships in the zip. No model is shipped or downloaded.
+
+Playwright (Apache-2.0) and Vite (MIT) are development dependencies used by the tests and the build; they are not shipped.
+
+3. Test fixtures
+
+`test/fixtures/engine/sample.docx`, `sample.xlsx` and `sample.pptx` are the sample documents of the office-engine fork's playground (MIT, see 2), copied unchanged; they were written with python-docx, openpyxl and python-pptx. Real Office files used by some tests are Apache POI test data (Apache-2.0, https://github.com/apache/poi), downloaded on demand by `scripts/fetch-fixtures.mjs` into the gitignored `test/fixtures/cache/` and never committed.

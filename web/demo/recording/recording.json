@@ -1,0 +1,166 @@
+{
+  "schema": "onionskin.demo/1",
+  "real": true,
+  "agent": "Claude Sonnet 5.5",
+  "date": "2026-11-12",
+  "format": "docx",
+  "v0_sha256": "a8a85e4f6d3082ee5edabdbb9274052abb47b258720e8ff34ab7dae24e513f9a",
+  "v1_sha256": "1ba913b01c59932273df0f7429e6f56221db9994c9c2bcbc3c990da022c7a1e0",
+  "comments": [
+    {
+      "n": 1,
+      "text": "Cut the long ending of this sentence.",
+      "quote": "Welcome to Maple Court. We are delighted that you have decided to join our community, and we hope that you will feel at home here very quickly.",
+      "prefix": "",
+      "suffix": ""
+    },
+    {
+      "n": 2,
+      "text": "Shorten this sentence.",
+      "quote": "Trash and recycling are collected every Tuesday morning, and bins should be placed at the curb by seven o'clock in the evening before pickup, so that the crew can reach them.",
+      "prefix": "",
+      "suffix": ""
+    },
+    {
+      "n": 3,
+      "text": "Make this sound friendlier.",
+      "quote": "If you have any questions about the building, you should contact the front office, which is open on weekdays from nine until five.",
+      "prefix": "",
+      "suffix": ""
+    }
+  ],
+  "overall_note": "Call the front office the Welcome Desk everywhere.",
+  "result": {
+    "summary": "Renamed the front office to Welcome Desk, trimmed two sentences, warmed one.",
+    "notes": [
+      {
+        "n": 1,
+        "status": "done",
+        "note": "Cut the ending."
+      },
+      {
+        "n": 2,
+        "status": "done",
+        "note": "Dropped the trailing clause."
+      },
+      {
+        "n": 3,
+        "status": "done",
+        "note": "Made it friendlier."
+      }
+    ]
+  },
+  "places": [
+    {
+      "change": "modified",
+      "diff": [
+        [
+          "…"
+        ],
+        [
+          "=",
+          "have decided to join our community"
+        ],
+        [
+          "-",
+          ", and we hope that you will feel at home here very quickly"
+        ],
+        [
+          "=",
+          "."
+        ]
+      ],
+      "text_start": "Welcome to Maple Court. We are delighted that you have decided to join our community."
+    },
+    {
+      "change": "modified",
+      "diff": [
+        [
+          "…"
+        ],
+        [
+          "=",
+          "o'clock in the evening before pickup"
+        ],
+        [
+          "-",
+          ", so that the crew can reach them"
+        ],
+        [
+          "=",
+          "."
+        ]
+      ],
+      "text_start": "Trash and recycling are collected every Tuesday morning, and bins should be placed at the curb by seven o'clock in the evening before pickup."
+    },
+    {
+      "change": "modified",
+      "diff": [
+        [
+          "…"
+        ],
+        [
+          "=",
+          "have any questions about the building, "
+        ],
+        [
+          "-",
+          "you should "
+        ],
+        [
+          "+",
+          "please feel free to "
+        ],
+        [
+          "=",
+          "contact the "
+        ],
+        [
+          "-",
+          "front office"
+        ],
+        [
+          "+",
+          "Welcome Desk"
+        ],
+        [
+          "=",
+          ", which is open on weekdays from"
+        ],
+        [
+          "…"
+        ]
+      ],
+      "text_start": "If you have any questions about the building, please feel free to contact the Welcome Desk, which is open on weekdays from nine until five."
+    },
+    {
+      "change": "modified",
+      "diff": [
+        [
+          "=",
+          "Our "
+        ],
+        [
+          "-",
+          "front office"
+        ],
+        [
+          "+",
+          "Welcome Desk"
+        ],
+        [
+          "=",
+          " team looks forward to meeting you"
+        ],
+        [
+          "…"
+        ]
+      ],
+      "text_start": "Our Welcome Desk team looks forward to meeting you at the next coffee morning in the lobby."
+    }
+  ],
+  "timing": {
+    "working_ms": 39,
+    "result_ms": 18340
+  }
+}

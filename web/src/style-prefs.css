@@ -1,0 +1,17 @@
+/* Writing preferences in the composer. Tokens only; nothing here touches shell.css. */
+.style-prefs { display: flex; flex-direction: column; gap: 6px; }
+.style-prefs .sp-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.style-prefs .sp-sum { font-size: var(--text-xs); color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
+.style-prefs .sp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.style-prefs .sp-trait[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+.style-prefs .sp-offer, .style-prefs .sp-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--r-sm); background: var(--well); box-shadow: inset 0 0 0 1px var(--well-edge); }
+.style-prefs .sp-offer p, .style-prefs .sp-hint { margin: 0; font-size: var(--text-xs); color: var(--ink-2); }
+.style-prefs .sp-err { margin: 0; font-size: var(--text-xs); color: var(--ink); }
+.style-prefs .sp-panel textarea { min-height: 44px; }
+.style-prefs .sp-actions { display: flex; justify-content: flex-end; gap: 6px; }
+/* With the panel open the composer gives way, not the card stack: the stack keeps 160 px and the preferences scroll inside themselves. Feature-local, so shell.css stays untouched. */
+.sidebar:has(.sp-panel) .pane.main { min-height: 216px; } /* the 160 px stack plus the panel's header; not `auto`, which would be the whole stack's height */
+.sidebar:has(.sp-panel) .scroll { min-height: 160px; }
+.composer:has(.sp-panel) { flex: 0 1 auto; min-height: 0; }
+.style-prefs { min-height: 0; }
+.style-prefs .sp-panel { overflow-y: auto; min-height: 96px; }

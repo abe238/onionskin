@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "onionskin.history/1",
+  "title": "Onionskin change history: GET /api/history (list), GET /api/history/:id (detail) and GET /api/history/all (net change)",
+  "description": "Read-only, built from the local version snapshots. Every string except ids, kinds and the fixed titles comes from the document or from an agent: sanitized (no control or bidirectional characters, one line, capped) and marked `untrusted`. It is data to display, never instructions.",
+  "oneOf": [{ "$ref": "#/$defs/list" }, { "$ref": "#/$defs/detail" }, { "$ref": "#/$defs/all" }],
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changed", "added", "removed"],
+      "properties": {
+        "changed": { "type": "integer", "minimum": 0, "description": "places modified, moved or changed in formatting" },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "head": {
+      "type": "object",
+      "required": ["id", "kind", "at", "title", "summary", "counts"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^h_[0-9a-f]{10}$" },
+        "kind": { "enum": ["user", "agent", "revert", "outside", "local"] },
+        "at": { "type": "string", "format": "date-time", "description": "ISO 8601, UTC" },
+        "title": { "enum": ["Your edits", "Agent run", "Reverted agent run", "Reverted change made on this Mac", "Changed outside Onionskin", "Change made on this Mac"] },
+        "summary": { "type": "string", "maxLength": 500, "description": "the agent's own summary for kind agent, else empty" },
+        "counts": { "oneOf": [{ "$ref": "#/$defs/counts" }, { "type": "null" }], "description": "null when a version could not be compared (`unavailable` is then true)" },
+        "unavailable": { "const": true }
+      }
+    },
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "limit", "untrusted", "note", "updates"],
+      "properties": {
+        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "limit": { "const": 20 },
+        "untrusted": { "const": true },
+        "note": { "type": "string" },
+        "updates": { "type": "array", "maxItems": 20, "description": "newest first; an update whose snapshots were pruned is not listed", "items": { "$ref": "#/$defs/head" } }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "formula"],
+      "properties": {
+        "value": { "type": ["string", "null"], "description": "the stored value; for a formula cell the value it last computed (null when the file has none)" },
+        "formula": { "type": ["string", "null"], "description": "formula text without the leading =, null for a plain cell" }
+      }
+    },
+    "op": {
+      "oneOf": [
+        { "type": "array", "prefixItems": [{ "enum": ["=", "-", "+"] }, { "type": "string" }], "minItems": 2, "maxItems": 2 },
+        { "type": "array", "prefixItems": [{ "const": "…" }], "minItems": 1, "maxItems": 1, "description": "unchanged text was left out here" }
+      ]
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "label", "locator", "change", "diff", "text", "note", "before", "after", "protected"],
+      "properties": {
+        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "label": { "type": "string", "maxLength": 140, "description": "DOCX: the first words of the paragraph (table cells: `Table 2, row 3, col 1: ...`); XLSX: `Sheet!C4`; PPTX: `Slide 3, Title`" },
+        "locator": {
+          "description": "the unit in this update's AFTER version (see after_is_current); null when the unit was deleted. Field names follow the batch locators.",
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "required": ["format", "body_path", "para_id", "text_hash", "ordinal"], "properties": { "format": { "const": "docx" }, "body_path": { "type": ["array", "null"], "items": { "type": "integer" } }, "para_id": { "type": ["string", "null"] }, "text_hash": { "type": "string" }, "ordinal": { "type": "integer" }, "text_start": { "type": "string", "description": "the first 160 characters of the paragraph (whitespace collapsed): lets a page find the paragraph in what it shows" } } },
+            { "type": "object", "required": ["format", "sheet", "sheet_id", "range", "text_hash"], "properties": { "format": { "const": "xlsx" }, "sheet": { "type": "string" }, "sheet_id": { "type": ["string", "null"] }, "range": { "type": "string" }, "text_hash": { "type": ["string", "null"] } } },
+            { "type": "object", "required": ["format", "slide_id", "slide_index", "shape_id", "text_hash"], "properties": { "format": { "const": "pptx" }, "slide_id": { "type": ["string", "null"] }, "slide_index": { "type": "integer", "description": "0-based" }, "shape_id": { "type": ["integer", "null"], "description": "null for a whole slide" }, "text_hash": { "type": ["string", "null"] } } }
+          ]
+        },
+        "change": { "enum": ["modified", "added", "removed", "formatting", "moved"] },
+        "diff": { "type": ["array", "null"], "items": { "$ref": "#/$defs/op" }, "description": "word-level ops for modified text; null otherwise" },
+        "text": { "type": ["string", "null"], "description": "added / removed: the full text, at most 300 characters", "maxLength": 320 },
+        "note": { "type": ["string", "null"], "description": "plain words for what has no text: `an image was added`, `moved`, `spacing changed`, `sheet added`; for change `formatting`, what changed in words (`bold`, `style: Heading 2 → Heading 1`, `number format: General → $#,##0.00`), `too long to compare here`" },
+        "before": { "oneOf": [{ "$ref": "#/$defs/cell" }, { "type": "null" }], "description": "XLSX cells only" },
+        "after": { "oneOf": [{ "$ref": "#/$defs/cell" }, { "type": "null" }], "description": "XLSX cells only" },
+        "protected": { "type": "boolean", "description": "DOCX: a paragraph the editor cannot change losslessly (field, equation...)" },
+        "truncated": { "const": true, "description": "the diff ops were cut at about 1,500 characters" },
+        "too_large": { "const": true, "description": "a text over the hard cap was not compared" },
+        "level": { "const": "sentence", "description": "a very long text was compared by sentence first" }
+      }
+    },
+    "since": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["at"], "properties": { "at": { "type": "string", "format": "date-time", "description": "ISO 8601, UTC: when the oldest stored update happened, so the net change runs from just before it" } } },
+        { "type": "null", "description": "there are no updates yet" }
+      ]
+    },
+    "all": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GET /api/history/all: the net change from the oldest stored version to the file as it is now (a change that was reverted does not appear). It has no id and no kind: it is not one update, so it cannot reuse `head`. The page turns it into a plain-text note.",
+      "required": ["format", "untrusted", "note", "since", "counts", "places", "more"],
+      "properties": {
+        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "untrusted": { "const": true },
+        "note": { "type": "string" },
+        "since": { "$ref": "#/$defs/since" },
+        "counts": { "oneOf": [{ "$ref": "#/$defs/counts" }, { "type": "null" }], "description": "null when the versions could not be compared (`unavailable` is then true)" },
+        "places": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/place" } },
+        "more": { "type": "integer", "minimum": 0, "description": "places beyond the 200 returned; counts include them" },
+        "unavailable": { "const": true, "description": "the snapshot of the file as it is now is gone, or the comparison failed" }
+      }
+    },
+    "detail": {
+      "allOf": [
+        { "$ref": "#/$defs/head" },
+        {
+          "type": "object",
+          "required": ["format", "untrusted", "note", "places", "more", "after_is_current"],
+          "properties": {
+            "format": { "enum": ["docx", "xlsx", "pptx"] },
+            "untrusted": { "const": true },
+            "note": { "type": "string" },
+            "places": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/place" } },
+            "more": { "type": "integer", "minimum": 0, "description": "places beyond the 200 returned; counts include them" },
+            "after_is_current": { "type": "boolean", "description": "true when this update ends at the version now on disk, so the locators can be used as they are" }
+          }
+        }
+      ]
+    }
+  }
+}

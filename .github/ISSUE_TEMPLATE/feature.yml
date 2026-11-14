@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an idea
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the job you want to get done, not only the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Onionskin to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File type
+      options: [Word (.docx), Excel (.xlsx), PowerPoint (.pptx), All of them, Not about one file type]
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `onionskin doctor`
+      description: Run `onionskin doctor` and paste everything it prints, so we know your setup.
+      render: text
+    validations:
+      required: true

@@ -1,0 +1,4138 @@
+{
+ "about": "Fix grammar benchmark: 200 synthetic office sentences, each with the sentence before and after it. group error = made from a correct reference by injecting the listed edits; group correct = already correct, the right answer is no change. Built by build-set.mjs from items.mjs; do not edit by hand.",
+ "splitRule": "within each group, in items.mjs order, position i (0-based) is tuning when i % 5 === 0, else test",
+ "items": [
+  {
+   "id": "ge001",
+   "split": "tune",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 24,
+   "before": "Thanks for joining the planning call this morning.",
+   "input": "I have attached teh final schedule for the warehouse move, and the movers will arrive at the loading dock on Tuesday at 8 am.",
+   "after": "Let me know if the timing causes any problems.",
+   "reference": "I have attached the final schedule for the warehouse move, and the movers will arrive at the loading dock on Tuesday at 8 am.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "the final schedule",
+     "to": "teh final schedule"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.541
+  },
+  {
+   "id": "ge002",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 21,
+   "before": "Your replacement badge was printed yesterday.",
+   "input": "Keep using the temporary pass at the east gate untill the guards confirm that your permanent card works in the turnstiles.",
+   "after": "This usually takes one business day.",
+   "reference": "Keep using the temporary pass at the east gate until the guards confirm that your permanent card works in the turnstiles.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "until the guards",
+     "to": "untill the guards"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.494
+  },
+  {
+   "id": "ge003",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 18,
+   "before": "Travel for the March summit is now open.",
+   "input": "You should recieve a confirmation email from our booking team within two hours of submitting the travel request.",
+   "after": "Contact the travel desk if it does not arrive.",
+   "reference": "You should receive a confirmation email from our booking team within two hours of submitting the travel request.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "receive",
+     "to": "recieve"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.453
+  },
+  {
+   "id": "ge004",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 19,
+   "before": "A quick update for all shift leads.",
+   "input": "The quarterly safety inspection has been moved to tommorow afternoon because the inspector from the county office is ill.",
+   "after": "Please make sure the fire exits are clear before 1 pm.",
+   "reference": "The quarterly safety inspection has been moved to tomorrow afternoon because the inspector from the county office is ill.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "tomorrow",
+     "to": "tommorow"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "date_word_changed"
+   ],
+   "maxCorpusSimilarity": 0.54
+  },
+  {
+   "id": "ge005",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 24,
+   "before": "Here is our first read on the late containers.",
+   "input": "We beleive the shipping delay was caused by the customs paperwork, not by the carrier, so we have asked the broker to review it.",
+   "after": "We expect an answer from the broker on Thursday.",
+   "reference": "We believe the shipping delay was caused by the customs paperwork, not by the carrier, so we have asked the broker to review it.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "believe",
+     "to": "beleive"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.559
+  },
+  {
+   "id": "ge006",
+   "split": "tune",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 22,
+   "before": "The lobby project is waiting on one decision.",
+   "input": "The vendor sent two quotes last week, and we still need to decide wich one fits the budget for the lobby renovation.",
+   "after": "I suggest we discuss it at the Monday meeting.",
+   "reference": "The vendor sent two quotes last week, and we still need to decide which one fits the budget for the lobby renovation.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "which one",
+     "to": "wich one"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.578
+  },
+  {
+   "id": "ge007",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 21,
+   "before": "Payroll is preparing the year-end forms.",
+   "input": "Please update the mailing adress on your payroll profile before Friday so that your year-end tax form reaches the right place.",
+   "after": "The profile page is under Settings in the staff portal.",
+   "reference": "Please update the mailing address on your payroll profile before Friday so that your year-end tax form reaches the right place.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "mailing address",
+     "to": "mailing adress"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.532
+  },
+  {
+   "id": "ge008",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 18,
+   "before": "Here is a short summary of Sunday's outage.",
+   "input": "The fault occured shortly after the nightly backup started, and it lasted about forty minutes before service returned.",
+   "after": "No customer data was lost.",
+   "reference": "The fault occurred shortly after the nightly backup started, and it lasted about forty minutes before service returned.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "occurred",
+     "to": "occured"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.484
+  },
+  {
+   "id": "ge009",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_common",
+   "words": 23,
+   "before": "The new ticketing tool goes live next month.",
+   "input": "I have added the training sessions to the shared calender, so everyone on the support team can pick a slot that suits them.",
+   "after": "Each session runs for ninety minutes.",
+   "reference": "I have added the training sessions to the shared calendar, so everyone on the support team can pick a slot that suits them.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "calendar",
+     "to": "calender"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.53
+  },
+  {
+   "id": "ge010",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 24,
+   "before": "New safety rules apply on the factory floor from June 1.",
+   "input": "Staff who paid for their own safety boots can claim a reimbursment of up to $85 by submitting the receipt to the finance office.",
+   "after": "Claims must be made within 30 days of purchase.",
+   "reference": "Staff who paid for their own safety boots can claim a reimbursement of up to $85 by submitting the receipt to the finance office.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "reimbursement",
+     "to": "reimbursment"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.493
+  },
+  {
+   "id": "ge011",
+   "split": "tune",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 24,
+   "before": "The board asked how we handle cost overruns.",
+   "input": "The project plan includes a contigency of 12 percent to cover price rises in steel and copper during the second half of the year.",
+   "after": "We will review the figure again in September.",
+   "reference": "The project plan includes a contingency of 12 percent to cover price rises in steel and copper during the second half of the year.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "contingency",
+     "to": "contigency"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.539
+  },
+  {
+   "id": "ge012",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 21,
+   "before": "Here are the updated expense rules.",
+   "input": "All miscellanous expenses over $50 must be listed separately on the claim form, with a short note explaining the business purpose.",
+   "after": "Claims without notes will be returned.",
+   "reference": "All miscellaneous expenses over $50 must be listed separately on the claim form, with a short note explaining the business purpose.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "miscellaneous",
+     "to": "miscellanous"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.504
+  },
+  {
+   "id": "ge013",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 24,
+   "before": "I want to say a word about Ilse Varga on the finance team.",
+   "input": "Her knowledge of the old billing system has been indispensible during the migration, and we would like to recognize that at the town hall.",
+   "after": "Please keep this as a surprise for now.",
+   "reference": "Her knowledge of the old billing system has been indispensable during the migration, and we would like to recognize that at the town hall.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "indispensable",
+     "to": "indispensible"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.519
+  },
+  {
+   "id": "ge014",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 21,
+   "before": "We have a single point of contact for the supplier from now on.",
+   "input": "Tomasz will act as the liason between our engineering group and the supplier until the contract is signed in late April.",
+   "after": "Please copy him on every message to them.",
+   "reference": "Tomasz will act as the liaison between our engineering group and the supplier until the contract is signed in late April.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "liaison",
+     "to": "liason"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.53
+  },
+  {
+   "id": "ge015",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 22,
+   "before": "The scheduling pilot starts on the 4th.",
+   "input": "Every participant in the pilot will receive a short questionaire about the new scheduling app at the end of the second week.",
+   "after": "Answers are anonymous and take about five minutes.",
+   "reference": "Every participant in the pilot will receive a short questionnaire about the new scheduling app at the end of the second week.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "questionnaire",
+     "to": "questionaire"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.551
+  },
+  {
+   "id": "ge016",
+   "split": "tune",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 20,
+   "before": "This year's operations award goes to the night crew at the Fairhaven plant.",
+   "input": "The award recognizes the perseverence of the night crew, who kept the plant running through three weeks of equipment failures.",
+   "after": "The award ceremony is on Friday at noon.",
+   "reference": "The award recognizes the perseverance of the night crew, who kept the plant running through three weeks of equipment failures.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "perseverance",
+     "to": "perseverence"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.51
+  },
+  {
+   "id": "ge017",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 20,
+   "before": "The remote work review is finished.",
+   "input": "After two long workshops, the committee reached a concensus on the new remote work policy, which takes effect in January.",
+   "after": "The full policy will be posted on the intranet next week.",
+   "reference": "After two long workshops, the committee reached a consensus on the new remote work policy, which takes effect in January.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "consensus",
+     "to": "concensus"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.518
+  },
+  {
+   "id": "ge018",
+   "split": "test",
+   "group": "error",
+   "kind": "typo_rare",
+   "words": 18,
+   "before": "All managers must complete the new conduct training by May 15.",
+   "input": "The training covers how to report harrassment, who to contact after hours, and how complaints are kept confidential.",
+   "after": "It takes about 45 minutes online.",
+   "reference": "The training covers how to report harassment, who to contact after hours, and how complaints are kept confidential.",
+   "edits": [
+    {
+     "kind": "typo_rare",
+     "from": "harassment",
+     "to": "harrassment"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.441
+  },
+  {
+   "id": "ge019",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 20,
+   "before": "Good news from last night's board meeting.",
+   "input": "The board approved the the budget for the new loading bay, and construction is expected to start in early spring.",
+   "after": "We will share the timeline once the contractor confirms it.",
+   "reference": "The board approved the budget for the new loading bay, and construction is expected to start in early spring.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "approved the budget",
+     "to": "approved the the budget"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.533
+  },
+  {
+   "id": "ge020",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 20,
+   "before": "The electrical work in the basement is booked.",
+   "input": "We will need to to move the server rack to the second floor before the electricians arrive on Wednesday morning.",
+   "after": "Facilities has already arranged a lift.",
+   "reference": "We will need to move the server rack to the second floor before the electricians arrive on Wednesday morning.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "need to move",
+     "to": "need to to move"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.563
+  },
+  {
+   "id": "ge021",
+   "split": "tune",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 22,
+   "before": "We ran a two-week trial with the sales team.",
+   "input": "The new expense tool is is easier to use than the old spreadsheet, according to most of the people who tried it.",
+   "after": "We plan to roll it out to all teams in May.",
+   "reference": "The new expense tool is easier to use than the old spreadsheet, according to most of the people who tried it.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "tool is easier",
+     "to": "tool is is easier"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.525
+  },
+  {
+   "id": "ge022",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 21,
+   "before": "Welcome to Brightwater Analytics.",
+   "input": "Please bring a copy of your passport and a a recent utility bill to the onboarding session on your first day.",
+   "after": "The session starts at 9:30 in the main conference room.",
+   "reference": "Please bring a copy of your passport and a recent utility bill to the onboarding session on your first day.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "and a recent",
+     "to": "and a a recent"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.529
+  },
+  {
+   "id": "ge023",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 17,
+   "before": "We received your photos of the unit.",
+   "input": "Thank you for for your patience while we review the warranty claim for the damaged compressor unit.",
+   "after": "We will reply with a decision within five business days.",
+   "reference": "Thank you for your patience while we review the warranty claim for the damaged compressor unit.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "Thank you for your",
+     "to": "Thank you for for your"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "reply_not_rewrite"
+   ],
+   "maxCorpusSimilarity": 0.518
+  },
+  {
+   "id": "ge024",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 20,
+   "before": "The east wing will be closed for two weeks.",
+   "input": "The marketing and and sales teams will share one office on the third floor while the east wing is repainted.",
+   "after": "Desks will be assigned on a first-come basis.",
+   "reference": "The marketing and sales teams will share one office on the third floor while the east wing is repainted.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "marketing and sales",
+     "to": "marketing and and sales"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.549
+  },
+  {
+   "id": "ge025",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 20,
+   "before": "The landlord sent the final draft on Monday.",
+   "input": "Before we sign the lease, we we want our lawyer to check the clause about early termination and the deposit.",
+   "after": "We expect her comments by the end of the week.",
+   "reference": "Before we sign the lease, we want our lawyer to check the clause about early termination and the deposit.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "lease, we want",
+     "to": "lease, we we want"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.532
+  },
+  {
+   "id": "ge026",
+   "split": "tune",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 19,
+   "before": "The survey closed last Friday with 1,240 replies.",
+   "input": "The results of of the customer survey will be presented at the regional meeting in Halden on 14 March.",
+   "after": "Slides will be shared afterwards.",
+   "reference": "The results of the customer survey will be presented at the regional meeting in Halden on 14 March.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "results of the",
+     "to": "results of of the"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.562
+  },
+  {
+   "id": "ge027",
+   "split": "test",
+   "group": "error",
+   "kind": "doubled_word",
+   "words": 20,
+   "before": "Monday is a public holiday.",
+   "input": "Our support line will be be closed on Monday, but you can still reach us by email at any time.",
+   "after": "Normal hours resume on Tuesday.",
+   "reference": "Our support line will be closed on Monday, but you can still reach us by email at any time.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "will be closed",
+     "to": "will be be closed"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "ge028",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 17,
+   "before": "The landlord countersigned this morning.",
+   "input": "Could you forward a copy the signed lease to Imogen in procurement before the end of Thursday?",
+   "after": "She will file it with the other agreements.",
+   "reference": "Could you forward a copy of the signed lease to Imogen in procurement before the end of Thursday?",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "a copy of the signed",
+     "to": "a copy the signed"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.568
+  },
+  {
+   "id": "ge029",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 16,
+   "before": "Some changes to the people team while Leon is away.",
+   "input": "Rania Haddad will be in charge the onboarding program while Leon is away on parental leave.",
+   "after": "Please send new starter questions to her.",
+   "reference": "Rania Haddad will be in charge of the onboarding program while Leon is away on parental leave.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "in charge of the onboarding",
+     "to": "in charge the onboarding"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.46
+  },
+  {
+   "id": "ge030",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 19,
+   "before": "The trade fair is on 22 May this year.",
+   "input": "Please reply this email by Friday if you would like a seat on the bus to the trade fair.",
+   "after": "The bus leaves the main gate at 7 am.",
+   "reference": "Please reply to this email by Friday if you would like a seat on the bus to the trade fair.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "reply to this email",
+     "to": "reply this email"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.533
+  },
+  {
+   "id": "ge031",
+   "split": "tune",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 19,
+   "before": "We have reviewed three bike suppliers.",
+   "input": "Thornbury Cycles is one the largest suppliers in the region, and its prices have stayed stable for three years.",
+   "after": "We recommend renewing the contract with them.",
+   "reference": "Thornbury Cycles is one of the largest suppliers in the region, and its prices have stayed stable for three years.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "one of the largest",
+     "to": "one the largest"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.541
+  },
+  {
+   "id": "ge032",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 18,
+   "before": "A reminder about access to restricted areas.",
+   "input": "The facilities manager is responsible the keys to the server room and keeps a log of every visit.",
+   "after": "Ask him before you go in.",
+   "reference": "The facilities manager is responsible for the keys to the server room and keeps a log of every visit.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "responsible for the keys",
+     "to": "responsible the keys"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.54
+  },
+  {
+   "id": "ge033",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 17,
+   "before": "Thank you for accepting our invitation.",
+   "input": "We look forward meeting your team at the open day and showing you around the new laboratory.",
+   "after": "Parking is available next to the main building.",
+   "reference": "We look forward to meeting your team at the open day and showing you around the new laboratory.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "look forward to meeting",
+     "to": "look forward meeting"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.517
+  },
+  {
+   "id": "ge034",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 17,
+   "before": "We still need your travel form for the Lisbon visit.",
+   "input": "Could you please return the signed form as soon possible so that we can book the flights?",
+   "after": "Prices usually go up after the weekend.",
+   "reference": "Could you please return the signed form as soon as possible so that we can book the flights?",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "as soon as possible",
+     "to": "as soon possible"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.52
+  },
+  {
+   "id": "ge035",
+   "split": "test",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 19,
+   "before": "The election results are in.",
+   "input": "Gwen Abernathy has been elected as a member the board for a term of three years starting in July.",
+   "after": "She replaces Paul Whitcombe, who is retiring.",
+   "reference": "Gwen Abernathy has been elected as a member of the board for a term of three years starting in July.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "a member of the board",
+     "to": "a member the board"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.498
+  },
+  {
+   "id": "ge036",
+   "split": "tune",
+   "group": "error",
+   "kind": "missing_word",
+   "words": 17,
+   "before": "Hello Ms. Brandt,",
+   "input": "I am writing ask whether the conference room on the fifth floor is free next Tuesday afternoon.",
+   "after": "We would need it from 2 pm to 4 pm.",
+   "reference": "I am writing to ask whether the conference room on the fifth floor is free next Tuesday afternoon.",
+   "edits": [
+    {
+     "kind": "missing_word",
+     "from": "writing to ask",
+     "to": "writing ask"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.554
+  },
+  {
+   "id": "ge037",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 17,
+   "before": "The policy review took longer than planned.",
+   "input": "The committee has finished it's review of the travel policy and will publish the changes next month.",
+   "after": "Questions can go to the committee secretary.",
+   "reference": "The committee has finished its review of the travel policy and will publish the changes next month.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "finished its review",
+     "to": "finished it's review"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.52
+  },
+  {
+   "id": "ge038",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 16,
+   "before": "A reminder for everyone who sends invoices.",
+   "input": "Its important that every invoice includes the purchase order number, or the payment will be delayed.",
+   "after": "The number is on the order confirmation.",
+   "reference": "It's important that every invoice includes the purchase order number, or the payment will be delayed.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "It's important",
+     "to": "Its important"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.53
+  },
+  {
+   "id": "ge039",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 18,
+   "before": "Facilities has been told about the problem.",
+   "input": "The printer on the second floor is out of toner again, and it's paper tray is also broken.",
+   "after": "Please use the one on the third floor today.",
+   "reference": "The printer on the second floor is out of toner again, and its paper tray is also broken.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "and its paper",
+     "to": "and it's paper"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.556
+  },
+  {
+   "id": "ge040",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 18,
+   "before": "Several people asked about the move.",
+   "input": "We think its too early to announce the new office location, because the lease is not signed yet.",
+   "after": "We hope to share news in a month.",
+   "reference": "We think it's too early to announce the new office location, because the lease is not signed yet.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "think it's too",
+     "to": "think its too"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.568
+  },
+  {
+   "id": "ge041",
+   "split": "tune",
+   "group": "error",
+   "kind": "its_its",
+   "words": 16,
+   "before": "Save the date for this autumn.",
+   "input": "The company will celebrate it's twentieth anniversary with a dinner for all staff on 9 October.",
+   "after": "Invitations will be sent in August.",
+   "reference": "The company will celebrate its twentieth anniversary with a dinner for all staff on 9 October.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "celebrate its twentieth",
+     "to": "celebrate it's twentieth"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.474
+  },
+  {
+   "id": "ge042",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 20,
+   "before": "Thanks for setting up the call with the auditors.",
+   "input": "Please let me know if its possible to move our call to Wednesday, since I will be traveling on Tuesday.",
+   "after": "Any time after 10 am works for me.",
+   "reference": "Please let me know if it's possible to move our call to Wednesday, since I will be traveling on Tuesday.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "if it's possible",
+     "to": "if its possible"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.495
+  },
+  {
+   "id": "ge043",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 18,
+   "before": "Our software costs went up this year.",
+   "input": "The software vendor changed it's pricing model in January, and our yearly cost rose by about 15 percent.",
+   "after": "We are looking at other options.",
+   "reference": "The software vendor changed its pricing model in January, and our yearly cost rose by about 15 percent.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "changed its pricing",
+     "to": "changed it's pricing"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.467
+  },
+  {
+   "id": "ge044",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 17,
+   "before": "The auditors signed off on Friday.",
+   "input": "Now that the audit is over, its time to plan the budget for the next financial year.",
+   "after": "The first planning meeting is on 3 April.",
+   "reference": "Now that the audit is over, it's time to plan the budget for the next financial year.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "it's time",
+     "to": "its time"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.556
+  },
+  {
+   "id": "ge045",
+   "split": "test",
+   "group": "error",
+   "kind": "its_its",
+   "words": 16,
+   "before": "The hiring freeze ends in May.",
+   "input": "Each department must submit it's hiring plan to human resources before the leadership offsite in June.",
+   "after": "A template is attached.",
+   "reference": "Each department must submit its hiring plan to human resources before the leadership offsite in June.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "submit its hiring",
+     "to": "submit it's hiring"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.474
+  },
+  {
+   "id": "ge046",
+   "split": "tune",
+   "group": "error",
+   "kind": "their_there",
+   "words": 17,
+   "before": "The roof repair is booked.",
+   "input": "The contractors said there crew will need access to the roof from Monday to Wednesday next week.",
+   "after": "Please keep the roof door unlocked on those days.",
+   "reference": "The contractors said their crew will need access to the roof from Monday to Wednesday next week.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "said their crew",
+     "to": "said there crew"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.533
+  },
+  {
+   "id": "ge047",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 21,
+   "before": "The warehouse tour is next Thursday.",
+   "input": "Their are still four open seats on the bus to the warehouse tour, so please sign up if you are interested.",
+   "after": "The bus leaves at 9 am sharp.",
+   "reference": "There are still four open seats on the bus to the warehouse tour, so please sign up if you are interested.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "There are still",
+     "to": "Their are still"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.516
+  },
+  {
+   "id": "ge048",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 16,
+   "before": "The summer interns finished last week.",
+   "input": "The interns presented their findings to the product team, and their now preparing a written report.",
+   "after": "We will share it when it is ready.",
+   "reference": "The interns presented their findings to the product team, and they're now preparing a written report.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "and they're now",
+     "to": "and their now"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.528
+  },
+  {
+   "id": "ge049",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 18,
+   "before": "The water tests are under way.",
+   "input": "We sent the samples to the lab on Monday, and their expected to return the results by Friday.",
+   "after": "I will forward them as soon as they arrive.",
+   "reference": "We sent the samples to the lab on Monday, and they're expected to return the results by Friday.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "and they're expected",
+     "to": "and their expected"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.553
+  },
+  {
+   "id": "ge050",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 22,
+   "before": "Some advice for visitors to the depot.",
+   "input": "If you park in the visitor area, please leave your keys at the front desk because their is no space to turn.",
+   "after": "Staff will move your car if needed.",
+   "reference": "If you park in the visitor area, please leave your keys at the front desk because there is no space to turn.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "because there is",
+     "to": "because their is"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.522
+  },
+  {
+   "id": "ge051",
+   "split": "tune",
+   "group": "error",
+   "kind": "their_there",
+   "words": 21,
+   "before": "The audit team arrives on Monday.",
+   "input": "The auditors asked us to keep all the receipts in one folder so they can find them when there on site.",
+   "after": "Please put the folder in the meeting room.",
+   "reference": "The auditors asked us to keep all the receipts in one folder so they can find them when they're on site.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "when they're on site",
+     "to": "when there on site"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "ge052",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 15,
+   "before": "Renewals were strong this year.",
+   "input": "Most customers renewed there contracts early this year because of the discount offered in November.",
+   "after": "We will offer it again next year.",
+   "reference": "Most customers renewed their contracts early this year because of the discount offered in November.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "renewed their contracts",
+     "to": "renewed there contracts"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.529
+  },
+  {
+   "id": "ge053",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 18,
+   "before": "The office move is tomorrow.",
+   "input": "Please put the boxes over their by the door, and the movers will collect them in the afternoon.",
+   "after": "Label each box with your name.",
+   "reference": "Please put the boxes over there by the door, and the movers will collect them in the afternoon.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "over there by",
+     "to": "over their by"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.57
+  },
+  {
+   "id": "ge054",
+   "split": "test",
+   "group": "error",
+   "kind": "their_there",
+   "words": 18,
+   "before": "Our costs will rise next month.",
+   "input": "Our suppliers have told us that their raising prices by 4 percent from the first of next month.",
+   "after": "We will update our price list to match.",
+   "reference": "Our suppliers have told us that they're raising prices by 4 percent from the first of next month.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "that they're raising",
+     "to": "that their raising"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.511
+  },
+  {
+   "id": "ge055",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 17,
+   "before": "The safety training is now open for booking.",
+   "input": "If your unable to attend the training on Thursday, please choose another date in the booking system.",
+   "after": "Every session covers the same material.",
+   "reference": "If you're unable to attend the training on Thursday, please choose another date in the booking system.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "If you're unable",
+     "to": "If your unable"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.507
+  },
+  {
+   "id": "ge056",
+   "split": "tune",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 17,
+   "before": "Your new contract is attached.",
+   "input": "Please check that you're name and employee number are correct on the attached form before signing it.",
+   "after": "Return it to human resources by Friday.",
+   "reference": "Please check that your name and employee number are correct on the attached form before signing it.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "that your name",
+     "to": "that you're name"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.519
+  },
+  {
+   "id": "ge057",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 20,
+   "before": "Thanks for your interest in the trial.",
+   "input": "Let us know when your ready to start the trial, and we will set up the accounts within a day.",
+   "after": "The trial lasts thirty days.",
+   "reference": "Let us know when you're ready to start the trial, and we will set up the accounts within a day.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "when you're ready",
+     "to": "when your ready"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.513
+  },
+  {
+   "id": "ge058",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 19,
+   "before": "Dear Mr. Osei,",
+   "input": "We were glad to see you're application for the night supervisor post at Pellham Distribution arrive before the deadline.",
+   "after": "We will be in touch within two weeks.",
+   "reference": "We were glad to see your application for the night supervisor post at Pellham Distribution arrive before the deadline.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "see your application",
+     "to": "see you're application"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.539
+  },
+  {
+   "id": "ge059",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 19,
+   "before": "The summer party is on 12 July.",
+   "input": "Your welcome to bring a guest to the summer party, as long as you register them by 30 June.",
+   "after": "Food and drinks are provided.",
+   "reference": "You're welcome to bring a guest to the summer party, as long as you register them by 30 June.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "You're welcome",
+     "to": "Your welcome"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.462
+  },
+  {
+   "id": "ge060",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 19,
+   "before": "A reminder from the parking office.",
+   "input": "You're parking permit will expire at the end of the month, so please renew it through the staff portal.",
+   "after": "Renewals take two days to process.",
+   "reference": "Your parking permit will expire at the end of the month, so please renew it through the staff portal.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "Your parking permit",
+     "to": "You're parking permit"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.558
+  },
+  {
+   "id": "ge061",
+   "split": "tune",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 18,
+   "before": "We ran a check on all team accounts.",
+   "input": "We noticed that your still using the old password policy, which will be switched off on 1 August.",
+   "after": "Please update it before then.",
+   "reference": "We noticed that you're still using the old password policy, which will be switched off on 1 August.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "that you're still",
+     "to": "that your still"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.492
+  },
+  {
+   "id": "ge062",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 20,
+   "before": "The draft proposal is in the shared folder.",
+   "input": "Could you send you're comments on the draft by Wednesday so that we can finalize it before the client call?",
+   "after": "The call is on Thursday morning.",
+   "reference": "Could you send your comments on the draft by Wednesday so that we can finalize it before the client call?",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "send your comments",
+     "to": "send you're comments"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.547
+  },
+  {
+   "id": "ge063",
+   "split": "test",
+   "group": "error",
+   "kind": "your_youre",
+   "words": 18,
+   "before": "The stocktake weekend is now over.",
+   "input": "If you think your owed overtime for the stocktake weekend, please email the payroll team with the hours.",
+   "after": "Claims close at the end of the month.",
+   "reference": "If you think you're owed overtime for the stocktake weekend, please email the payroll team with the hours.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "you think you're owed",
+     "to": "you think your owed"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.503
+  },
+  {
+   "id": "ge064",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 13,
+   "before": "A note on how we choose vendors.",
+   "input": "The list of approved suppliers are updated every quarter by the procurement team.",
+   "after": "You can find it on the intranet.",
+   "reference": "The list of approved suppliers is updated every quarter by the procurement team.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "is updated",
+     "to": "are updated"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.479
+  },
+  {
+   "id": "ge065",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 15,
+   "before": "IT has confirmed the delivery date.",
+   "input": "The new laptops arrive on Monday, and each of them come with a three-year warranty.",
+   "after": "Old laptops must be returned within a week.",
+   "reference": "The new laptops arrive on Monday, and each of them comes with a three-year warranty.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "each of them comes",
+     "to": "each of them come"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.484
+  },
+  {
+   "id": "ge066",
+   "split": "tune",
+   "group": "error",
+   "kind": "agreement",
+   "words": 15,
+   "before": "Here is how ticket reviews work now.",
+   "input": "Our team leaders meets every Tuesday to review open tickets and plan the week ahead.",
+   "after": "Urgent tickets are handled the same day.",
+   "reference": "Our team leaders meet every Tuesday to review open tickets and plan the week ahead.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "leaders meet",
+     "to": "leaders meets"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.54
+  },
+  {
+   "id": "ge067",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 14,
+   "before": "The storm damage has been repaired.",
+   "input": "The cost of the repairs were higher than the estimate we received in August.",
+   "after": "Insurance will cover most of it.",
+   "reference": "The cost of the repairs was higher than the estimate we received in August.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "repairs was higher",
+     "to": "repairs were higher"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "ge068",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 14,
+   "before": "We want to hear from the accounts team.",
+   "input": "Everyone in the accounts department have been asked to complete the survey by Friday.",
+   "after": "It takes about ten minutes.",
+   "reference": "Everyone in the accounts department has been asked to complete the survey by Friday.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "department has been",
+     "to": "department have been"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.541
+  },
+  {
+   "id": "ge069",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 18,
+   "before": "The regional report is attached.",
+   "input": "The figures in the second table shows that sales in the north grew faster than in the south.",
+   "after": "The gap is smaller than last year.",
+   "reference": "The figures in the second table show that sales in the north grew faster than in the south.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "table show that",
+     "to": "table shows that"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.523
+  },
+  {
+   "id": "ge070",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 15,
+   "before": "Please read both files before the meeting.",
+   "input": "This report and the attached spreadsheet explains how the overtime budget was spent last year.",
+   "after": "We will discuss them on Monday.",
+   "reference": "This report and the attached spreadsheet explain how the overtime budget was spent last year.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "spreadsheet explain",
+     "to": "spreadsheet explains"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.513
+  },
+  {
+   "id": "ge071",
+   "split": "tune",
+   "group": "error",
+   "kind": "agreement",
+   "words": 16,
+   "before": "A note from the fleet manager.",
+   "input": "One of the delivery vans need new tires before it can go back on the road.",
+   "after": "The other vans are fine.",
+   "reference": "One of the delivery vans needs new tires before it can go back on the road.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "vans needs",
+     "to": "vans need"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.523
+  },
+  {
+   "id": "ge072",
+   "split": "test",
+   "group": "error",
+   "kind": "agreement",
+   "words": 17,
+   "before": "The forklift problem has a short-term fix.",
+   "input": "The managers at both sites has agreed to share one forklift until the new one is delivered.",
+   "after": "Please book it through the shared calendar.",
+   "reference": "The managers at both sites have agreed to share one forklift until the new one is delivered.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "sites have agreed",
+     "to": "sites has agreed"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.534
+  },
+  {
+   "id": "ge073",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 15,
+   "before": "The boiler report came back.",
+   "input": "Last Thursday the inspector visits the plant and found no problems with the new boiler.",
+   "after": "The next check is due in a year.",
+   "reference": "Last Thursday the inspector visited the plant and found no problems with the new boiler.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "inspector visited",
+     "to": "inspector visits"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "action",
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.498
+  },
+  {
+   "id": "ge074",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 17,
+   "before": "Some good news on the Hollis account.",
+   "input": "Yesterday we send the revised quote to Hollis & Brandt, and they accepted it within an hour.",
+   "after": "The order will be placed this week.",
+   "reference": "Yesterday we sent the revised quote to Hollis & Brandt, and they accepted it within an hour.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "Yesterday we sent",
+     "to": "Yesterday we send"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.506
+  },
+  {
+   "id": "ge075",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 13,
+   "before": "Please keep your receipts handy.",
+   "input": "Next week the auditors reviewed the expense claims from the last two quarters.",
+   "after": "They may ask you about some items.",
+   "reference": "Next week the auditors will review the expense claims from the last two quarters.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "auditors will review",
+     "to": "auditors reviewed"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "modal"
+   ],
+   "maxCorpusSimilarity": 0.507
+  },
+  {
+   "id": "ge076",
+   "split": "tune",
+   "group": "error",
+   "kind": "tense",
+   "words": 15,
+   "before": "A short history for the new board members.",
+   "input": "In 2023 the company opens two new branches and hired forty people in the north.",
+   "after": "Both branches are now profitable.",
+   "reference": "In 2023 the company opened two new branches and hired forty people in the north.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "company opened",
+     "to": "company opens"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "ge077",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 18,
+   "before": "Here is the incident report from the weekend.",
+   "input": "When the alarm went off on Saturday night, the guard calls the fire service and checked every floor.",
+   "after": "It turned out to be a faulty sensor.",
+   "reference": "When the alarm went off on Saturday night, the guard called the fire service and checked every floor.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "guard called",
+     "to": "guard calls"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "action",
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.542
+  },
+  {
+   "id": "ge078",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 16,
+   "before": "We looked into the late parcel complaint.",
+   "input": "By the time the parcel arrived, the customer has already ordered a replacement from another shop.",
+   "after": "We have offered a full refund.",
+   "reference": "By the time the parcel arrived, the customer had already ordered a replacement from another shop.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "had already ordered",
+     "to": "has already ordered"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.524
+  },
+  {
+   "id": "ge079",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 16,
+   "before": "The merger news is now public.",
+   "input": "Two days ago the board approves the merger, and the announcement went out the same evening.",
+   "after": "Staff questions are welcome.",
+   "reference": "Two days ago the board approved the merger, and the announcement went out the same evening.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "the board approved",
+     "to": "the board approves"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.528
+  },
+  {
+   "id": "ge080",
+   "split": "test",
+   "group": "error",
+   "kind": "tense",
+   "words": 16,
+   "before": "The cleaning schedule has changed.",
+   "input": "Tomorrow morning the cleaning crew started on the third floor, so please clear your desks tonight.",
+   "after": "Thanks for your help.",
+   "reference": "Tomorrow morning the cleaning crew will start on the third floor, so please clear your desks tonight.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "crew will start",
+     "to": "crew started"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "modal"
+   ],
+   "maxCorpusSimilarity": 0.517
+  },
+  {
+   "id": "ge081",
+   "split": "tune",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 16,
+   "before": "Some people have asked about flight upgrades.",
+   "input": "The companys travel policy does not cover upgrades to business class on flights under six hours.",
+   "after": "Longer flights are reviewed case by case.",
+   "reference": "The company's travel policy does not cover upgrades to business class on flights under six hours.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "The company's",
+     "to": "The companys"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.495
+  },
+  {
+   "id": "ge082",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 14,
+   "before": "A note for everyone who drives to work.",
+   "input": "Please dont park in the spaces reserved for delivery trucks behind the north entrance.",
+   "after": "Cars parked there will be towed.",
+   "reference": "Please don't park in the spaces reserved for delivery trucks behind the north entrance.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "don't park",
+     "to": "dont park"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.515
+  },
+  {
+   "id": "ge083",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 18,
+   "before": "The new timesheet system is live.",
+   "input": "All employee's must log their hours in the new system by the last working day of each month.",
+   "after": "Late entries need a manager's approval.",
+   "reference": "All employees must log their hours in the new system by the last working day of each month.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "All employees must",
+     "to": "All employee's must"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.5
+  },
+  {
+   "id": "ge084",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 16,
+   "before": "Interview day is on Friday.",
+   "input": "The managers office on the fourth floor will be used for interviews all day on Friday.",
+   "after": "Please do not book it for anything else.",
+   "reference": "The manager's office on the fourth floor will be used for interviews all day on Friday.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "The manager's office",
+     "to": "The managers office"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.57
+  },
+  {
+   "id": "ge085",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 16,
+   "before": "The lobby floor is being replaced.",
+   "input": "The childrens play area in the lobby will be closed while the new flooring is installed.",
+   "after": "It should reopen in two weeks.",
+   "reference": "The children's play area in the lobby will be closed while the new flooring is installed.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "children's",
+     "to": "childrens"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.509
+  },
+  {
+   "id": "ge086",
+   "split": "tune",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 16,
+   "before": "Status of the printing payment.",
+   "input": "We havent received the signed invoice from the printing firm, so the payment is on hold.",
+   "after": "I have sent them a reminder.",
+   "reference": "We haven't received the signed invoice from the printing firm, so the payment is on hold.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "haven't",
+     "to": "havent"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.538
+  },
+  {
+   "id": "ge087",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 17,
+   "before": "Price review for the packaging suppliers.",
+   "input": "Both suppliers prices went up in March, but the second one offered a discount for early payment.",
+   "after": "We will take the discount.",
+   "reference": "Both suppliers' prices went up in March, but the second one offered a discount for early payment.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "Both suppliers' prices",
+     "to": "Both suppliers prices"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "ge088",
+   "split": "test",
+   "group": "error",
+   "kind": "apostrophe",
+   "words": 19,
+   "before": "The invoice folder has been cleaned up.",
+   "input": "The new invoice's are in the shared folder, and the old ones have been archived by the finance team.",
+   "after": "Ask finance if you need an old one.",
+   "reference": "The new invoices are in the shared folder, and the old ones have been archived by the finance team.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "The new invoices are",
+     "to": "The new invoice's are"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.534
+  },
+  {
+   "id": "ge089",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 15,
+   "before": "The records room is being cleared.",
+   "input": "After the auditors left the office staff started packing the files into boxes for storage.",
+   "after": "The boxes go to the archive on Monday.",
+   "reference": "After the auditors left, the office staff started packing the files into boxes for storage.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "left, the office",
+     "to": "left the office"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.476
+  },
+  {
+   "id": "ge090",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 14,
+   "before": "A reminder about the cleaning tender.",
+   "input": "The tender closes on Friday, late bids will not be accepted under any circumstances.",
+   "after": "Please submit through the portal.",
+   "reference": "The tender closes on Friday; late bids will not be accepted under any circumstances.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "Friday; late",
+     "to": "Friday, late"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.54
+  },
+  {
+   "id": "ge091",
+   "split": "tune",
+   "group": "error",
+   "kind": "comma",
+   "words": 15,
+   "before": "The holiday rota is ready.",
+   "input": "While the team was eating the manager explained the new rota for the holiday period.",
+   "after": "Copies are on the notice board.",
+   "reference": "While the team was eating, the manager explained the new rota for the holiday period.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "eating, the manager",
+     "to": "eating the manager"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.542
+  },
+  {
+   "id": "ge092",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 14,
+   "before": "Good news for the afternoon signing.",
+   "input": "The printer is fixed, we can print the contracts for the afternoon signing now.",
+   "after": "Please send me the final versions.",
+   "reference": "The printer is fixed; we can print the contracts for the afternoon signing now.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "fixed; we can",
+     "to": "fixed, we can"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.503
+  },
+  {
+   "id": "ge093",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 14,
+   "before": "Instructions for the front desk.",
+   "input": "When the delivery arrives check the boxes for damage before signing the driver's form.",
+   "after": "Take photos of any damage.",
+   "reference": "When the delivery arrives, check the boxes for damage before signing the driver's form.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "arrives, check",
+     "to": "arrives check"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "ge094",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 19,
+   "before": "Holiday arrangements for the depot.",
+   "input": "The depot shuts at noon on Christmas Eve, drivers should log any late returns in the gate book instead.",
+   "after": "The book is kept by the barrier.",
+   "reference": "The depot shuts at noon on Christmas Eve; drivers should log any late returns in the gate book instead.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "Eve; drivers",
+     "to": "Eve, drivers"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.473
+  },
+  {
+   "id": "ge095",
+   "split": "test",
+   "group": "error",
+   "kind": "comma",
+   "words": 15,
+   "before": "Agenda for the finance meeting.",
+   "input": "Before the meeting ends the chair will ask everyone to vote on the new budget.",
+   "after": "Proxy votes must be sent in advance.",
+   "reference": "Before the meeting ends, the chair will ask everyone to vote on the new budget.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "ends, the chair",
+     "to": "ends the chair"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.538
+  },
+  {
+   "id": "ge096",
+   "split": "tune",
+   "group": "error",
+   "kind": "comma",
+   "words": 17,
+   "before": "Update on the hinge order.",
+   "input": "The supplier missed the deadline again, we have started looking for a second source for the parts.",
+   "after": "Three firms have been contacted.",
+   "reference": "The supplier missed the deadline again; we have started looking for a second source for the parts.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "again; we have",
+     "to": "again, we have"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.487
+  },
+  {
+   "id": "ge097",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 19,
+   "before": "Some changes to the canteen.",
+   "input": "the new opening hours for the staff canteen start on Monday, and breakfast will be served from 7 am.",
+   "after": "The menu stays the same.",
+   "reference": "The new opening hours for the staff canteen start on Monday, and breakfast will be served from 7 am.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "The new opening",
+     "to": "the new opening"
+    }
+   ],
+   "qualifies": false,
+   "qualifyReasons": [
+    "input_start"
+   ],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.543
+  },
+  {
+   "id": "ge098",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 16,
+   "before": "The year-end dinner is on 12 December.",
+   "input": "please confirm your attendance at the year-end dinner by replying to this message before 5 December.",
+   "after": "Dietary needs can be added in the reply.",
+   "reference": "Please confirm your attendance at the year-end dinner by replying to this message before 5 December.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Please confirm",
+     "to": "please confirm"
+    }
+   ],
+   "qualifies": false,
+   "qualifyReasons": [
+    "input_start"
+   ],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.559
+  },
+  {
+   "id": "ge099",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 18,
+   "before": "Stock counts are due soon.",
+   "input": "Our auditors will visit the brisbane office in the first week of March to review the stock counts.",
+   "after": "Please have the records ready.",
+   "reference": "Our auditors will visit the Brisbane office in the first week of March to review the stock counts.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Brisbane",
+     "to": "brisbane"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.53
+  },
+  {
+   "id": "ge100",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 18,
+   "before": "The new carrier contract is signed.",
+   "input": "The first call with ferrand logistics is booked for Thursday at 3 pm, and the agenda is attached.",
+   "after": "Please add any topics by Wednesday.",
+   "reference": "The first call with Ferrand Logistics is booked for Thursday at 3 pm, and the agenda is attached.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Ferrand Logistics",
+     "to": "ferrand logistics"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.5
+  },
+  {
+   "id": "ge101",
+   "split": "tune",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 17,
+   "before": "Training on the reporting tool is coming.",
+   "input": "Ingrid solberg from the Oslo team will lead the workshop on the new reporting tool next Tuesday.",
+   "after": "Seats are limited to twelve.",
+   "reference": "Ingrid Solberg from the Oslo team will lead the workshop on the new reporting tool next Tuesday.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Ingrid Solberg",
+     "to": "Ingrid solberg"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.543
+  },
+  {
+   "id": "ge102",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 18,
+   "before": "Summer leave requests are open.",
+   "input": "All requests for annual leave in august must be approved by your manager before the end of June.",
+   "after": "Late requests may not be approved.",
+   "reference": "All requests for annual leave in August must be approved by your manager before the end of June.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "in August",
+     "to": "in august"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.505
+  },
+  {
+   "id": "ge103",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 18,
+   "before": "The claims calendar has changed.",
+   "input": "every claim submitted after Friday will be processed in the next payment run, as stated in the policy.",
+   "after": "Payment runs happen twice a month.",
+   "reference": "Every claim submitted after Friday will be processed in the next payment run, as stated in the policy.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Every claim",
+     "to": "every claim"
+    }
+   ],
+   "qualifies": false,
+   "qualifyReasons": [
+    "input_start"
+   ],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.54
+  },
+  {
+   "id": "ge104",
+   "split": "test",
+   "group": "error",
+   "kind": "capitalization",
+   "words": 18,
+   "before": "Directions for the training day.",
+   "input": "The training will take place at the Wexford conference centre, which is a short walk from the station.",
+   "after": "Lunch will be served at noon.",
+   "reference": "The training will take place at the Wexford Conference Centre, which is a short walk from the station.",
+   "edits": [
+    {
+     "kind": "capitalization",
+     "from": "Wexford Conference Centre",
+     "to": "Wexford conference centre"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.507
+  },
+  {
+   "id": "ge105",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 20,
+   "before": "Thanks for contacting our service team.",
+   "input": "We have recieved your request, and our team will will contact you within two business days to arrange a visit.",
+   "after": "Please keep your order number to hand.",
+   "reference": "We have received your request, and our team will contact you within two business days to arrange a visit.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "received your",
+     "to": "recieved your"
+    },
+    {
+     "kind": "doubled_word",
+     "from": "team will contact",
+     "to": "team will will contact"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "modal"
+   ],
+   "maxCorpusSimilarity": 0.495
+  },
+  {
+   "id": "ge106",
+   "split": "tune",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 17,
+   "before": "The travel rules are now on the intranet.",
+   "input": "The new policy explain how employees can claim there travel costs and which receipts they must keep.",
+   "after": "Please read it before your next trip.",
+   "reference": "The new policy explains how employees can claim their travel costs and which receipts they must keep.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "policy explains",
+     "to": "policy explain"
+    },
+    {
+     "kind": "their_there",
+     "from": "can claim their",
+     "to": "can claim there"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.513
+  },
+  {
+   "id": "ge107",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 15,
+   "before": "The holiday staffing plan is being drafted.",
+   "input": "Its clear that the warehouse need more staff during the holiday season, especially on weekends.",
+   "after": "We will post the extra shifts next week.",
+   "reference": "It's clear that the warehouse needs more staff during the holiday season, especially on weekends.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "It's clear",
+     "to": "Its clear"
+    },
+    {
+     "kind": "agreement",
+     "from": "warehouse needs",
+     "to": "warehouse need"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.507
+  },
+  {
+   "id": "ge108",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 16,
+   "before": "A reminder about remote work days.",
+   "input": "If your planning to work from home on Friday, please tell your manager by thursday afternoon.",
+   "after": "This helps us plan desk space.",
+   "reference": "If you're planning to work from home on Friday, please tell your manager by Thursday afternoon.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "If you're planning",
+     "to": "If your planning"
+    },
+    {
+     "kind": "capitalization",
+     "from": "by Thursday afternoon",
+     "to": "by thursday afternoon"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.532
+  },
+  {
+   "id": "ge109",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 18,
+   "before": "A thank-you to the finance team.",
+   "input": "Last month the finance team closes the accounts three days early, which helped the the auditors a lot.",
+   "after": "We hope to do the same this month.",
+   "reference": "Last month the finance team closed the accounts three days early, which helped the auditors a lot.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "team closed",
+     "to": "team closes"
+    },
+    {
+     "kind": "doubled_word",
+     "from": "helped the auditors",
+     "to": "helped the the auditors"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.549
+  },
+  {
+   "id": "ge110",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 15,
+   "before": "The client meeting is on Tuesday.",
+   "input": "The clients lawyer asked for a copy the original agreement before the meeting on Tuesday.",
+   "after": "I will send it today.",
+   "reference": "The client's lawyer asked for a copy of the original agreement before the meeting on Tuesday.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "The client's",
+     "to": "The clients"
+    },
+    {
+     "kind": "missing_word",
+     "from": "a copy of the original",
+     "to": "a copy the original"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.522
+  },
+  {
+   "id": "ge111",
+   "split": "tune",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 17,
+   "before": "Some parcels were returned last week.",
+   "input": "Please make sure the delivery adress is correct, because the courier will not return parcels untill Monday.",
+   "after": "Returned parcels are stored at the depot.",
+   "reference": "Please make sure the delivery address is correct, because the courier will not return parcels until Monday.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "delivery address",
+     "to": "delivery adress"
+    },
+    {
+     "kind": "typo_common",
+     "from": "until Monday",
+     "to": "untill Monday"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.545
+  },
+  {
+   "id": "ge112",
+   "split": "test",
+   "group": "error",
+   "kind": "two_errors",
+   "words": 17,
+   "before": "The loan paperwork is done.",
+   "input": "When the meeting ended the directors signs the agreement and sent it to the bank for approval.",
+   "after": "We expect an answer next week.",
+   "reference": "When the meeting ended, the directors signed the agreement and sent it to the bank for approval.",
+   "edits": [
+    {
+     "kind": "comma",
+     "from": "ended, the directors",
+     "to": "ended the directors"
+    },
+    {
+     "kind": "tense",
+     "from": "signed the agreement",
+     "to": "signs the agreement"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.556
+  },
+  {
+   "id": "ge113",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 17,
+   "before": "The grant committee met yesterday.",
+   "input": "The committee will announce it's decision on Friday, and their hoping to start the project in may.",
+   "after": "All applicants will get a letter.",
+   "reference": "The committee will announce its decision on Friday, and they're hoping to start the project in May.",
+   "edits": [
+    {
+     "kind": "its_its",
+     "from": "announce its",
+     "to": "announce it's"
+    },
+    {
+     "kind": "their_there",
+     "from": "they're hoping",
+     "to": "their hoping"
+    },
+    {
+     "kind": "capitalization",
+     "from": "in May",
+     "to": "in may"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.512
+  },
+  {
+   "id": "ge114",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 19,
+   "before": "Timesheets are due this week.",
+   "input": "Please make sure you're timesheet is submitted before teh deadline, or your payment will be delayed untill next month.",
+   "after": "The deadline is Thursday at 5 pm.",
+   "reference": "Please make sure your timesheet is submitted before the deadline, or your payment will be delayed until next month.",
+   "edits": [
+    {
+     "kind": "your_youre",
+     "from": "make sure your timesheet",
+     "to": "make sure you're timesheet"
+    },
+    {
+     "kind": "typo_common",
+     "from": "before the deadline",
+     "to": "before teh deadline"
+    },
+    {
+     "kind": "typo_common",
+     "from": "until next month",
+     "to": "untill next month"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.513
+  },
+  {
+   "id": "ge115",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 18,
+   "before": "Budget season is starting.",
+   "input": "Each of the regional managers have agreed to review the the budget before the board meets in october.",
+   "after": "Drafts are due in September.",
+   "reference": "Each of the regional managers has agreed to review the budget before the board meets in October.",
+   "edits": [
+    {
+     "kind": "agreement",
+     "from": "managers has agreed",
+     "to": "managers have agreed"
+    },
+    {
+     "kind": "doubled_word",
+     "from": "review the budget",
+     "to": "review the the budget"
+    },
+    {
+     "kind": "capitalization",
+     "from": "in October",
+     "to": "in october"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "name_changed"
+   ],
+   "maxCorpusSimilarity": 0.553
+  },
+  {
+   "id": "ge116",
+   "split": "tune",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 15,
+   "before": "News from the lab.",
+   "input": "We recieved the samples yesterday, and the labs first results looks better than we expected.",
+   "after": "A full report will follow.",
+   "reference": "We received the samples yesterday, and the lab's first results look better than we expected.",
+   "edits": [
+    {
+     "kind": "typo_common",
+     "from": "We received",
+     "to": "We recieved"
+    },
+    {
+     "kind": "apostrophe",
+     "from": "the lab's",
+     "to": "the labs"
+    },
+    {
+     "kind": "agreement",
+     "from": "results look",
+     "to": "results looks"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.484
+  },
+  {
+   "id": "ge117",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 19,
+   "before": "Lab access this week.",
+   "input": "The lab stays stays shut through Wednesday, so we ask that any urgnet sample requests go the night technician.",
+   "after": "Normal service resumes on Thursday.",
+   "reference": "The lab stays shut through Wednesday, so we ask that any urgent sample requests go to the night technician.",
+   "edits": [
+    {
+     "kind": "doubled_word",
+     "from": "stays shut",
+     "to": "stays stays shut"
+    },
+    {
+     "kind": "typo_common",
+     "from": "urgent sample",
+     "to": "urgnet sample"
+    },
+    {
+     "kind": "missing_word",
+     "from": "go to the night",
+     "to": "go the night"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "warn",
+   "perfectFixWhy": [
+    "grammar_word"
+   ],
+   "maxCorpusSimilarity": 0.498
+  },
+  {
+   "id": "ge118",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 16,
+   "before": "Please say hello to our new colleague.",
+   "input": "Our new receptionist, who starts last week, have already learned the names of most the visitors.",
+   "after": "She sits at the main desk.",
+   "reference": "Our new receptionist, who started last week, has already learned the names of most of the visitors.",
+   "edits": [
+    {
+     "kind": "tense",
+     "from": "started last week",
+     "to": "starts last week"
+    },
+    {
+     "kind": "agreement",
+     "from": "has already learned",
+     "to": "have already learned"
+    },
+    {
+     "kind": "missing_word",
+     "from": "most of the visitors",
+     "to": "most the visitors"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.509
+  },
+  {
+   "id": "ge119",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 17,
+   "before": "An update on the returned order.",
+   "input": "The customers refund was approved on Tuesday, and your going to recieve it within five working days.",
+   "after": "Please keep the confirmation email.",
+   "reference": "The customer's refund was approved on Tuesday, and you're going to receive it within five working days.",
+   "edits": [
+    {
+     "kind": "apostrophe",
+     "from": "The customer's",
+     "to": "The customers"
+    },
+    {
+     "kind": "your_youre",
+     "from": "and you're going",
+     "to": "and your going"
+    },
+    {
+     "kind": "typo_common",
+     "from": "receive it",
+     "to": "recieve it"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "show",
+   "perfectFixWhy": [],
+   "maxCorpusSimilarity": 0.545
+  },
+  {
+   "id": "ge120",
+   "split": "test",
+   "group": "error",
+   "kind": "three_errors",
+   "words": 19,
+   "before": "Facilities update for the north wing.",
+   "input": "Their is a problem with the heating in the north wing, so the engineers will checks it tommorow morning.",
+   "after": "Please dress warmly today.",
+   "reference": "There is a problem with the heating in the north wing, so the engineers will check it tomorrow morning.",
+   "edits": [
+    {
+     "kind": "their_there",
+     "from": "There is a problem",
+     "to": "Their is a problem"
+    },
+    {
+     "kind": "agreement",
+     "from": "will check it",
+     "to": "will checks it"
+    },
+    {
+     "kind": "typo_common",
+     "from": "tomorrow morning",
+     "to": "tommorow morning"
+    }
+   ],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "perfectFixVerdict": "withhold",
+   "perfectFixWhy": [
+    "date_word_changed"
+   ],
+   "maxCorpusSimilarity": 0.511
+  },
+  {
+   "id": "gc001",
+   "split": "tune",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 17,
+   "before": "Here is the update on the broken scanner.",
+   "input": "The replacement part for the XR-7Qz scanner ships from the Groningen depot on Wednesday under order 55-K0193.",
+   "after": "Tracking details will follow.",
+   "reference": "The replacement part for the XR-7Qz scanner ships from the Groningen depot on Wednesday under order 55-K0193.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.469
+  },
+  {
+   "id": "gc002",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 16,
+   "before": "The agenda for the March workshop is final.",
+   "input": "Ngozi Oyelaran-Whitt will chair the session on supplier audits, and Bartholomew Achterberg will take the minutes.",
+   "after": "Lunch is provided.",
+   "reference": "Ngozi Oyelaran-Whitt will chair the session on supplier audits, and Bartholomew Achterberg will take the minutes.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.482
+  },
+  {
+   "id": "gc003",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 17,
+   "before": "A short note on how the monitoring works.",
+   "input": "Our iQubit sensors report readings every 90 seconds, which the eKarta dashboard then groups into hourly averages.",
+   "after": "Raw data is kept for 30 days.",
+   "reference": "Our iQubit sensors report readings every 90 seconds, which the eKarta dashboard then groups into hourly averages.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.457
+  },
+  {
+   "id": "gc004",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 21,
+   "before": "Stock of the blue fittings is low.",
+   "input": "Please order 40 units of SKU 44-ZB-019 and 12 units of SKU 44-ZB-020 from Kvistad Supply before the end of May.",
+   "after": "Use the usual purchase order template.",
+   "reference": "Please order 40 units of SKU 44-ZB-019 and 12 units of SKU 44-ZB-020 from Kvistad Supply before the end of May.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.419
+  },
+  {
+   "id": "gc005",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 14,
+   "before": "Please welcome a new colleague.",
+   "input": "Siobhán McAllister-Ndiaye joined the analytics team on Monday after six years at Pembroke Tidewater.",
+   "after": "Her desk is next to the window on the fourth floor.",
+   "reference": "Siobhán McAllister-Ndiaye joined the analytics team on Monday after six years at Pembroke Tidewater.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.466
+  },
+  {
+   "id": "gc006",
+   "split": "tune",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 21,
+   "before": "Some notes for the new field staff.",
+   "input": "The survey van uses LiDAR and a GNSS receiver, so the MapTrek files must be converted before they open in QGIS.",
+   "after": "The conversion takes a few minutes per file.",
+   "reference": "The survey van uses LiDAR and a GNSS receiver, so the MapTrek files must be converted before they open in QGIS.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.514
+  },
+  {
+   "id": "gc007",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 18,
+   "before": "Our sustainability group has a new home.",
+   "input": "The Kaitiaki working group meets in the Tūī room on level 3 every second Thursday at 10 am.",
+   "after": "New members are welcome.",
+   "reference": "The Kaitiaki working group meets in the Tūī room on level 3 every second Thursday at 10 am.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.575
+  },
+  {
+   "id": "gc008",
+   "split": "test",
+   "group": "correct",
+   "kind": "names_codes",
+   "words": 19,
+   "before": "A firmware fix is now available.",
+   "input": "Version 4.2.1b of the OptiPlexer firmware fixes the fan fault reported on units with serial numbers starting with QX9.",
+   "after": "Install it during the next maintenance window.",
+   "reference": "Version 4.2.1b of the OptiPlexer firmware fixes the fan fault reported on units with serial numbers starting with QX9.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.463
+  },
+  {
+   "id": "gc009",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 19,
+   "before": "The finance committee met on Tuesday.",
+   "input": "The organisation will review its travel policy in the autumn, with a focus on the cost of hotel stays.",
+   "after": "Comments can be sent to the committee secretary.",
+   "reference": "The organisation will review its travel policy in the autumn, with a focus on the cost of hotel stays.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.512
+  },
+  {
+   "id": "gc010",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 19,
+   "before": "We are paying the Grantham invoice by post this time.",
+   "input": "Please make sure the cheque is signed by two directors before it is posted to the supplier in Leeds.",
+   "after": "Keep a scan for our records.",
+   "reference": "Please make sure the cheque is signed by two directors before it is posted to the supplier in Leeds.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.503
+  },
+  {
+   "id": "gc011",
+   "split": "tune",
+   "group": "correct",
+   "kind": "british",
+   "words": 20,
+   "before": "The reception refit is nearly done.",
+   "input": "The new colour scheme for the reception area was chosen by the staff council after a short vote in March.",
+   "after": "Painting starts next week.",
+   "reference": "The new colour scheme for the reception area was chosen by the staff council after a short vote in March.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.519
+  },
+  {
+   "id": "gc012",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 19,
+   "before": "We are hiring two delivery drivers for the Swindon branch.",
+   "input": "Applicants must hold a valid driving licence and have at least two years of experience in a similar role.",
+   "after": "The closing date is 14 April.",
+   "reference": "Applicants must hold a valid driving licence and have at least two years of experience in a similar role.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "gc013",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 20,
+   "before": "Booking is now open for the finance basics course.",
+   "input": "The training programme runs over three days and is open to all staff who manage a budget of any size.",
+   "after": "Places are limited to 20 per session.",
+   "reference": "The training programme runs over three days and is open to all staff who manage a budget of any size.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.48
+  },
+  {
+   "id": "gc014",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 18,
+   "before": "A quick note on last month's spending.",
+   "input": "The sales team travelled to the trade fair by train, which cut the travel cost by almost half.",
+   "after": "We will use the train again next year.",
+   "reference": "The sales team travelled to the trade fair by train, which cut the travel cost by almost half.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.463
+  },
+  {
+   "id": "gc015",
+   "split": "test",
+   "group": "correct",
+   "kind": "british",
+   "words": 20,
+   "before": "Please update the website banner.",
+   "input": "The visitor centre will be closed for refurbishment until the end of the month, and tours will restart in June.",
+   "after": "Group bookings for June can be taken now.",
+   "reference": "The visitor centre will be closed for refurbishment until the end of the month, and tours will restart in June.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.538
+  },
+  {
+   "id": "gc016",
+   "split": "tune",
+   "group": "correct",
+   "kind": "british",
+   "words": 21,
+   "before": "The order for the spring range is ready.",
+   "input": "We would be grateful if you could do us a favour and check the catalogue numbers before the order is sent.",
+   "after": "A few numbers looked wrong last time.",
+   "reference": "We would be grateful if you could do us a favour and check the catalogue numbers before the order is sent.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.473
+  },
+  {
+   "id": "gc017",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 14,
+   "before": "Notes from Monday's stand-up.",
+   "input": "Call with the printing vendor moved to Thursday, agenda to follow by noon tomorrow.",
+   "after": "Ask Marta about the paper samples.",
+   "reference": "Call with the printing vendor moved to Thursday, agenda to follow by noon tomorrow.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.482
+  },
+  {
+   "id": "gc018",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 14,
+   "before": "Board summary for the team.",
+   "input": "Budget approved, hiring paused until March, and two open roles on hold for now.",
+   "after": "More detail at the all-hands.",
+   "reference": "Budget approved, hiring paused until March, and two open roles on hold for now.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.428
+  },
+  {
+   "id": "gc019",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 16,
+   "before": "Planning notes for the client day.",
+   "input": "Action for Leila: confirm the venue, book the caterer, and send the invite list by Friday.",
+   "after": "Everything else is done.",
+   "reference": "Action for Leila: confirm the venue, book the caterer, and send the invite list by Friday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.561
+  },
+  {
+   "id": "gc020",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 14,
+   "before": "Office move status.",
+   "input": "Still waiting on the signed contract from the landlord, no reply since last Wednesday.",
+   "after": "Will chase again on Monday.",
+   "reference": "Still waiting on the signed contract from the landlord, no reply since last Wednesday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "gc021",
+   "split": "tune",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 17,
+   "before": "Sprint review notes.",
+   "input": "Next steps: test the new login page on mobile, then a short demo for the support team.",
+   "after": "Release planned for the 18th.",
+   "reference": "Next steps: test the new login page on mobile, then a short demo for the support team.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.477
+  },
+  {
+   "id": "gc022",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 14,
+   "before": "Customer service summary.",
+   "input": "Three calls about the late deliveries this week, all from the same postcode area.",
+   "after": "Logged with the courier.",
+   "reference": "Three calls about the late deliveries this week, all from the same postcode area.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.521
+  },
+  {
+   "id": "gc023",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 12,
+   "before": "Attached is the draft supplier scorecard.",
+   "input": "Not urgent, but worth a look before the quarterly review next month.",
+   "after": "Thanks in advance.",
+   "reference": "Not urgent, but worth a look before the quarterly review next month.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "gc024",
+   "split": "test",
+   "group": "correct",
+   "kind": "fragments",
+   "words": 13,
+   "before": "Equipment audit, floor 2.",
+   "input": "Two laptops returned, one still missing, asset tags noted in the shared sheet.",
+   "after": "Follow-up with IT on Friday.",
+   "reference": "Two laptops returned, one still missing, asset tags noted in the shared sheet.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.5
+  },
+  {
+   "id": "gc025",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 18,
+   "before": "Here is where we stand on the year-end numbers.",
+   "input": "The figures, as far as we can tell, are correct, and the auditors have not raised any questions.",
+   "after": "We will send the final pack next week.",
+   "reference": "The figures, as far as we can tell, are correct, and the auditors have not raised any questions.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.522
+  },
+  {
+   "id": "gc026",
+   "split": "tune",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 16,
+   "before": "Good news on the laptop refresh.",
+   "input": "She approved the request, too, though she asked that the costs be split across two quarters.",
+   "after": "Procurement will place the order today.",
+   "reference": "She approved the request, too, though she asked that the costs be split across two quarters.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.511
+  },
+  {
+   "id": "gc027",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 17,
+   "before": "The guest list is final.",
+   "input": "We invited the suppliers, the auditors, and the two new board members to the lunch on Friday.",
+   "after": "Please let reception know.",
+   "reference": "We invited the suppliers, the auditors, and the two new board members to the lunch on Friday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.49
+  },
+  {
+   "id": "gc028",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 19,
+   "before": "A finding from the logistics review.",
+   "input": "Odd as it may sound, the slower shipping option turned out to be cheaper and more reliable last quarter.",
+   "after": "We will switch for the next quarter.",
+   "reference": "Odd as it may sound, the slower shipping option turned out to be cheaper and more reliable last quarter.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.504
+  },
+  {
+   "id": "gc029",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 13,
+   "before": "Returns are down.",
+   "input": "In 2022, 340 orders were returned, compared with 210 in the year before.",
+   "after": "Most returns were for size issues.",
+   "reference": "In 2022, 340 orders were returned, compared with 210 in the year before.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.455
+  },
+  {
+   "id": "gc030",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 16,
+   "before": "The badge policy has been updated.",
+   "input": "The new rules apply to all staff, including, for the first time, contractors working on site.",
+   "after": "Badges must be worn at all times.",
+   "reference": "The new rules apply to all staff, including, for the first time, contractors working on site.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.584
+  },
+  {
+   "id": "gc031",
+   "split": "tune",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 19,
+   "before": "The green office plan is out.",
+   "input": "The plan is simple, if not easy: cut paper use by half and move all forms online by summer.",
+   "after": "Ideas are welcome.",
+   "reference": "The plan is simple, if not easy: cut paper use by half and move all forms online by summer.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.513
+  },
+  {
+   "id": "gc032",
+   "split": "test",
+   "group": "correct",
+   "kind": "uncommon_comma",
+   "words": 16,
+   "before": "A few people have asked about the competition.",
+   "input": "Yes, the deadline is firm, and no, we cannot accept late entries for the design award.",
+   "after": "Good luck to everyone taking part.",
+   "reference": "Yes, the deadline is firm, and no, we cannot accept late entries for the design award.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.537
+  },
+  {
+   "id": "gc033",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 20,
+   "before": "New rules for the cold store.",
+   "input": "Each pallet must not exceed 750 kg, and the stack height is limited to 1.8 m in the cold store.",
+   "after": "Overweight pallets will be refused.",
+   "reference": "Each pallet must not exceed 750 kg, and the stack height is limited to 1.8 m in the cold store.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.48
+  },
+  {
+   "id": "gc034",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 21,
+   "before": "Handling notes for the lab samples.",
+   "input": "The samples must be kept between 2 °C and 8 °C at all times and used within 72 hours of delivery.",
+   "after": "Log the temperature twice a day.",
+   "reference": "The samples must be kept between 2 °C and 8 °C at all times and used within 72 hours of delivery.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.508
+  },
+  {
+   "id": "gc035",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 20,
+   "before": "The lease summary is attached.",
+   "input": "The new office has 1,450 sq ft of open space and a 12 m² meeting room on the ground floor.",
+   "after": "Parking is extra.",
+   "reference": "The new office has 1,450 sq ft of open space and a 12 m² meeting room on the ground floor.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.494
+  },
+  {
+   "id": "gc036",
+   "split": "tune",
+   "group": "correct",
+   "kind": "units",
+   "words": 17,
+   "before": "A safety reminder for drivers.",
+   "input": "Delivery vans on the site are limited to 15 km/h, and reversing alarms must be switched on.",
+   "after": "Thanks for your care.",
+   "reference": "Delivery vans on the site are limited to 15 km/h, and reversing alarms must be switched on.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.48
+  },
+  {
+   "id": "gc037",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 17,
+   "before": "Product details for the order form.",
+   "input": "Each bottle holds 500 mL of solution, and one case of 24 bottles weighs about 13.2 kg.",
+   "after": "Prices are per case.",
+   "reference": "Each bottle holds 500 mL of solution, and one case of 24 bottles weighs about 13.2 kg.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.389
+  },
+  {
+   "id": "gc038",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 19,
+   "before": "The IT plan for the new floor.",
+   "input": "The routers support Wi-Fi on both 2.4 GHz and 5 GHz, with a range of roughly 40 m indoors.",
+   "after": "Two units should cover the space.",
+   "reference": "The routers support Wi-Fi on both 2.4 GHz and 5 GHz, with a range of roughly 40 m indoors.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.424
+  },
+  {
+   "id": "gc039",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 17,
+   "before": "Background for the site visit.",
+   "input": "The cable runs 3.5 km from the substation to the plant and carries up to 11 kV.",
+   "after": "Bring safety boots.",
+   "reference": "The cable runs 3.5 km from the substation to the plant and carries up to 11 kV.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.437
+  },
+  {
+   "id": "gc040",
+   "split": "test",
+   "group": "correct",
+   "kind": "units",
+   "words": 15,
+   "before": "Specs for the trade show posters.",
+   "input": "Print the posters at 600 dpi on 170 gsm paper, sized 420 × 594 mm.",
+   "after": "Send the proofs by Tuesday.",
+   "reference": "Print the posters at 600 dpi on 170 gsm paper, sized 420 × 594 mm.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.37
+  },
+  {
+   "id": "gc041",
+   "split": "tune",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 18,
+   "before": "We found the missing message.",
+   "input": "The customer typed \"recieved\" in the subject line, which is why the filter did not catch the message.",
+   "after": "The filter now checks for common misspellings.",
+   "reference": "The customer typed \"recieved\" in the subject line, which is why the filter did not catch the message.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.503
+  },
+  {
+   "id": "gc042",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 19,
+   "before": "Design notes for the new sign-up form.",
+   "input": "The old form says \"adress\" in the header, so please do not copy its layout for the new version.",
+   "after": "Use the template on the shared drive.",
+   "reference": "The old form says \"adress\" in the header, so please do not copy its layout for the new version.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.532
+  },
+  {
+   "id": "gc043",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 16,
+   "before": "Tips for finding old files.",
+   "input": "Search the archive for \"teh\" as well, since many old records were typed with that mistake.",
+   "after": "Ask the records team if you get stuck.",
+   "reference": "Search the archive for \"teh\" as well, since many old records were typed with that mistake.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.518
+  },
+  {
+   "id": "gc044",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 17,
+   "before": "There is a problem with the Calder invoice.",
+   "input": "The supplier's invoice lists the item as \"stainles steel brackets\", and we need them to correct it.",
+   "after": "The order number is right.",
+   "reference": "The supplier's invoice lists the item as \"stainles steel brackets\", and we need them to correct it.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "gc045",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 16,
+   "before": "A reminder for the launch deck.",
+   "input": "Our brand name is spelled \"Brite\", not \"Bright\", so please check every slide before the launch.",
+   "after": "The legal team has approved the logo.",
+   "reference": "Our brand name is spelled \"Brite\", not \"Bright\", so please check every slide before the launch.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.497
+  },
+  {
+   "id": "gc046",
+   "split": "tune",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 16,
+   "before": "A small bug was reported by a customer.",
+   "input": "The error message reads \"Payment faild\", and the developers have been asked to fix the typo.",
+   "after": "The fix is planned for the next release.",
+   "reference": "The error message reads \"Payment faild\", and the developers have been asked to fix the typo.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.539
+  },
+  {
+   "id": "gc047",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 17,
+   "before": "A note for facilities.",
+   "input": "The sign on the loading dock still says \"No parkng\", which a visitor pointed out on Monday.",
+   "after": "A new sign has been ordered.",
+   "reference": "The sign on the loading dock still says \"No parkng\", which a visitor pointed out on Monday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.503
+  },
+  {
+   "id": "gc048",
+   "split": "test",
+   "group": "correct",
+   "kind": "quoted_misspelling",
+   "words": 18,
+   "before": "A note on the interview transcripts.",
+   "input": "In the transcript, the speaker's phrase \"we was told\" is kept as spoken, as the style guide requires.",
+   "after": "Only obvious filler words are removed.",
+   "reference": "In the transcript, the speaker's phrase \"we was told\" is kept as spoken, as the style guide requires.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.452
+  },
+  {
+   "id": "gc049",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 22,
+   "before": "Clause 9 sets out the indemnity.",
+   "input": "The Licensee shall indemnify and hold harmless the Licensor from any and all claims arising out of the use of the Software.",
+   "after": "This clause survives termination.",
+   "reference": "The Licensee shall indemnify and hold harmless the Licensor from any and all claims arising out of the use of the Software.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.496
+  },
+  {
+   "id": "gc050",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 18,
+   "before": "Clause 12 covers termination.",
+   "input": "Notwithstanding the foregoing, either party may terminate this Agreement upon thirty days' written notice to the other party.",
+   "after": "Notice must be sent by registered post.",
+   "reference": "Notwithstanding the foregoing, either party may terminate this Agreement upon thirty days' written notice to the other party.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.51
+  },
+  {
+   "id": "gc051",
+   "split": "tune",
+   "group": "correct",
+   "kind": "legal",
+   "words": 18,
+   "before": "The final clauses are standard.",
+   "input": "Any amendment to this Agreement shall be valid only if made in writing and signed by both parties.",
+   "after": "The Agreement is governed by the laws of the province.",
+   "reference": "Any amendment to this Agreement shall be valid only if made in writing and signed by both parties.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.474
+  },
+  {
+   "id": "gc052",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 19,
+   "before": "Section 5 restricts subletting.",
+   "input": "The tenant shall not sublet the premises, or any part thereof, without the prior written consent of the landlord.",
+   "after": "Consent may not be unreasonably withheld.",
+   "reference": "The tenant shall not sublet the premises, or any part thereof, without the prior written consent of the landlord.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.53
+  },
+  {
+   "id": "gc053",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 21,
+   "before": "Please read the declaration before signing.",
+   "input": "The undersigned hereby confirms that the information provided in this application is true and complete to the best of their knowledge.",
+   "after": "Sign and date below.",
+   "reference": "The undersigned hereby confirms that the information provided in this application is true and complete to the best of their knowledge.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.528
+  },
+  {
+   "id": "gc054",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 22,
+   "before": "The payment terms are as follows.",
+   "input": "Payment shall be made within thirty days of receipt of a valid invoice, failing which interest shall accrue at the statutory rate.",
+   "after": "Invoices must quote the purchase order number.",
+   "reference": "Payment shall be made within thirty days of receipt of a valid invoice, failing which interest shall accrue at the statutory rate.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.515
+  },
+  {
+   "id": "gc055",
+   "split": "test",
+   "group": "correct",
+   "kind": "legal",
+   "words": 17,
+   "before": "The signature page follows.",
+   "input": "In witness whereof, the parties have caused this Agreement to be executed by their duly authorized representatives.",
+   "after": "Each party keeps one original.",
+   "reference": "In witness whereof, the parties have caused this Agreement to be executed by their duly authorized representatives.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.507
+  },
+  {
+   "id": "gc056",
+   "split": "tune",
+   "group": "correct",
+   "kind": "legal",
+   "words": 23,
+   "before": "Clause 18 deals with third parties.",
+   "input": "Save as expressly provided herein, nothing in this Agreement shall confer any right on a person who is not a party to it.",
+   "after": "This reflects the standard position.",
+   "reference": "Save as expressly provided herein, nothing in this Agreement shall confer any right on a person who is not a party to it.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.492
+  },
+  {
+   "id": "gc057",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Newsletter deadline reminder.",
+   "input": "The quarterly newsletter will go out on the first Monday of next month, so please send any news by Friday.",
+   "after": "Photos are welcome too.",
+   "reference": "The quarterly newsletter will go out on the first Monday of next month, so please send any news by Friday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.531
+  },
+  {
+   "id": "gc058",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Change to the stock count.",
+   "input": "We have moved the stock count to Saturday morning, and everyone who helps will get a day off in lieu.",
+   "after": "Sign up with your team lead.",
+   "reference": "We have moved the stock count to Saturday morning, and everyone who helps will get a day off in lieu.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.52
+  },
+  {
+   "id": "gc059",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Kitchen news for the third floor.",
+   "input": "The new coffee machine on the third floor takes both cards and coins, and the old one will be removed.",
+   "after": "Please report any faults to facilities.",
+   "reference": "The new coffee machine on the third floor takes both cards and coins, and the old one will be removed.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.526
+  },
+  {
+   "id": "gc060",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Holiday hours for the Baltic team.",
+   "input": "Our office in Tallinn will close at noon on Friday so that the staff can travel home before the holiday.",
+   "after": "Urgent calls will be forwarded to Riga.",
+   "reference": "Our office in Tallinn will close at noon on Friday so that the staff can travel home before the holiday.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.563
+  },
+  {
+   "id": "gc061",
+   "split": "tune",
+   "group": "correct",
+   "kind": "plain",
+   "words": 19,
+   "before": "A fire safety reminder.",
+   "input": "Please keep the fire doors on the ground floor closed at all times, even when you are moving boxes.",
+   "after": "Use the trolley lift for heavy loads.",
+   "reference": "Please keep the fire doors on the ground floor closed at all times, even when you are moving boxes.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.563
+  },
+  {
+   "id": "gc062",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 19,
+   "before": "Notes from the Anselm Builders meeting.",
+   "input": "The client asked for the final drawings in both PDF and CAD formats by the end of next week.",
+   "after": "Our team will prepare both sets.",
+   "reference": "The client asked for the final drawings in both PDF and CAD formats by the end of next week.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.557
+  },
+  {
+   "id": "gc063",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 19,
+   "before": "Volunteers wanted.",
+   "input": "We are looking for two volunteers to help run the charity bake sale in the lobby on the 21st.",
+   "after": "All money raised goes to the local food bank.",
+   "reference": "We are looking for two volunteers to help run the charity bake sale in the lobby on the 21st.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.48
+  },
+  {
+   "id": "gc064",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Garage works are planned.",
+   "input": "The parking garage will be resurfaced over two weekends, and cars left inside will be moved at the owner's cost.",
+   "after": "Dates are listed on the notice.",
+   "reference": "The parking garage will be resurfaced over two weekends, and cars left inside will be moved at the owner's cost.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.527
+  },
+  {
+   "id": "gc065",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 19,
+   "before": "Results of the shift pattern survey.",
+   "input": "Most of the feedback on the new shift pattern was positive, although the night staff asked for longer breaks.",
+   "after": "We will try a longer break in May.",
+   "reference": "Most of the feedback on the new shift pattern was positive, although the night staff asked for longer breaks.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.512
+  },
+  {
+   "id": "gc066",
+   "split": "tune",
+   "group": "correct",
+   "kind": "plain",
+   "words": 15,
+   "before": "The painting quote is in.",
+   "input": "The quote from the painters includes all materials but does not include moving the furniture.",
+   "after": "We will move it ourselves.",
+   "reference": "The quote from the painters includes all materials but does not include moving the furniture.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.49
+  },
+  {
+   "id": "gc067",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 18,
+   "before": "Transport update for Thursday.",
+   "input": "If the train strike goes ahead on Thursday, staff may work from home without asking their manager first.",
+   "after": "Please keep your calendar up to date.",
+   "reference": "If the train strike goes ahead on Thursday, staff may work from home without asking their manager first.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.479
+  },
+  {
+   "id": "gc068",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Inventory wrap-up.",
+   "input": "The team finished the inventory two days early, which gave us time to fix the labeling errors before the audit.",
+   "after": "Thanks to everyone who helped.",
+   "reference": "The team finished the inventory two days early, which gave us time to fix the labeling errors before the audit.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.521
+  },
+  {
+   "id": "gc069",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 20,
+   "before": "Website launch plan.",
+   "input": "Our new website will launch on 3 March, and the old address will redirect visitors for at least a year.",
+   "after": "Please update your email signature after the launch.",
+   "reference": "Our new website will launch on 3 March, and the old address will redirect visitors for at least a year.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.495
+  },
+  {
+   "id": "gc070",
+   "split": "test",
+   "group": "correct",
+   "kind": "plain",
+   "words": 19,
+   "before": "Energy savings for the warehouse.",
+   "input": "The warehouse lights will be replaced with LED panels over the summer, which should cut the power bill noticeably.",
+   "after": "Work will happen at night.",
+   "reference": "The warehouse lights will be replaced with LED panels over the summer, which should cut the power bill noticeably.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.504
+  },
+  {
+   "id": "gc071",
+   "split": "tune",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 19,
+   "before": "Thank you for returning the damaged heater.",
+   "input": "We have approved your refund of $214.50, and the money should appear in your account within five working days.",
+   "after": "Your order number is 88213.",
+   "reference": "We have approved your refund of $214.50, and the money should appear in your account within five working days.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.498
+  },
+  {
+   "id": "gc072",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 22,
+   "before": "Your message reached our customer care team.",
+   "input": "We are sorry that your complaint about the late delivery was not answered sooner, and we have credited your account with $25.",
+   "after": "We have also spoken to the courier.",
+   "reference": "We are sorry that your complaint about the late delivery was not answered sooner, and we have credited your account with $25.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.486
+  },
+  {
+   "id": "gc073",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 19,
+   "before": "The leave policy has been updated for next year.",
+   "input": "Employees who need medical leave for surgery or recovery can take up to twelve weeks without losing their position.",
+   "after": "Speak to human resources for the forms.",
+   "reference": "Employees who need medical leave for surgery or recovery can take up to twelve weeks without losing their position.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.484
+  },
+  {
+   "id": "gc074",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 22,
+   "before": "Here is a summary of this week's security incident.",
+   "input": "On Tuesday night an attacker used a stolen password to access one email account, and the account was locked within ten minutes.",
+   "after": "No other accounts were affected.",
+   "reference": "On Tuesday night an attacker used a stolen password to access one email account, and the account was locked within ten minutes.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.506
+  },
+  {
+   "id": "gc075",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 23,
+   "before": "This is a difficult update to share.",
+   "input": "The company will reduce its workforce by 45 roles at the Ashby plant, and affected staff will be told in person this week.",
+   "after": "Support and severance details will be given to each person.",
+   "reference": "The company will reduce its workforce by 45 roles at the Ashby plant, and affected staff will be told in person this week.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.541
+  },
+  {
+   "id": "gc076",
+   "split": "tune",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 21,
+   "before": "Front desk procedures for the clinic.",
+   "input": "If a patient reports chest pain at reception, staff must call the duty nurse at once and stay with the patient.",
+   "after": "Do not ask the patient to wait in line.",
+   "reference": "If a patient reports chest pain at reception, staff must call the duty nurse at once and stay with the patient.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.514
+  },
+  {
+   "id": "gc077",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 23,
+   "before": "Lessons from last month's phishing attack.",
+   "input": "The phishing email asked staff to enter their passwords on a fake login page, and three people did so before it was blocked.",
+   "after": "All three passwords have been reset.",
+   "reference": "The phishing email asked staff to enter their passwords on a fake login page, and three people did so before it was blocked.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.524
+  },
+  {
+   "id": "gc078",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 19,
+   "before": "We found the cause of the double charges.",
+   "input": "Customers who were charged twice for the same order will receive a full refund of the second payment automatically.",
+   "after": "No action is needed from them.",
+   "reference": "Customers who were charged twice for the same order will receive a full refund of the second payment automatically.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.547
+  },
+  {
+   "id": "gc079",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 23,
+   "before": "More detail on the support package.",
+   "input": "Staff affected by the layoffs will keep their health insurance until the end of the year and can use the career support service.",
+   "after": "Questions can go to the HR helpline.",
+   "reference": "Staff affected by the layoffs will keep their health insurance until the end of the year and can use the career support service.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.508
+  },
+  {
+   "id": "gc080",
+   "split": "test",
+   "group": "correct",
+   "kind": "sensitive",
+   "words": 21,
+   "before": "Update for the leadership team only.",
+   "input": "An employee filed a formal complaint about harassment by a supervisor, and the investigation will be handled by an outside firm.",
+   "after": "Please keep this confidential.",
+   "reference": "An employee filed a formal complaint about harassment by a supervisor, and the investigation will be handled by an outside firm.",
+   "edits": [],
+   "qualifies": true,
+   "qualifyReasons": [],
+   "maxCorpusSimilarity": 0.514
+  }
+ ]
+}

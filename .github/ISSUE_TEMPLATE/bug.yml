@@ -1,0 +1,42 @@
+name: Bug report
+description: Something did not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please use only documents you are happy to share, or a synthetic one that shows the same problem. Security problems go through the Security tab (private vulnerability reporting), not here.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `onionskin doctor`
+      description: Run `onionskin doctor` and paste everything it prints. It is safe to paste.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you see, and what did you expect?
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File type
+      options: [Word (.docx), Excel (.xlsx), PowerPoint (.pptx), Not about one file type]
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options: [Claude Code, Codex, Other, No agent involved]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. /onionskin sample.docx\n2. ..."

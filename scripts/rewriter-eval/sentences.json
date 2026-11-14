@@ -1,0 +1,731 @@
+{
+ "tasks": [
+  "shorter",
+  "friendlier",
+  "grammar"
+ ],
+ "sentences": [
+  {
+   "id": "c01",
+   "text": "The Q3 budget review for the Marketing team is scheduled for Thursday, October 9 at 2:30 pm in the Cedar Room, and all department leads should bring their updated forecasts.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "time",
+    "date",
+    "room"
+   ],
+   "words": 30
+  },
+  {
+   "id": "c02",
+   "text": "We will refund the full $1,250 deposit within 14 days provided that the equipment is returned undamaged and no later than March 31.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "money",
+    "condition",
+    "date"
+   ],
+   "words": 23
+  },
+  {
+   "id": "c03",
+   "text": "Please note that the Harbor conference room will be unavailable from 8:00 am to 12:00 pm on Monday while the projector is being replaced.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "time",
+    "room"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c04",
+   "text": "Our new Nimbus 400 router supports up to 250 simultaneous connections and is not compatible with firmware versions older than 2.1.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "product",
+    "negation",
+    "number"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c05",
+   "text": "The invoice for 3,480 euros was not paid by the due date of June 5, so a late fee of 2.5% has been added to the balance.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "money",
+    "negation",
+    "percent",
+    "date"
+   ],
+   "words": 27
+  },
+  {
+   "id": "c06",
+   "text": "If the shipment of 600 units does not arrive by Friday, we will cancel the order and request a full refund from Brightline Logistics.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "condition",
+    "negation",
+    "company"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c07",
+   "text": "Kindly note that employees who have completed more than 12 months of service are eligible for an additional 5 days of paid leave per year.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "number"
+   ],
+   "words": 25
+  },
+  {
+   "id": "c08",
+   "text": "The migration of the customer database to the new Atlas platform is expected to take approximately 6 hours and will begin at 11 pm on Saturday.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "product",
+    "time"
+   ],
+   "words": 26
+  },
+  {
+   "id": "c09",
+   "text": "Revenue for the third quarter has increased by 8.4% compared to the same period last year, and this was driven mainly by strong sales of the Orion line.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "percent",
+    "product"
+   ],
+   "words": 28
+  },
+  {
+   "id": "c10",
+   "text": "Unless the contract is signed by both parties before April 15, the discounted rate of $42 per user per month will no longer apply.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "condition",
+    "money",
+    "date",
+    "negation"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c11",
+   "text": "Nobody from the finance team has approved the purchase order for the 15 laptops, so the vendor cannot ship them yet.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "negation",
+    "number"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c12",
+   "text": "The training session on data privacy lasts 90 minutes and takes place in Room 4B, and attendance is mandatory for all new hires.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "room",
+    "number"
+   ],
+   "words": 23
+  },
+  {
+   "id": "c13",
+   "text": "We regret to inform you that your application for the Senior Analyst position was not successful on this occasion.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "negation",
+    "formal"
+   ],
+   "words": 19
+  },
+  {
+   "id": "c14",
+   "text": "Our support desk is open from 9 am to 6 pm Monday through Friday, but it is closed on public holidays and during the annual audit in January.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "time",
+    "date"
+   ],
+   "words": 28
+  },
+  {
+   "id": "c15",
+   "text": "The vendor has kindly agreed to lower the price from $9,800 to $8,900 on the condition that we place the order before the end of the month.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "money",
+    "condition"
+   ],
+   "words": 27
+  },
+  {
+   "id": "c16",
+   "text": "Attached is the signed copy of the lease for Suite 210, which begins on July 1 and runs for 36 months at a rate of $3,200 per month.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "money",
+    "room",
+    "date"
+   ],
+   "words": 28
+  },
+  {
+   "id": "c17",
+   "text": "Please note that the Pelican dashboard shows that 92% of tickets were resolved within 24 hours, which is above the target of 90% set last year.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "percent",
+    "product"
+   ],
+   "words": 26
+  },
+  {
+   "id": "c18",
+   "text": "Because the warehouse in Reno is closed for inventory, orders placed after 3 pm on Wednesday will not be dispatched until Monday, May 12.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "condition",
+    "negation",
+    "time",
+    "date"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c19",
+   "text": "Please note that the committee did not approve the request for additional headcount, but it did agree to revisit the matter in the second quarter.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "negation"
+   ],
+   "words": 25
+  },
+  {
+   "id": "c20",
+   "text": "Visitors must sign in at the front desk and wear a badge at all times, and they cannot enter the lab without an escort.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "negation",
+    "modal"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c21",
+   "text": "The weekly design sync has been moved to 4 pm on Tuesday in Room 2A.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "short",
+    "time",
+    "room"
+   ],
+   "words": 15
+  },
+  {
+   "id": "c22",
+   "text": "Payment of $780 is due within 30 days of the invoice date.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "short",
+    "money"
+   ],
+   "words": 12
+  },
+  {
+   "id": "c23",
+   "text": "Our offices will be closed on Monday, November 24 for the holiday and will reopen at 8 am on Tuesday.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "short",
+    "date",
+    "time"
+   ],
+   "words": 20
+  },
+  {
+   "id": "c24",
+   "text": "The security patch for the Falcon app fixes 3 critical bugs and must be installed on every device before December 1.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "product",
+    "modal",
+    "date"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c25",
+   "text": "Two of the five pilot stores, Seattle and Boise, exceeded their sales goals by more than 10%, while the other three fell short.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "percent",
+    "names"
+   ],
+   "words": 23
+  },
+  {
+   "id": "c26",
+   "text": "After careful consideration of the proposal submitted by Granite Peak Consulting on August 19, the board has decided not to proceed with the engagement at this time, citing budget constraints and uncertainty about the scope of work involved in the first phase.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "long",
+    "negation",
+    "company",
+    "date"
+   ],
+   "words": 42
+  },
+  {
+   "id": "c27",
+   "text": "In order to ensure that all invoices are processed in a timely manner, we kindly ask that suppliers submit them to the accounts payable inbox no later than the 25th of each month, together with the corresponding purchase order number.",
+   "errors": false,
+   "split": "tune",
+   "features": [
+    "long",
+    "date"
+   ],
+   "words": 40
+  },
+  {
+   "id": "c28",
+   "text": "The annual company offsite will take place at the Lakeview Lodge from September 18 to 20, and travel and accommodation will be arranged and paid for by the company for all attendees who confirm by August 30.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "long",
+    "date",
+    "condition"
+   ],
+   "words": 37
+  },
+  {
+   "id": "e01",
+   "text": "We recieved your payment of $450 on May 3, but the invoice still shows an outstanding balance of $75.",
+   "fixed": "We received your payment of $450 on May 3, but the invoice still shows an outstanding balance of $75.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "money",
+    "date",
+    "misspelling"
+   ],
+   "words": 19
+  },
+  {
+   "id": "e02",
+   "text": "The the quarterly report is due on Friday at 5 pm, and it must include the updated figures for all three regions.",
+   "fixed": "The quarterly report is due on Friday at 5 pm, and it must include the updated figures for all three regions.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "time",
+    "doubled word"
+   ],
+   "words": 22
+  },
+  {
+   "id": "e03",
+   "text": "Their are 14 open positions in the Berlin office, and the hiring manager will review applications untill June 20.",
+   "fixed": "There are 14 open positions in the Berlin office, and the hiring manager will review applications until June 20.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "number",
+    "date",
+    "homophone",
+    "misspelling"
+   ],
+   "words": 19
+  },
+  {
+   "id": "e04",
+   "text": "The new policy don't apply to contractors who has worked here for less than 90 days.",
+   "fixed": "The new policy doesn't apply to contractors who have worked here for less than 90 days.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "negation",
+    "agreement"
+   ],
+   "words": 16
+  },
+  {
+   "id": "e05",
+   "text": "Please send the signed form to the HR desk by Wednesday, otherwise you access badge will not be activated on Monday.",
+   "fixed": "Please send the signed form to the HR desk by Wednesday, otherwise your access badge will not be activated on Monday.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "negation",
+    "wrong word"
+   ],
+   "words": 21
+  },
+  {
+   "id": "e06",
+   "text": "Every one of the 8 vendors have confirmed that they can deliver the order before the deadline of April 2.",
+   "fixed": "Every one of the 8 vendors has confirmed that they can deliver the order before the deadline of April 2.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "number",
+    "agreement"
+   ],
+   "words": 20
+  },
+  {
+   "id": "e07",
+   "text": "Me and my colleague will present the results of the Zephyr pilot at the 10:15 session in the Maple Room.",
+   "fixed": "My colleague and I will present the results of the Zephyr pilot at the 10:15 session in the Maple Room.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "time",
+    "room",
+    "pronoun case"
+   ],
+   "words": 20
+  },
+  {
+   "id": "e08",
+   "text": "The warehouse team has complete the audit of 1,200 pallets and found only 4 discrepancies, wich have been corrected.",
+   "fixed": "The warehouse team has completed the audit of 1,200 pallets and found only 4 discrepancies, which have been corrected.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "number",
+    "verb form",
+    "misspelling"
+   ],
+   "words": 19
+  },
+  {
+   "id": "e09",
+   "text": "Its important to note that the discount of 15% apply only to orders placed through the Harbor portal.",
+   "fixed": "It's important to note that the discount of 15% applies only to orders placed through the Harbor portal.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "percent",
+    "apostrophe",
+    "agreement"
+   ],
+   "words": 18
+  },
+  {
+   "id": "e10",
+   "text": "The servers was restarted at 2 am, and all services were back online by 2:20 am without any data loss",
+   "fixed": "The servers were restarted at 2 am, and all services were back online by 2:20 am without any data loss.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "time",
+    "agreement",
+    "missing period"
+   ],
+   "words": 20
+  },
+  {
+   "id": "e11",
+   "text": "We are looking for a experienced project manager with atleast five years of experience in the construction sector.",
+   "fixed": "We are looking for an experienced project manager with at least five years of experience in the construction sector.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "article",
+    "misspelling"
+   ],
+   "words": 18
+  },
+  {
+   "id": "e12",
+   "text": "Despite of the delay, the Beacon team deliver the prototype on the 12th and passed all 6 safety tests.",
+   "fixed": "Despite the delay, the Beacon team delivered the prototype on the 12th and passed all 6 safety tests.",
+   "errors": true,
+   "split": "tune",
+   "features": [
+    "date",
+    "number",
+    "preposition",
+    "tense"
+   ],
+   "words": 19
+  },
+  {
+   "id": "c29",
+   "text": "We are sorry to tell you that the Juniper office move has been delayed by three weeks because the new lease has not been signed.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "badnews",
+    "negation",
+    "number",
+    "condition"
+   ],
+   "words": 25
+  },
+  {
+   "id": "c30",
+   "text": "Your request to extend the Sparrow warranty beyond 24 months was declined, and the repair fee of $185 remains payable by April 12.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "badnews",
+    "money",
+    "date",
+    "number"
+   ],
+   "words": 23
+  },
+  {
+   "id": "c31",
+   "text": "Unfortunately, the Tuesday workshop is full, so we cannot add anyone else to the list of 40 attendees.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "badnews",
+    "negation",
+    "number"
+   ],
+   "words": 18
+  },
+  {
+   "id": "c32",
+   "text": "A late charge of $35 will be applied to every account that is still unpaid on the first of the month.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "badnews",
+    "money",
+    "date"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c33",
+   "text": "The panel reviewed your grant application for the Willow Creek library project and could not offer funding in this round.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "badnews",
+    "negation",
+    "name"
+   ],
+   "words": 20
+  },
+  {
+   "id": "c34",
+   "text": "The new expense policy takes effect on January 6, and receipts of more than $75 must be uploaded within 10 days of the purchase.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "date",
+    "money",
+    "modal",
+    "number"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c35",
+   "text": "Thank you for joining the Compass pilot, which has now run for 8 weeks and has been used by 140 people across 3 offices.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "product",
+    "number"
+   ],
+   "words": 24
+  },
+  {
+   "id": "c36",
+   "text": "If you cannot attend the safety briefing on Wednesday at 9:30 am, please tell your manager so that another session can be arranged.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "condition",
+    "negation",
+    "time"
+   ],
+   "words": 23
+  },
+  {
+   "id": "c37",
+   "text": "Our Sage 12 printer prints 40 pages per minute, and the toner cartridge needs to be replaced after about 9,000 pages.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "product",
+    "number"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c38",
+   "text": "The board will meet on the first Monday of every quarter, and the minutes must be circulated within 5 working days.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "modal",
+    "number"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c39",
+   "text": "Meridian Foods delivered 2,300 cases to the Tulsa depot on Friday, which is 12% more than the order placed in February.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "company",
+    "number",
+    "percent",
+    "date"
+   ],
+   "words": 21
+  },
+  {
+   "id": "c40",
+   "text": "All remote staff must connect to the Orbit VPN before opening client files, and passwords expire every 60 days.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "modal",
+    "product",
+    "number"
+   ],
+   "words": 19
+  },
+  {
+   "id": "c41",
+   "text": "The lunch break starts at noon.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "short",
+    "time"
+   ],
+   "words": 6
+  },
+  {
+   "id": "c42",
+   "text": "As discussed in last week's call with the Cobalt Ridge team, the revised schedule moves the final review from May 14 to May 21, but the launch date of June 3 stays the same as long as no further changes are requested.",
+   "errors": false,
+   "split": "holdout",
+   "features": [
+    "long",
+    "date",
+    "condition",
+    "negation"
+   ],
+   "words": 42
+  },
+  {
+   "id": "e13",
+   "text": "Their was a power cut in the Dallas office on Monday, so the team could not accessed the files untill noon.",
+   "fixed": "There was a power cut in the Dallas office on Monday, so the team could not access the files until noon.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "day",
+    "negation",
+    "homophone",
+    "verb form",
+    "misspelling"
+   ],
+   "words": 21
+  },
+  {
+   "id": "e14",
+   "text": "Please send you're updated resume to the recruiter by Friday, March 7.",
+   "fixed": "Please send your updated resume to the recruiter by Friday, March 7.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "date",
+    "wrong word"
+   ],
+   "words": 12
+  },
+  {
+   "id": "e15",
+   "text": "The budget for the 4 new hires were approved on Tuesday, but the offer letters hasn't been sent.",
+   "fixed": "The budget for the 4 new hires was approved on Tuesday, but the offer letters haven't been sent.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "number",
+    "negation",
+    "agreement"
+   ],
+   "words": 18
+  },
+  {
+   "id": "e16",
+   "text": "We hope to hire more then 20 seasonal workers before the busy period starts in November.",
+   "fixed": "We hope to hire more than 20 seasonal workers before the busy period starts in November.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "number",
+    "wrong word"
+   ],
+   "words": 16
+  },
+  {
+   "id": "e17",
+   "text": "Each of the managers need to submit a evaluation form by the end of the week",
+   "fixed": "Each of the managers needs to submit an evaluation form by the end of the week.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "agreement",
+    "article",
+    "missing period"
+   ],
+   "words": 16
+  },
+  {
+   "id": "e18",
+   "text": "Alot of customers has asked wether the Delta plan includes weekend support.",
+   "fixed": "A lot of customers have asked whether the Delta plan includes weekend support.",
+   "errors": true,
+   "split": "holdout",
+   "features": [
+    "misspelling",
+    "agreement"
+   ],
+   "words": 12
+  }
+ ]
+}

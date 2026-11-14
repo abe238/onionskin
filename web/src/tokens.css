@@ -1,0 +1,268 @@
+/* Onionskin design tokens: "True Liquid Glass" (variation V1 of the site), translated to a working tool.
+ * Colors were authored in OKLCH (the site palette) and are stored here as sRGB so computed styles stay rgb().
+ * One file: color (light + dark), glass recipe, radius, spacing, type, motion, focus, layers.
+ * System font stack only: the app runs under default-src 'none' and makes no remote requests.
+ * Liquid Glass is the CONTROL layer (bars, sidebar frame, popovers, banners, zoom). The document, the sheet grid, the slides and the
+ * sidebar cards are content: crisp, opaque or near-opaque. */
+
+:root {
+  color-scheme: light;
+
+  /* type: the site's stack (SF first, system fallbacks). Weights 400 / 500 / 600 / 650 / 700. */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, Roboto, sans-serif;
+  --font-display: var(--font);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-2xs: 11.5px;
+  --text-xs: 12.5px;
+  --text-sm: 13.5px;
+  --text-md: 14.5px;
+  --text-lg: 16.5px;
+  --text-xl: 20px;
+  --leading: 1.45;
+  --track: -0.005em;
+  --track-head: -0.015em;
+
+  /* spacing (4 px scale) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  /* radius. Glass shapes are concentric: inner radius = outer radius minus the padding between them. */
+  --pad-bar: 8px;
+  --r-bar: 24px; /* top bar and toolbar: 32 px controls + 8 px padding on each side */
+  --r-ctl: calc(var(--r-bar) - var(--pad-bar)); /* controls inside a bar: 16 px, a full pill at 32 px */
+  --pad-frame: 10px;
+  --r-frame: 30px; /* sidebar frame */
+  --r-card: calc(var(--r-frame) - var(--pad-frame)); /* cards inside the frame: 20 px */
+  --r-pop: 20px; /* menus and popovers */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* target sizes */
+  --hit: 32px;
+
+  /* motion */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 420ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* layers */
+  --z-doc: 0;
+  --z-overlay: 20;
+  --z-chrome: 30;
+  --z-sidebar: 32;
+  --z-dock: 36;
+  --z-banner: 40;
+  --z-scrim: 50;
+  --z-drawer: 52;
+  --z-pop: 60;
+  --z-dialog: 70;
+
+  /* ground: the desk behind the controls, and the solid desk the document sits on */
+  --bg: rgb(245, 247, 250);
+  --bg-2: rgb(234, 237, 242);
+  --desk: rgb(236, 239, 245);
+  --field: rgb(225, 234, 250);
+  --c-doc: rgb(92, 138, 222);
+  --c-grid: rgb(78, 180, 135);
+  --c-slide: rgb(240, 140, 105);
+  --c-note: rgb(249, 221, 132);
+  --field-veil: rgba(245, 247, 250, 0.1);
+
+  /* glass. fill: the tint over the field. regular (bars, frame) keeps text legible; pop (menus) is thick. */
+  --g-fill: rgba(255, 255, 255, 0.26);
+  --g-bar: rgba(251, 252, 254, 0.62);
+  --g-sheet: rgba(251, 252, 254, 0.8);
+  --g-clear: rgba(255, 255, 255, 0.12);
+  --g-reg: rgba(251, 252, 254, 0.66);
+  --g-pop: rgba(252, 253, 255, 0.9);
+  --g-menu: rgba(252, 253, 254, 0.97); /* menus opened from inside a glass bar cannot blur the page behind it (nested backdrop roots), so they are near-solid */
+  --g-solid: rgb(249, 250, 253);
+  --g-blur: 10px;
+  --g-sat: 1.5;
+  --g-bri: 1.06;
+  --g-hi: rgba(255, 255, 255, 0.75);
+  --g-lo: rgba(255, 255, 255, 0.22);
+  --g-edge: rgba(255, 255, 255, 0.32);
+  --g-line: rgba(38, 46, 61, 0.14); /* a hairline where glass meets a light ground */
+  --g-light-top: rgba(255, 255, 255, 0.22);
+  --g-light-bot: rgba(255, 255, 255, 0.1);
+  --sh1: rgba(15, 22, 36, 0.1);
+  --sh2: rgba(11, 21, 44, 0.22);
+  --shadow-glass: inset 0 1px 0 var(--g-hi), inset 0 -1px 0 var(--g-lo), inset 0 0 0 1px var(--g-edge), 0 1px 2px var(--sh1), 0 18px 48px -18px var(--sh2);
+  --shadow-pop: inset 0 1px 0 var(--g-hi), inset 0 0 0 1px var(--g-edge), 0 0 0 1px var(--g-line), 0 4px 10px var(--sh1), 0 22px 48px -14px var(--sh2);
+  --shadow-paper: 0 0 0 1px rgba(38, 46, 61, 0.1), 0 2px 4px rgba(15, 22, 36, 0.06), 0 18px 40px -14px rgba(11, 21, 44, 0.22);
+
+  /* content surfaces inside glass: near-solid, never glass on glass */
+  --card: rgba(255, 255, 255, 0.9);
+  --card-edge: rgba(38, 46, 61, 0.1);
+  --well: rgba(255, 255, 255, 0.6);
+  --well-edge: rgba(38, 46, 61, 0.12);
+  --input: rgb(255, 255, 255);
+  --hover: rgba(38, 46, 61, 0.07);
+  --press: rgba(38, 46, 61, 0.13);
+  --raise: rgba(255, 255, 255, 0.9); /* the lifted chip of an active segment */
+
+  /* ink (text on glass; measured, see the contrast test) */
+  --ink: rgb(15, 20, 29);
+  --ink-2: rgb(51, 56, 67);
+  --ink-3: rgb(74, 80, 91);
+  --rule: rgba(38, 46, 61, 0.12);
+
+  /* the ink pill: the one primary action */
+  --pill-ink: rgb(15, 20, 29);
+  --pill-ink-on: rgb(252, 252, 252);
+
+  /* accent: one blue, used sparingly (focus, comment numbers, links, selected state) */
+  --accent: rgb(25, 87, 210);
+  --accent-ink: rgb(2, 68, 190);
+  --accent-soft: rgba(25, 87, 210, 0.1);
+  --accent-edge: rgba(25, 87, 210, 0.32);
+  --accent-on: rgb(252, 252, 252);
+
+  /* status */
+  --ok: rgb(0, 92, 59);
+  --ok-soft: rgba(0, 135, 88, 0.14);
+  --warn: rgb(127, 74, 0);
+  --warn-soft: rgba(211, 143, 0, 0.18);
+  --warn-edge: rgba(157, 99, 0, 0.4);
+  --err: rgb(165, 13, 28);
+  --err-soft: rgba(197, 54, 55, 0.12);
+  --err-edge: rgba(179, 34, 40, 0.36);
+
+  /* document overlays (drawn over the page, so they need to work on white) */
+  --comment-hl: rgba(254, 210, 82, 0.4);
+  --comment-hl-whole: rgba(254, 210, 82, 0.18);
+  --comment-line: rgb(189, 135, 0);
+  --comment-num: rgb(10, 74, 197);
+  --comment-num-on: rgb(252, 252, 252);
+  --done-hl: rgba(29, 168, 113, 0.3);
+  --declined-hl: rgba(121, 129, 141, 0.26);
+  --mark-a: var(--accent);
+  --mark-b: var(--accent);
+
+  /* paper */
+  --paper: #ffffff;
+
+  /* focus: never animated, always visible; offset so it clears the glass edge */
+  --focus: rgb(31, 94, 217);
+  --focus-ring: 2px solid var(--focus);
+  --focus-offset: 2px;
+
+  --scrim: rgba(6, 11, 24, 0.28);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: rgb(8, 12, 20);
+  --bg-2: rgb(16, 21, 30);
+  --desk: rgb(15, 20, 29);
+  --field: rgb(12, 21, 42);
+  --c-doc: rgb(29, 67, 140);
+  --c-grid: rgb(17, 98, 67);
+  --c-slide: rgb(148, 65, 38);
+  --c-note: rgb(158, 131, 55);
+  --field-veil: rgba(8, 12, 20, 0.26);
+
+  --g-fill: rgba(36, 41, 51, 0.3);
+  --g-bar: rgba(20, 24, 34, 0.6);
+  --g-sheet: rgba(18, 23, 32, 0.82);
+  --g-clear: rgba(40, 46, 58, 0.14);
+  --g-reg: rgba(17, 22, 31, 0.7);
+  --g-pop: rgba(22, 27, 36, 0.92);
+  --g-menu: rgba(26, 31, 42, 0.97);
+  --g-solid: rgb(20, 24, 34);
+  --g-bri: 0.92;
+  --g-hi: rgba(255, 255, 255, 0.32);
+  --g-lo: rgba(255, 255, 255, 0.08);
+  --g-edge: rgba(255, 255, 255, 0.14);
+  --g-line: rgba(0, 0, 0, 0.5);
+  --g-light-top: rgba(255, 255, 255, 0.07);
+  --g-light-bot: rgba(255, 255, 255, 0.03);
+  --sh1: rgba(0, 0, 0, 0.4);
+  --sh2: rgba(0, 0, 0, 0.5);
+  --shadow-paper: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 18px 40px -14px rgba(0, 0, 0, 0.55);
+
+  --card: rgba(29, 34, 43, 0.92);
+  --card-edge: rgba(255, 255, 255, 0.1);
+  --well: rgba(255, 255, 255, 0.06);
+  --well-edge: rgba(255, 255, 255, 0.1);
+  --input: rgb(11, 15, 24);
+  --hover: rgba(255, 255, 255, 0.08);
+  --press: rgba(255, 255, 255, 0.14);
+  --raise: rgba(255, 255, 255, 0.14);
+
+  --ink: rgb(240, 242, 245);
+  --ink-2: rgb(195, 200, 207);
+  --ink-3: rgb(166, 171, 180);
+  --rule: rgba(255, 255, 255, 0.11);
+
+  --pill-ink: rgb(243, 245, 248);
+  --pill-ink-on: rgb(11, 15, 24);
+
+  --accent: rgb(110, 182, 255);
+  --accent-ink: rgb(149, 201, 255);
+  --accent-soft: rgba(110, 182, 255, 0.16);
+  --accent-edge: rgba(110, 182, 255, 0.4);
+  --accent-on: rgb(11, 15, 24);
+
+  --ok: rgb(90, 214, 155);
+  --ok-soft: rgba(75, 201, 143, 0.16);
+  --warn: rgb(235, 189, 87);
+  --warn-soft: rgba(228, 183, 80, 0.16);
+  --warn-edge: rgba(228, 183, 80, 0.4);
+  --err: rgb(254, 155, 152);
+  --err-soft: rgba(245, 139, 136, 0.15);
+  --err-edge: rgba(245, 139, 136, 0.4);
+
+  --comment-hl: rgba(244, 201, 71, 0.34);
+  --comment-hl-whole: rgba(244, 201, 71, 0.16);
+  --declined-hl: rgba(121, 129, 141, 0.3);
+  --comment-num: rgb(25, 87, 210);
+
+  --paper: #f4f2ed;
+  --focus: rgb(110, 182, 255);
+  --scrim: rgba(0, 0, 0, 0.5);
+}
+
+/* Reduced transparency: every glass surface becomes a solid fill with no backdrop filter (the rule that applies it is in shell.css). */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme] {
+    --g-fill: var(--g-solid);
+    --g-bar: var(--g-solid);
+      --g-sheet: var(--g-solid);
+    --g-clear: var(--g-solid);
+    --g-reg: var(--g-solid);
+    --g-pop: var(--g-solid);
+    --g-menu: var(--g-solid);
+    --card: var(--g-solid);
+  }
+}
+
+/* Touch targets: 44 px on coarse pointers. */
+@media (pointer: coarse) {
+  :root {
+    --hit: 44px;
+  }
+}
+
+/* Reduced motion: durations collapse; the CSS animations also opt out individually. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.01ms;
+    --dur: 0.01ms;
+    --dur-slow: 0.01ms;
+  }
+}

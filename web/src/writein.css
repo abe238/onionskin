@@ -1,0 +1,22 @@
+/* "Changes shown in place" (WriteIn.jsx): drawn over the document, never in it. Timings match WRITEIN in writein.js
+   (wipe 500 ms, chip 900 ms, tint 1.5 s after the wipe). */
+.wi-layer { position: absolute; inset: 0; pointer-events: none; }
+.wi-layer > * { position: absolute; pointer-events: none; }
+/* the cover hides the new words, then shrinks toward the right: the words seem to be written in, left to right, one line at a time */
+.wi-cover { transform-origin: right center; animation: wi-wipe 500ms linear both; }
+@keyframes wi-wipe { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.wi-ins { border-radius: 2px; background: var(--ok-soft); animation: wi-tint 1500ms ease-out 500ms both; }
+@keyframes wi-tint { from { opacity: 1; } to { opacity: 0; } }
+.wi-was {
+  /* starts at the changed word, but never runs past the edge of the document pane (a 60-character chip near the right edge moves left) */
+  left: max(8px, min(var(--wx), calc(100% - var(--ww) - 8px))); /* --ww: an estimate of the chip's width from its text */ transform: translateY(calc(-100% - 3px)); max-width: min(420px, calc(100% - 16px)); padding: 1px 6px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: var(--text-xs); line-height: 1.5; color: var(--ink-2); background: var(--g-pop); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  animation: wi-was 900ms ease-in both;
+}
+.wi-was s { text-decoration-thickness: 1.5px; }
+@keyframes wi-was { 0%, 60% { opacity: 1; } to { opacity: 0; } }
+/* reduced motion: no wipe and no fade; the page keeps the still tint and chip for two seconds, then removes them (writein-live.js) */
+@media (prefers-reduced-motion: reduce) {
+  .wi-layer > * { animation: none; }
+  .wi-cover { display: none; }
+}

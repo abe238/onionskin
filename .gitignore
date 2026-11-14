@@ -1,0 +1,17 @@
+web/dist/
+node_modules/
+.venv/
+*.log
+.DS_Store
+dist-tmp/
+test-results/
+__pycache__/
+*.pyc
+test/fixtures/cache/
+scripts/real-run/.fixtures/
+dist-zip/
+dist-demo/
+scripts/rewriter/apple/onionskin-fm
+scripts/rewriter/apple/onionskin-fm.json
+scripts/rewriter/apple/onionskin-fm.building
+skills/onionskin/voice.md

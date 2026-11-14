@@ -1,0 +1,53 @@
+{
+  "name": "onionskin-cli",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Edit Word, Excel and PowerPoint files in the browser and send the batch to a coding agent.",
+  "type": "module",
+  "bin": {
+    "onionskin": "src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "web/dist",
+    "vendor/engine",
+    "vendor/engine-node",
+    "vendor/engine.lock.json",
+    "skills/onionskin",
+    "!skills/onionskin/voice.md",
+    "scripts/checker",
+    "scripts/rewriter",
+    "scripts/requirements.txt",
+    "scripts/install-check.mjs",
+    "docs/contracts/*.schema.json",
+    "NOTICE",
+    "CHANGELOG.md",
+    "INSTALL.md"
+  ],
+  "scripts": {
+    "build:web": "vite build --config web/vite.config.js",
+    "vendor": "node scripts/vendor-engine.mjs",
+    "verify:vendor": "node scripts/vendor-engine.mjs --verify",
+    "test:unit": "node --test --test-force-exit --test-timeout=60000 \"test/*.test.js\"",
+    "test:e2e": "node --test --test-force-exit --test-timeout=240000 --test-concurrency=1 \"e2e/*.e2e.test.js\"",
+    "test:webkit": "ONIONSKIN_BROWSER=webkit node --test --test-force-exit --test-timeout=240000 --test-concurrency=1 \"e2e/*.e2e.test.js\"",
+    "test:safari": "node scripts/real-safari/smoke.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "package": "node scripts/package.mjs",
+    "rehearse:install": "sh scripts/rehearse-clean-install.sh",
+    "demo:build": "node scripts/demo/build.mjs",
+    "demo:serve": "node scripts/demo/serve.mjs",
+    "prepack": "node scripts/prepack.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "playwright-core": "^1.64.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.5"
+  }
+}

@@ -1,0 +1,142 @@
+/* Engine reskin. The engine styles itself from --de-* variables on .de-root and from hard-coded values.
+ * Two things matter here: (1) the format toolbar is portaled OUTSIDE .de-root (into our toolbar), so the variables
+ * are defined on .app as well; (2) specificity: .app .de-root.de-dark beats the engine's own .de-root.de-dark. */
+.app,
+.app .de-root,
+.app .de-root.de-dark {
+  --de-bg: transparent;
+  --de-chrome: var(--g-pop);
+  --de-border: var(--rule);
+  --de-text: var(--ink);
+  --de-muted: var(--ink-3);
+  --de-accent: var(--accent);
+  --de-accent-hover: var(--accent-ink);
+  --de-accent-ink: var(--accent-on);
+  --de-accent-soft: var(--accent-soft);
+  --de-head: color-mix(in srgb, var(--g-solid) 90%, var(--accent));
+  --de-head-ink: var(--ink-2);
+  --de-head-border: var(--rule);
+  --de-corner-border: var(--rule);
+  --de-freeze: var(--ink-3);
+  --de-on: var(--accent-soft);
+  --de-on-ink: var(--accent-ink);
+  --de-on-ink-strong: var(--accent-ink);
+  --de-ink: var(--ink-2);
+  --de-ink-strong: var(--ink);
+  --de-ink-soft: var(--ink-2);
+  --de-hover: var(--hover);
+  --de-hover-solid: var(--hover);
+  --de-hover-soft: var(--accent-soft);
+  --de-ebar: transparent;
+  --de-tb-sep: var(--rule);
+  --de-pop: var(--g-pop);
+  --de-pop-shadow: var(--shadow-pop);
+  --de-sep: var(--rule);
+  --de-input-bg: var(--input);
+  --de-input-border: color-mix(in srgb, var(--ink) 38%, transparent);
+  --de-swatch-border: var(--g-line);
+  --de-disabled: color-mix(in srgb, var(--ink) 40%, transparent);
+  --de-danger: var(--err);
+  --de-danger-border: var(--err-edge);
+  --de-ok: var(--ok);
+  --de-tab-hover: var(--hover);
+  --de-tab-on: var(--raise);
+  --de-tab-ink: var(--ink);
+  --de-toast-bg: var(--g-pop);
+  --de-toast-ink: var(--ink);
+  --de-backdrop: var(--scrim);
+  --de-shadow: var(--shadow-paper);
+}
+.app .de-root { font-family: var(--font); background: transparent; }
+.app .de-scroll { padding-inline: 14px; } /* a little desk around the page so it never touches the frame */
+
+/* ---- scrollbars: thin pills ---- */
+.app * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 32%, transparent) transparent; }
+.app ::-webkit-scrollbar { width: 10px; height: 10px; }
+.app ::-webkit-scrollbar-thumb { border-radius: 6px; border: 2px solid transparent; background: color-mix(in srgb, var(--ink) 32%, transparent); background-clip: content-box; }
+.app ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink) 50%, transparent); background-clip: content-box; }
+.app ::-webkit-scrollbar-track, .app ::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- the format toolbar (inside our glass bar) ---- */
+.app .editbar { overflow: visible; }
+.app .de-ebar { height: auto; min-height: var(--hit); padding: 0; border-radius: 0; background: transparent; gap: 1px; color: var(--ink-2); }
+.app .de-tb { width: var(--hit); height: var(--hit); border-radius: var(--r-ctl); color: var(--ink-2); transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast); }
+.app .de-tb:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.app .de-tb:active:not(:disabled) { background: var(--press); }
+.app .de-tb:focus-visible, .app .de-dd:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+.app .de-tb-on { background: var(--raise) !important; color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--well-edge), 0 1px 2px var(--sh1); }
+.app .de-tb:disabled { opacity: 0.45; }
+.app .de-tb-sep { height: 22px; margin: 0 4px; }
+.app .de-tb-chev { width: auto; min-width: 22px; padding: 0 3px 0 5px; }
+.app .de-dd { height: var(--hit); padding: 0 8px 0 12px; border-radius: var(--r-pill); font-family: var(--font); font-size: var(--text-sm); font-weight: 550; color: var(--ink); }
+.app .de-dd:hover:not(:disabled) { background: var(--hover); }
+.app .de-dd:disabled { cursor: default; color: var(--ink-2); }
+.app .de-dd > svg { color: var(--ink-3); }
+.app .de-dd-ph { color: var(--ink-2); font-size: 0; }
+/* the empty boxes: until the caret is in text the engine shows "Style" / "Font"; say what the box means instead */
+.app .de-dd[title="Paragraph style"] .de-dd-ph::before { content: "Normal text"; font-size: var(--text-sm); }
+.app .de-dd[title="Font"] .de-dd-ph::before { content: "Default font"; font-size: var(--text-sm); }
+.app .de-size { display: inline-flex; align-items: center; position: relative; }
+.app .de-size-input { width: max(42px, var(--hit)); height: var(--hit); border: 0; border-radius: var(--r-pill); background: var(--well); box-shadow: inset 0 0 0 1px var(--well-edge); text-align: center; color: var(--ink); font: 600 var(--text-sm) var(--font); }
+.app .de-size-input:disabled { background: transparent; box-shadow: none; }
+.app .de-size:has(.de-size-input:disabled)::after { content: "Auto"; position: absolute; left: var(--hit); right: var(--hit); text-align: center; font: 550 var(--text-xs) var(--font); color: var(--ink-2); pointer-events: none; }
+.app .de-size:has(.de-size-input:disabled) .de-size-input { color: transparent; }
+
+/* popovers: dropdowns, the font list, colour grids, the more menu, the context menu. Thick glass (a deep blur and a high-alpha tint, because
+ * they float over document text), a lit rim, solid text rows with a clear hover. No lens: the lens belongs to the bars. */
+.app .de-dd-pop, .app .de-tb-pop, .app .de-ctx, .app .de-size-pop, .app .de-borders-pop, .app .de-fassist {
+  background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-menu); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
+  border: 0; border-radius: var(--r-pop); box-shadow: var(--shadow-pop); color: var(--ink);
+}
+.app .de-dd-pop { padding: 6px; }
+.app .de-dd-opt { border-radius: calc(var(--r-pop) - 6px); min-height: 30px; }
+.app .de-dd-opt:hover, .app .de-dd-hi { background: var(--hover); }
+.app .de-ctx { padding: 6px; }
+.app .de-ctx button { border-radius: calc(var(--r-pop) - 6px); min-height: 32px; }
+.app .de-ctx button.de-ctx-hi:not(:disabled) { background: var(--hover); }
+.app .de-tb-pop.de-ebar-more { background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-menu); }
+/* a popover opened from the toolbar must rise above the review panel (the toolbar is its own stacking context) */
+.app .toolbar:has(.de-tb-pop, .de-dd-pop, .de-size-pop, .de-borders-pop) { z-index: var(--z-pop); }
+/* the context menu lives inside the document frame, which is below the toolbar and the comment chip: while a menu is open the frame rises above both */
+.app .docwrap:has(.de-ctx) { z-index: var(--z-pop); }
+/* dropdown rows preview the document's own style colors; on the dark popover those navy tones vanish, so rows use the text color and keep size, weight and italics */
+.app[data-theme-now="dark"] .de-dd-pop .de-dd-text { color: var(--ink) !important; }
+
+/* dialogs */
+.app .de-dialog-back { background: var(--scrim); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.app .de-dialog { background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-pop); -webkit-backdrop-filter: blur(28px) saturate(1.5); backdrop-filter: blur(28px) saturate(1.5); border: 0; border-radius: var(--r-xl); box-shadow: var(--shadow-pop); color: var(--ink); font-family: var(--font); }
+.app .de-dialog input, .app .de-dialog textarea { border-radius: var(--r-sm); }
+.app .de-toast { background: var(--g-pop); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); color: var(--ink); border: 0; border-radius: var(--r-pop); box-shadow: var(--shadow-pop); }
+
+/* zoom control: floating glass over the page, concentric pill */
+.app .de-zoom { right: 14px; bottom: 14px; height: auto; min-height: 40px; padding: 4px; border-radius: var(--r-pill); border: 0; box-shadow: var(--shadow-glass); color: var(--ink);
+  background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-pop); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5); }
+.app .de-zoom button { width: var(--hit); height: max(32px, var(--hit)); border-radius: var(--r-pill); color: var(--ink-2); }
+.app .de-zoom button:hover { background: var(--hover); color: var(--ink); }
+.app .de-zoom span { min-width: 48px; font-weight: 600; color: var(--ink); }
+
+/* XLSX: formula bar, sheet tabs (controls: glass; the grid between them stays solid) */
+.app .de-fx { background: var(--g-pop); border-bottom: 1px solid var(--rule); }
+.app .de-fx-ref { color: var(--ink); }
+.app .de-tabs { height: 44px; padding: 0 10px; gap: 4px; align-items: center; background: linear-gradient(180deg, var(--g-light-top), transparent 60%), var(--g-bar); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5); border-top: 1px solid var(--g-line); }
+.app .de-tab { min-height: 32px; padding: 0 14px; border-radius: var(--r-pill); color: var(--ink-2); font-weight: 550; }
+.app .de-tab:hover { background: var(--hover); }
+.app .de-tab[aria-selected="true"] { background: var(--raise); color: var(--ink); box-shadow: inset 0 1px 0 var(--g-hi), 0 0 0 1px var(--well-edge), 0 1px 2px var(--sh1); }
+.app .de-tab:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
+
+/* PPTX: slide thumbnails */
+.app .de-thumbs { background: linear-gradient(180deg, var(--g-light-top), transparent 40%), var(--g-bar); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5); border-right: 1px solid var(--g-line); }
+.app .de-thumb-n { color: var(--ink-3); }
+.app .de-thumb .de-slide { outline: 1px solid var(--g-line); border-radius: 6px; }
+.app .de-thumb[aria-current="true"] .de-slide { outline: 2px solid var(--accent); }
+
+/* the outline toggle the engine shows while the document is read-only */
+.app .de-outline-toggle { border-radius: var(--r-pill); background: var(--g-pop); border: 0; color: var(--ink-2); box-shadow: var(--shadow-pop); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .app .de-dd-pop, .app .de-tb-pop, .app .de-ctx, .app .de-size-pop, .app .de-borders-pop, .app .de-fassist, .app .de-dialog, .app .de-toast, .app .de-zoom, .app .de-tabs, .app .de-thumbs, .app .de-dialog-back { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .app .de-dd-pop, .app .de-tb-pop, .app .de-ctx, .app .de-size-pop, .app .de-borders-pop, .app .de-fassist, .app .de-dialog, .app .de-toast, .app .de-zoom, .app .de-tabs, .app .de-thumbs { background: var(--g-solid); }
+}
+@media (prefers-contrast: more) {
+  .app .de-dd-pop, .app .de-tb-pop, .app .de-ctx, .app .de-size-pop, .app .de-borders-pop, .app .de-fassist, .app .de-dialog, .app .de-toast, .app .de-zoom { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--g-solid); box-shadow: inset 0 0 0 1.5px var(--ink); }
+}

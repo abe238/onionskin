@@ -1,0 +1,11 @@
+/* Question cards: the agent asks instead of declining (web/src/Question.jsx). Tokens only; shell.css is left alone. */
+.card .badge.st-asked { color: var(--warn); background: var(--warn-soft); }
+.card.st-asked { box-shadow: inset 3px 0 0 var(--warn), 0 0 0 1px var(--card-edge), 0 1px 2px var(--sh1); } /* shell.css .card shadow, plus the mark */
+.question { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--r-md); background: var(--well); box-shadow: inset 0 0 0 1px var(--well-edge); }
+.question .q-head { margin: 0; font-size: var(--text-2xs); font-weight: 650; letter-spacing: 0.04em; color: var(--ink-2); }
+.question .q-text { margin: 0; font-size: var(--text-sm); color: var(--ink); overflow-wrap: anywhere; }
+.question .q-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.question .q-option { white-space: normal; text-align: left; overflow-wrap: anywhere; max-width: 100%; }
+.question .q-option.quiet { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
+.question .q-hint { margin: 0; font-size: var(--text-2xs); color: var(--ink-2); }
+.q-answered { margin: 0; font-size: var(--text-xs); color: var(--ink-2); overflow-wrap: anywhere; }

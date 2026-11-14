@@ -1,0 +1,30 @@
+name: test
+# NOT RUN YET: this file has never executed. It is a manual-trigger workflow (no push or pull_request trigger, so it spends no
+# minutes by itself) written to match how the tests run locally.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Python virtualenv for fixtures and the deeper check
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r scripts/requirements.txt
+      - name: Fetch the pinned Office test files (sha256 verified)
+        run: node scripts/fetch-fixtures.mjs
+      - name: Tests (real Chrome from the runner image, channel chrome)
+        run: npm test

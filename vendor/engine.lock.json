@@ -1,0 +1,26 @@
+{
+  "engineCommit": "ddf163f8486ef31c0c8b12b995fffaea2ab5d588",
+  "files": {
+    "DocViewer-BZLXUcxJ.js": "21bc080f8591a81f5c602259ae1c27591c69dcc7252ad9dfff3b05a57a4d641f",
+    "THIRD_PARTY_LICENSES.txt": "bd827293b89dc5f7770fd9f4ebfec004c29dfd66961623835a42340452625ed3",
+    "collab-BVynXMqc.js": "efb2236f23686759a368c813a16b58d7bc972df157ff293c13132f3075b00ccb",
+    "collab.js": "ce349128bdbb89c093beb18d94ccb2c082dde3a1181c4967d1bedb8174124e2f",
+    "core.js": "0adc1c645572dd4fb31ef8360b5043d2b565235279a1aff0cbac908845fbd626",
+    "default-worker-DogNT09A.js": "dcd4ade60ef3e9c58d0132a8bbfd43bf64c65a1965106e1333f486b6e2a020cf",
+    "embed.js": "9527deaafa5ffe788ab17c7ac6f7581c68ffbcaa197aab766bff84710984395d",
+    "index.js": "ace85cac21fdf4a529cfa7183a6383765bc2757295b9651b131cb38c1aa4603c",
+    "office-engine.embed.js": "76808513f2a731d77a7759bde8bb0ef3896f3cf4de758274064286b31f15e720",
+    "office-engine.worker.js": "8a231e6beb26806b454d8807668688ee185769cd8292c1bf6f8b9f6e032a5b1e",
+    "xlsx-ops-SYAv6V0f.js": "2ad099653641aba348297583683515e2b03781222b533997ee7d03f6aadddd17"
+  },
+  "node": {
+    "engineCommit": "ddf163f8486ef31c0c8b12b995fffaea2ab5d588",
+    "entry": "engine-node.mjs",
+    "entrySha256": "310dedc57ae60c07d9a2cc5bd699d85f5dfffcb17edbb523c365a91ad0169239",
+    "bun": "1.4.4",
+    "files": {
+      "LICENSE": "afc8306b96f78d64b61388ed221a548c7a6cc5c4225f1a222190e79e3e7de05c",
+      "engine-node.mjs": "8c31b796db219292a2a8169788631794f819e5d907602094f4e77ba0493ceed3"
+    }
+  }
+}

@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "onionskin.ops/1",
+  "title": "Operations file for `onionskin apply <file> --ops ops.json`",
+  "description": "Strictly validated: unknown fields are rejected. Ops run in order against anchors as delivered in the batch; every op carries `expect`, the text of the target as the agent saw it. Anchors and `expect` are checked against the file as it is BEFORE any op of this file runs. Nothing is written for an op whose anchor is missing or ambiguous or whose `expect` does not match. By default the set is atomic (all or nothing); `--partial` applies what it can.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ops"],
+  "properties": {
+    "schema": { "const": "onionskin.ops/1" },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/replace_text" },
+          { "$ref": "#/$defs/insert_paragraph_after" },
+          { "$ref": "#/$defs/insert_paragraph_before" },
+          { "$ref": "#/$defs/delete_paragraph" },
+          { "$ref": "#/$defs/set_paragraph_style" },
+          { "$ref": "#/$defs/format_text" },
+          { "$ref": "#/$defs/set_table_cell_text" },
+          { "$ref": "#/$defs/insert_table_row" },
+          { "$ref": "#/$defs/delete_table_row" },
+          { "$ref": "#/$defs/insert_table_column" },
+          { "$ref": "#/$defs/delete_table_column" },
+          { "$ref": "#/$defs/set_cells" },
+          { "$ref": "#/$defs/format_cells" },
+          { "$ref": "#/$defs/insert_rows" },
+          { "$ref": "#/$defs/delete_rows" },
+          { "$ref": "#/$defs/insert_columns" },
+          { "$ref": "#/$defs/delete_columns" },
+          { "$ref": "#/$defs/add_sheet" },
+          { "$ref": "#/$defs/rename_sheet" },
+          { "$ref": "#/$defs/set_shape_text" },
+          { "$ref": "#/$defs/replace_text_in_shape" },
+          { "$ref": "#/$defs/duplicate_slide" },
+          { "$ref": "#/$defs/delete_slide" },
+          { "$ref": "#/$defs/move_slide" },
+          { "$ref": "#/$defs/replace_all_text" },
+          { "$ref": "#/$defs/format_all" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "maxLength": 64, "description": "Free label echoed in the report (for example the batch comment id this op answers)." },
+    "text": { "type": "string", "maxLength": 20000 },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "What the agent saw at the target. DOCX/PPTX text targets: `quote` must be contained in the target's text (whitespace collapsed, NFC), `text_hash` must equal the hash of the whole text (the batch `locator.text_hash`). XLSX targets: `quote` must EQUAL the text of the region (cells joined by TAB, rows by LF, each cell as typed: the formula if it has one, else the value; an empty region is the empty string), `text_hash` is the same hash of that text. `absent: true` (add_sheet) means the sheet name must not exist yet.",
+      "properties": {
+        "quote": { "type": "string", "maxLength": 20000 },
+        "text_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "absent": { "type": "boolean" }
+      }
+    },
+    "expect_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count"],
+      "description": "Document-wide ops: the exact number of matches (replace_all_text) or paragraphs in scope (format_all) the agent counted, protected ones included. A different count fails closed.",
+      "properties": { "count": { "type": "integer", "minimum": 0, "maximum": 1000000 } }
+    },
+    "docx_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A paragraph. Either an anchor id from the batch (`untrusted_document_evidence.anchors[].id`, resolved through the delivered batch) or an explicit durable locator copied from the batch: `para_id` (w14:paraId), or `body_path` with `text_hash`, or `text_hash` alone when it is unique. No fuzzy matching: an ambiguous or missing locator is `anchor_not_found`.",
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^a[0-9]+$" },
+        "para_id": { "type": "string", "pattern": "^[0-9A-Fa-f]{8}$" },
+        "body_path": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "integer", "minimum": 0 } },
+        "text_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+      }
+    },
+    "sheet": { "type": "string", "minLength": 1, "maxLength": 31, "description": "Sheet name as in the workbook." },
+    "a1": { "type": "string", "pattern": "^[A-Za-z]{1,3}[0-9]{1,7}(:[A-Za-z]{1,3}[0-9]{1,7})?$" },
+    "find": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+    "replace_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Inside one paragraph. Either `find` + `replace` (the find text must occur exactly once unless `occurrence` or `all` is given; run formatting is kept) or `text` (the whole paragraph text; refused when the paragraph holds images or other objects).",
+      "properties": {
+        "op": { "const": "replace_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "find": { "$ref": "#/$defs/find" },
+        "replace": { "$ref": "#/$defs/text" },
+        "text": { "$ref": "#/$defs/text" },
+        "occurrence": { "type": "integer", "minimum": 1 },
+        "all": { "type": "boolean" },
+        "match_case": { "type": "boolean" }
+      }
+    },
+    "insert_paragraph_after": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "text"],
+      "description": "New paragraph after the target. `style` is a paragraph style name or id (for example \"Heading 2\"); without it the new paragraph copies its neighbor's paragraph formatting.",
+      "properties": {
+        "op": { "const": "insert_paragraph_after" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "text": { "$ref": "#/$defs/text" },
+        "style": { "type": "string", "maxLength": 100 }
+      }
+    },
+    "insert_paragraph_before": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "text"],
+      "properties": {
+        "op": { "const": "insert_paragraph_before" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "text": { "$ref": "#/$defs/text" },
+        "style": { "type": "string", "maxLength": 100 }
+      }
+    },
+    "delete_paragraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "properties": {
+        "op": { "const": "delete_paragraph" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "set_paragraph_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "style"],
+      "properties": {
+        "op": { "const": "set_paragraph_style" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "style": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "format_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "find", "set"],
+      "description": "Run properties on the text range `find` inside the paragraph (must occur exactly once unless `occurrence` is given). Runs are split at the range boundaries.",
+      "properties": {
+        "op": { "const": "format_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/docx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "find": { "$ref": "#/$defs/find" },
+        "occurrence": { "type": "integer", "minimum": 1 },
+        "match_case": { "type": "boolean" },
+        "set": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "underline": { "type": "boolean" },
+            "color": { "$ref": "#/$defs/color" },
+            "size_pt": { "type": "number", "minimum": 1, "maximum": 400 }
+          }
+        }
+      }
+    },
+    "set_table_cell_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "text"],
+      "description": "Sets the text of one paragraph of a table cell (the first by default). `table` is the body ordinal of the table as in the batch `body_path[0]`; `row` and `col` are 0-based.",
+      "properties": {
+        "op": { "const": "set_table_cell_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["table", "row", "col"],
+          "properties": {
+            "table": { "type": "integer", "minimum": 0 },
+            "row": { "type": "integer", "minimum": 0 },
+            "col": { "type": "integer", "minimum": 0 },
+            "paragraph": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "expect": { "$ref": "#/$defs/expect" },
+        "text": { "$ref": "#/$defs/text" }
+      }
+    },
+    "where": { "enum": ["before", "after"] },
+    "table_row_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table", "row"],
+      "description": "A row of a top-level table: `table` is the body ordinal of the table as in the batch `body_path[0]`, `row` is 0-based (`body_path[1]`).",
+      "properties": { "table": { "type": "integer", "minimum": 0 }, "row": { "type": "integer", "minimum": 0 } }
+    },
+    "table_col_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table", "col"],
+      "description": "A column of a top-level table: `table` is the body ordinal of the table as in the batch `body_path[0]`, `col` is 0-based (`body_path[2]`).",
+      "properties": { "table": { "type": "integer", "minimum": 0 }, "col": { "type": "integer", "minimum": 0 } }
+    },
+    "insert_table_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "where"],
+      "description": "New row before or after the target row, formatted like the target row (cell and paragraph formatting, no content). `cells` is the text of the new row's cells, left to right; fewer than the row has leaves the rest empty. `expect` is checked against the target row's text (cells joined by TAB, the paragraphs of a cell by LF). Refused when a vertical merge crosses the new row's place.",
+      "properties": {
+        "op": { "const": "insert_table_row" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/table_row_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "where": { "$ref": "#/$defs/where" },
+        "cells": { "type": "array", "maxItems": 63, "items": { "type": "string", "maxLength": 2000 } }
+      }
+    },
+    "delete_table_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Removes the target row. `expect` is checked against the row's text (cells joined by TAB, the paragraphs of a cell by LF). Refused for the only row of a table, the first row of a vertical merge that goes on below it, and a row that holds a protected paragraph or one end of a comment or bookmark.",
+      "properties": {
+        "op": { "const": "delete_table_row" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/table_row_target" },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "insert_table_column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "where"],
+      "description": "New column before or after the target column, each new cell formatted like its neighbor in the same row; the column widths are scaled so the table keeps its width. `cells` is the text of the new cells, top to bottom. `expect` is checked against the column's text (cells joined by LF, top to bottom). Refused for a table with horizontally merged or offset cells.",
+      "properties": {
+        "op": { "const": "insert_table_column" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/table_col_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "where": { "$ref": "#/$defs/where" },
+        "cells": { "type": "array", "maxItems": 1000, "items": { "type": "string", "maxLength": 2000 } }
+      }
+    },
+    "delete_table_column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Removes the target column. `expect` is checked against the column's text (cells joined by LF, top to bottom). Refused for the only column, a table with horizontally merged or offset cells, and a column that holds a protected paragraph or one end of a comment or bookmark.",
+      "properties": {
+        "op": { "const": "delete_table_column" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/table_col_target" },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "set_cells": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "values"],
+      "description": "Writes `values` (rows of cells, the same shape as `range`; a scalar fits a single cell) like a user typing: a string starting with = is a formula, text that looks like a number becomes a number, null clears.",
+      "properties": {
+        "op": { "const": "set_cells" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/xlsx_range_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "values": {
+          "anyOf": [
+            { "type": ["string", "number", "boolean", "null"] },
+            { "type": "array", "minItems": 1, "maxItems": 10000, "items": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": ["string", "number", "boolean", "null"] } } }
+          ]
+        }
+      }
+    },
+    "format_cells": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "set"],
+      "properties": {
+        "op": { "const": "format_cells" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/xlsx_range_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "set": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "number_format": { "type": "string", "maxLength": 200 },
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "fill": { "$ref": "#/$defs/color" },
+            "font_color": { "$ref": "#/$defs/color" }
+          }
+        }
+      }
+    },
+    "insert_rows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Inserts `count` (default 1) empty rows BEFORE row `at` (1-based). `expect` is the text of the row currently at `at`. A workbook with a reference the engine cannot move is refused with the engine's refusal code.",
+      "properties": {
+        "op": { "const": "insert_rows" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheet", "at"],
+          "properties": { "sheet": { "$ref": "#/$defs/sheet" }, "at": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "count": { "type": "integer", "minimum": 1, "maximum": 1000 } }
+        },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "delete_rows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Deletes `count` (default 1) rows starting at row `at` (1-based). `expect` is the text of the deleted rows (rows joined by LF).",
+      "properties": {
+        "op": { "const": "delete_rows" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheet", "at"],
+          "properties": { "sheet": { "$ref": "#/$defs/sheet" }, "at": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "count": { "type": "integer", "minimum": 1, "maximum": 1000 } }
+        },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "insert_columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Inserts `count` empty columns BEFORE column `at` (letters). `expect` is the text of the column currently at `at` (cells joined by LF, top to bottom).",
+      "properties": {
+        "op": { "const": "insert_columns" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheet", "at"],
+          "properties": { "sheet": { "$ref": "#/$defs/sheet" }, "at": { "type": "string", "pattern": "^[A-Za-z]{1,3}$" }, "count": { "type": "integer", "minimum": 1, "maximum": 1000 } }
+        },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "delete_columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "properties": {
+        "op": { "const": "delete_columns" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheet", "at"],
+          "properties": { "sheet": { "$ref": "#/$defs/sheet" }, "at": { "type": "string", "pattern": "^[A-Za-z]{1,3}$" }, "count": { "type": "integer", "minimum": 1, "maximum": 1000 } }
+        },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "add_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Adds a sheet at the end. `expect` must be { \"absent\": true }: the name must not exist yet.",
+      "properties": {
+        "op": { "const": "add_sheet" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "name": { "$ref": "#/$defs/sheet" } } },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "rename_sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "new_name"],
+      "description": "`target.sheet` is the current name; `expect.quote` must equal it exactly.",
+      "properties": {
+        "op": { "const": "rename_sheet" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "type": "object", "additionalProperties": false, "required": ["sheet"], "properties": { "sheet": { "$ref": "#/$defs/sheet" } } },
+        "expect": { "$ref": "#/$defs/expect" },
+        "new_name": { "$ref": "#/$defs/sheet" }
+      }
+    },
+    "xlsx_range_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A cell or range: either `anchor_id` alone (an anchor id from the batch; its locator carries `sheet` and `range`) or `sheet` with `range` (A1).",
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^a[0-9]+$" },
+        "sheet": { "$ref": "#/$defs/sheet" },
+        "range": { "$ref": "#/$defs/a1" }
+      }
+    },
+    "pptx_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A shape: either `anchor_id` alone (an anchor id from the batch; its locator carries `slide_id` and `shape_id`) or `slide_id` (the p:sldId id, digits) with `shape_id` (the cNvPr id of the shape).",
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^a[0-9]+$" },
+        "slide_id": { "type": "string", "pattern": "^[0-9]{1,10}$" },
+        "shape_id": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "set_shape_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "paragraphs"],
+      "description": "Replaces the text of a shape, one string per paragraph. Existing paragraphs keep their formatting; extra ones copy the last. Refused when a paragraph of the shape is protected.",
+      "properties": {
+        "op": { "const": "set_shape_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/pptx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "paragraphs": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/text" } }
+      }
+    },
+    "replace_text_in_shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "find", "replace"],
+      "properties": {
+        "op": { "const": "replace_text_in_shape" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/pptx_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "find": { "$ref": "#/$defs/find" },
+        "replace": { "$ref": "#/$defs/text" },
+        "occurrence": { "type": "integer", "minimum": 1 },
+        "all": { "type": "boolean" },
+        "match_case": { "type": "boolean" }
+      }
+    },
+    "slide_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slide_id"],
+      "description": "A slide by its p:sldId id (digits), the batch's `slide_id`.",
+      "properties": { "slide_id": { "type": "string", "pattern": "^[0-9]{1,10}$" } }
+    },
+    "duplicate_slide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Copies the target slide (same layout, shapes and shape ids; speaker notes and comments are not copied) right after it, or `where` (before or after) the slide `to` names; give `to` and `where` together. `shapes` sets the text of shapes of the COPY, by the target slide's shape ids, like set_shape_text. `expect` is checked against the target slide's text (its shapes' text joined by LF). The report's `detail.slide_id` is the copy's id. Refused for a slide with a chart, diagram, embedded object or other part a copy would share, and for a deck with sections or custom shows.",
+      "properties": {
+        "op": { "const": "duplicate_slide" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/slide_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "to": { "$ref": "#/$defs/slide_target" },
+        "where": { "$ref": "#/$defs/where" },
+        "shapes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["shape_id", "paragraphs"],
+            "properties": { "shape_id": { "type": "integer", "minimum": 0 }, "paragraphs": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/text" } } }
+          }
+        }
+      }
+    },
+    "delete_slide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "Removes the target slide with its speaker notes and comments. `expect` is checked against the slide's text (its shapes' text joined by LF). Refused for the last slide, a slide another slide links to, and a deck with sections or custom shows.",
+      "properties": {
+        "op": { "const": "delete_slide" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/slide_target" },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
+    "move_slide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "to", "where"],
+      "description": "Moves the target slide before or after the slide `to` names. `expect` is checked against the target slide's text (its shapes' text joined by LF). Refused for a deck with sections or custom shows.",
+      "properties": {
+        "op": { "const": "move_slide" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/slide_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "to": { "$ref": "#/$defs/slide_target" },
+        "where": { "$ref": "#/$defs/where" }
+      }
+    },
+    "replace_all_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "find", "replace", "expect"],
+      "description": "Every occurrence in the document (DOCX paragraphs including table cells, XLSX cells as typed, PPTX shapes). Protected units that contain a match are skipped and reported. `expect.count` is the number of matches including the protected ones.",
+      "properties": {
+        "op": { "const": "replace_all_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "find": { "$ref": "#/$defs/find" },
+        "replace": { "$ref": "#/$defs/text" },
+        "match_case": { "type": "boolean" },
+        "expect": { "$ref": "#/$defs/expect_count" }
+      }
+    },
+    "format_all": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "scope", "set", "expect"],
+      "description": "DOCX only. Safe run properties on every non-protected paragraph in `scope`: headings (styles Title, Subtitle, Heading 1-9) or body (all other paragraphs). Protected paragraphs are skipped and reported. `expect.count` is the number of paragraphs in scope with text, protected ones included.",
+      "properties": {
+        "op": { "const": "format_all" },
+        "id": { "$ref": "#/$defs/id" },
+        "scope": { "enum": ["headings", "body"] },
+        "set": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": { "bold": { "type": "boolean" }, "italic": { "type": "boolean" }, "underline": { "type": "boolean" } }
+        },
+        "expect": { "$ref": "#/$defs/expect_count" }
+      }
+    }
+  }
+}
