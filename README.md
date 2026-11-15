@@ -1,6 +1,6 @@
 # Onionskin
 
-Edit a Word, Excel or PowerPoint file in your browser, leave comments, and let your coding agent make the changes in the real file.
+Edit a Word, Excel or PowerPoint file in your browser, leave comments, and let your coding agent make the changes in the real file in realtime.
 
 ![Onionskin: a Word file open in the browser editor with the review panel beside it](docs/media/hero.png)
 
