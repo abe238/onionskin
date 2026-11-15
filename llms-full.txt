@@ -151,11 +151,13 @@ abe238. You can find him at abediaz.com, on GitHub as abe238 and on X as @abe238
 
 ## Why Onionskin?
 
-Onionskin is a thin, strong, translucent writing paper with a high cotton content. Offices used it for typewritten carbon copies, permanent files and airmail. Thin sheets helped businesses save money on storage space, postage and copy typists. It was widely sold for office work from the 1920s to the 1970s.
+Onionskin is a thin, strong paper you can see through. From the 1920s to the 1970s, offices typed carbon copies on it because it was light, cheap to mail and easy to file.
 
-Animators drew on it too. With the previous and next drawings placed under a sheet over a light, they could draw the frame in between. Animation software still calls that view onion skinning.
+Artists and animators found another use for it. They laid a sheet over a drawing, saw the original through it, and traced the next version on top. A new idea took minutes, and it started from work that already existed.
 
-The name fits this tool: you lay your notes over the document, and the agent works through them, like tracing over a sheet you can see through.
+This tool works the same way. It lays a thin layer over your Word, Excel or PowerPoint file. You mark what you want on that layer, and your coding agent (Claude Code or Codex) makes the change in the real file. The page updates in place and you keep going.
+
+We built it because we believe the age of AI makes fast edits and fast creation possible, and a lot of today's tools are too heavy for that. A quick change should feel quick. You and your agent should be able to work on the same page, one thin sheet apart.
 
 Sources:
 
