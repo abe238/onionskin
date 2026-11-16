@@ -15,6 +15,7 @@ import { clearTickets, saveTicket, ticketOf } from "./lease.js";
 import { analyze } from "./analyze.js";
 import { deepNotice, validatePackage } from "./package.js";
 import { execFile } from "node:child_process";
+import { reopenCommand } from "./person.js";
 import { sessionKey, stateDir, sub, writeStateFile } from "./paths.js";
 import { cleanFlag, hasControlChars, untrusted, userText } from "./sanitize.js";
 import { addUpdate, historyDetail, historyList, visibleUpdates } from "./history.js";
@@ -301,6 +302,8 @@ export class Sessions extends EventEmitter {
     return {
       key: s.key,
       name: path.basename(s.file),
+      file: s.file, // the absolute path (like copy_path): the page words the commands that reopen the file from any folder
+      reopen: reopenCommand(s.file), // the exact command to paste in a terminal from any folder
       format: s.format,
       state,
       locked: !!s.delivered,
@@ -327,6 +330,7 @@ export class Sessions extends EventEmitter {
       canReveal: canReveal(),
       // the agent's review cards (src/review.js); their ops stay on the server
       suggestions: (s.suggestions || []).map(({ op, acceptedBatch, ...c }) => c),
+      changedOutside: !!this.watch?.outside(s), // src/watch.js: the file on disk is a version Onionskin does not know (a boolean only, never a name)
       // the background agent (src/agent-runner.js): {state, cli, show, activity, failure}; never a path, a holder id or agent text
       agent: this.agent ? this.agent.viewFor(s.key) : { state: "none", cli: null, show: false, activity: [], failure: null },
     };
@@ -1725,6 +1729,7 @@ export class Sessions extends EventEmitter {
         this.#save(s);
       } catch {} // no space for the snapshot: nothing is recorded, the file still loads
     }
+    this.watch?.taken(s); // src/watch.js: this version is Onionskin's own from now on
     return out;
   }
 

@@ -311,7 +311,7 @@ describe("accessibility", () => {
         const out = [];
         for (const el of document.querySelectorAll('.app button, .app input:not([type="hidden"])')) {
           const r = el.getBoundingClientRect();
-          if (!r.width || !r.height || el.closest("[hidden]") || el.closest(".sidebar.shut")) continue;
+          if (!r.width || !r.height || el.closest("[hidden]") || el.closest(".sidebar.shut") || el.classList.contains("de-tb-native")) continue; // de-tb-native: the engine's hidden color input (1x1, never a touch target)
           if (Math.min(r.width, r.height) < 43.5) out.push(`${el.tagName}.${String(el.className).slice(0, 30)} ${Math.round(r.width)}x${Math.round(r.height)} ${el.getAttribute("aria-label") || ""}`);
         }
         return out;

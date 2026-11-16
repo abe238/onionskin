@@ -150,7 +150,7 @@ describe("a Send done on this Mac", { skip: SKIP }, () => {
     const mac = await lines(true);
     assert.deepEqual(mac, { pill: "Working on this Mac", pillLabel: "State: Working on this Mac", sync: "Working on this Mac: keep editing", stage: "Doing this on your Mac", lock: "Keep editing. What you type is merged with this change when it finishes.", bars: 0 });
     const agent = await lines(false);
-    assert.deepEqual([agent.pill, agent.sync, agent.stage, agent.lock], ["Agent working", "Agent working: keep editing", "The agent has your batch", "Keep editing. What you type is merged with the agent's changes when it finishes."]);
+    assert.deepEqual([agent.pill, agent.sync, agent.stage, agent.lock], ["Agent working", "The agent has your batch: keep editing", "The agent has your batch", "Keep editing. What you type is merged with the agent's changes when it finishes."]);
     assert.equal(agent.bars, 1, "an agent's run keeps its progress bar and its label");
     // the outside-change banner and the entry for a run that stopped
     const sess = srv.sessions.get(key);

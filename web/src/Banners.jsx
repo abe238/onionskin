@@ -1,22 +1,24 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.jsx";
 import { useFocusTrap } from "./hooks.js";
-import { stageOf } from "./stage.js";
+import { elapsedText, progressOf, stageOf, stopKind } from "./stage.js";
 
-export function CopyButton({ text }) {
+export function CopyButton({ text, label = "Copy", testid = "copy-command" }) {
   const [done, setDone] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
+      setBlocked(false);
       setDone(true);
       setTimeout(() => setDone(false), 1800);
     } catch {
-      /* clipboard blocked: the command is selectable text, one click selects all of it */
+      setBlocked(true); // clipboard blocked: the command is selectable text, one click selects all of it
     }
   };
   return (
-    <button type="button" className="btn" onClick={copy} data-testid="copy-command" aria-label="Copy the command">
-      <Icon name={done ? "check" : "copy"} size={14} /> {done ? "Copied" : "Copy"}
+    <button type="button" className="btn" onClick={copy} data-testid={testid} aria-label={label === "Copy" ? "Copy the command" : label}>
+      <Icon name={done ? "check" : "copy"} size={14} /> {done ? "Copied" : blocked ? "Select it to copy" : label}
     </button>
   );
 }
@@ -150,13 +152,34 @@ function failureCopy(f) {
   }
 }
 
-export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
+/**
+ * The local wait counter: seconds since this page first saw the batch that is out (it starts from zero when the page is opened mid-run; the server sends
+ * no start time). It sits outside the speech of the status region (aria-hidden): a counter that spoke every second would be noise.
+ */
+function Elapsed({ batch }) {
+  const t0 = useRef({ batch: null, at: 0 });
+  if (t0.current.batch !== batch) t0.current = { batch, at: Date.now() };
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="elapsed" aria-hidden="true" data-testid="banner-elapsed">
+      {elapsedText(Date.now() - t0.current.at)}
+    </span>
+  );
+}
+
+export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, noticeAction = null, onStop = () => {}, stopping = false, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, onCopyComments, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
   const s = session.state;
   const agent = session.agent || null;
   const failed = agent?.state === "failed" && agent.failure ? failureCopy(agent.failure) : null;
   const starting = agent?.state === "starting" && !failed;
   const handover = agent?.state === "handover" && !failed;
   const stranded = s === "stranded" && !failed && !starting && !handover;
+  const stop = stopKind(session, readOnly) === "stop";
+  const progress = progressOf(agent);
   return (
     <>
       <div className="banners">
@@ -211,15 +234,29 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {(s === "working" || s === "queued") && (
-          <div className="banner info glass" role="status" data-testid="banner-working">
+          <div className="banner info glass agent-banner" role="status" data-testid="banner-working">
             <span className="working-mark" aria-hidden="true" />
             <span className="banner-text">
-              <strong data-testid="banner-stage">{stageOf(session).text || "Agent is working"}</strong>
+              <span className="banner-head">
+                <strong data-testid="banner-stage">{stageOf(session).text || "Agent is working"}</strong>
+                {!session.local && <Elapsed batch={session.deliveredBatchId || session.pendingBatchId} />}
+              </span>
               <span data-testid="banner-lock-line">{session.local ? "Keep editing. What you type is merged with this change when it finishes." : "Keep editing. What you type is merged with the agent's changes when it finishes."}</span>
+              {progress && <span data-testid="banner-progress-line">{progress}</span>}
             </span>
-            <button type="button" className="btn" onClick={onTakeBack} data-testid="take-back">
-              Take back editing
-            </button>
+            <span className="banner-actions">
+              {stop && (
+                <button type="button" className="btn" onClick={onStop} disabled={stopping} data-testid="agent-stop" aria-label={stopping ? undefined : "Stop the agent and take back your comments"}>
+                  {stopping ? "Stopping..." : "Stop the agent"}
+                </button>
+              )}
+              {/* with Stop shown, Take back alone would leave the background agent running: Stop takes the batch back too */}
+              {!stop && (
+                <button type="button" className="btn" onClick={onTakeBack} data-testid="take-back">
+                  Take back editing
+                </button>
+              )}
+            </span>
           </div>
         )}
         {stranded && (
@@ -227,7 +264,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>Your batch is saved, but no agent is listening</strong>
-              <span>Press Start and Onionskin runs an agent in the background for you. Using Claude Code yourself? Type /onionskin {session.name} there.</span>
+              <span>Press Start and Onionskin runs an agent in the background for you. Using Claude Code yourself? Type /onionskin {session.file || session.name} there.</span>
             </span>
             <span className="banner-actions">
               <button type="button" className="btn primary" disabled={readOnly} onClick={() => onAgent("start")} data-testid="agent-start">
@@ -242,9 +279,19 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
         {s === "closed" && (
           <div className="banner muted glass" role="status" data-testid="banner-closed">
             <Icon name="lock" size={16} />
-            <span>
-              This session is closed. To continue, run <code>onionskin {/^[\w.-]+$/.test(session.name || "") ? session.name : `"${session.name || "<file>"}"`}</code> in a terminal, in the folder that holds the file.
-            </span>
+            {session.reopen ? (
+              <span className="banner-text">
+                <span>This session is closed. To continue, paste this in a terminal:</span>
+                <span className="banner-cmd">
+                  <code data-testid="reopen-command">{session.reopen}</code>
+                  <CopyButton text={session.reopen} label="Copy command" testid="copy-reopen" />
+                </span>
+              </span>
+            ) : (
+              <span>
+                This session is closed. To continue, run <code>onionskin {/^[\w.-]+$/.test(session.name || "") ? session.name : `"${session.name || "<file>"}"`}</code> in a terminal, in the folder that holds the file.
+              </span>
+            )}
             {unsentEdits > 0 && (
               <button type="button" className="btn" onClick={onKeepMine} data-testid="closed-download">
                 Download my edits
@@ -252,16 +299,19 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
             )}
           </div>
         )}
-        {problem?.kind === "outside" && (
+        {problem?.kind === "outside" && session.conflict?.side !== "agent" && ( // the agent's conflict banner below already says it, with its copy
           <div className="banner warn glass" role="alert" data-testid="banner-outside">
             <Icon name="alert" size={18} />
             <span className="banner-text">
               <strong>Someone changed this file outside Onionskin</strong>
-              <span>Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it.</span>
+              {/* while the agent works, a reload would replace what the person typed during the run (it is merged only when the agent finishes) */}
+              <span>{session.locked ? "Your original file was left untouched. Your edits are merged when the agent finishes." : "Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it."}</span>
             </span>
-            <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-early">
-              Reload the changed file
-            </button>
+            {!session.locked && (
+              <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-early">
+                Reload the changed file
+              </button>
+            )}
             <button type="button" className="iconbtn sm" onClick={onDismiss} aria-label="Close this message" data-testid="outside-close">
               <Icon name="close" size={14} />
             </button>
@@ -283,9 +333,11 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
               </button>
             )}
             {session.conflict.copyName && !session.canReveal && <CopyButton text={session.conflict.copyPath || ""} />}
-            <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-agent">
-              Reload the changed file
-            </button>
+            {!session.locked && (
+              <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-agent">
+                Reload the changed file
+              </button>
+            )}
             <button type="button" className="iconbtn sm" onClick={onDismissConflict} aria-label="Close this message" data-testid="agent-outside-close">
               <Icon name="close" size={14} />
             </button>
@@ -295,6 +347,11 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           <div className="banner err glass" role="alert" data-testid="banner-error">
             <Icon name="alert" size={18} />
             <span className="banner-text">{problem.message}</span>
+            {problem.stream && onCopyComments && (
+              <button type="button" className="btn" onClick={onCopyComments} data-testid="copy-comments">
+                Copy my comments
+              </button>
+            )}
             {unsentEdits > 0 && (
               <button type="button" className="btn" onClick={onKeepMine} data-testid="error-download">
                 Download my edits
@@ -334,8 +391,13 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
         {notice && (
-          <div className="banner toast glass" role="status" data-testid="notice">
+          <div className="banner toast glass" role="status" data-testid="notice" data-has-action={noticeAction ? "1" : "0"}>
             <span>{notice}</span>
+            {noticeAction && (
+              <button type="button" className="btn sm" onClick={() => noticeAction.onClick()} aria-label={noticeAction.ariaLabel || noticeAction.label} data-testid="notice-action">
+                {noticeAction.label}
+              </button>
+            )}
           </div>
         )}
       </div>

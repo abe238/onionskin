@@ -1,7 +1,8 @@
 // A small stand-in for the server half of the background agent (the runner and POST /api/agent), so the page can be tested before and apart from it.
 // It sits in front of the real Onionskin server: everything passes through, except that every session the page receives (bootstrap, a route's reply,
 // the live stream) carries an `agent` field, and POST /api/agent is answered here. The `agent` field has the shape the design fixes:
-//   {state: none|starting|ready|working|external|failed|handover, cli, show, activity: [{at, text}], failure: null|{code, resetsAt?}}
+//   {state: none|starting|ready|working|external|failed|handover, cli, show, activity: [{at, text}], failure: null|{code, resetsAt?}, startsLeft: 0..5}
+// (the same fields as src/agent-runner.js viewFor; the session fields themselves, `changedOutside` among them, come from the real server)
 // Two ways to drive it: `fake.setAgent(view)` pins any view (for looking at every state), or `fake.useRunner(dir)` makes `start` really spawn the
 // fake `claude` in `dir` (fake-claude.mjs) and builds the view from its stream with the page's own parser (src/agent-events.js).
 import { spawn } from "node:child_process";
@@ -28,13 +29,14 @@ export async function startFakeSide(world) {
   const sockets = new Set();
   const streams = new Set(); // open event streams: {res, last}
   let realPort = 0;
-  const fake = { pinned: null, show: false, actions: [], runner: null, port: 0 };
+  const fake = { pinned: null, show: false, actions: [], runner: null, port: 0, sessionPatch: null, refuseStop: null };
 
-  const base = () => ({ state: "none", cli: "claude", show: fake.show, activity: [], failure: null });
+  const base = () => ({ state: "none", cli: "claude", show: fake.show, activity: [], failure: null, startsLeft: 5 }); // 5: no counted start used, as the real runner says
   const agentView = () => (fake.pinned ? { ...base(), ...fake.pinned } : fake.runner ? { ...base(), ...fake.runner.view() } : base());
+  // `fake.sessionPatch` ({stage: "writing"}, ...) is merged into every session view: states the real server reaches only mid-run, for looking at the page
   const patch = (o) => {
-    if (isView(o)) o.agent = agentView();
-    else if (o && typeof o === "object") for (const k of ["session"]) if (isView(o[k])) o[k].agent = agentView();
+    if (isView(o)) Object.assign(o, fake.sessionPatch || {}, { agent: agentView() });
+    else if (o && typeof o === "object") for (const k of ["session"]) if (isView(o[k])) Object.assign(o[k], fake.sessionPatch || {}, { agent: agentView() });
     return o;
   };
   const push = () => {
@@ -82,7 +84,7 @@ export async function startFakeSide(world) {
       });
       c.on("exit", (code) => {
         st.child = null;
-        if (st.stopping) return;
+        if (st.stopping) return void ((st.stopping = false), (st.state = "none"), push()); // stopped on purpose: no failure, no restart
         if (st.failureSeen) (st.state = "failed", (st.failure = { code: st.failureSeen }));
         else if (code === 0 && st.sawResult) st.state = "none";
         else (st.state = "failed", (st.failure = { code: "crashed" }));
@@ -91,7 +93,9 @@ export async function startFakeSide(world) {
       push();
     };
     st.stop = () => {
+      if (!st.child) return;
       st.stopping = true;
+      st.state = "none"; // the real runner shows a stopped agent as none at once, while its process is still exiting
       if (st.child) try { process.kill(-st.child.pid, "SIGTERM"); } catch {}
     };
     fake.runner = st;
@@ -109,6 +113,36 @@ export async function startFakeSide(world) {
         fake.actions.push(j);
         if (j.action === "show") fake.show = !!j.on;
         if (j.action === "start") fake.runner?.start();
+        if (j.action === "stop") {
+          // The server half of Stop (docs: POST /api/agent {action:"stop", takeBack:true}): refused as a 4xx from a tab that is not the editor, else the
+          // batch is taken back (the real server does that), the agent shows "none" at once (its activity kept) and the answer carries the session, like
+          // the real `{ok, session}`. `fake.refuseStop` = a status code to answer instead (the real refusal is 409 not_editor).
+          if (fake.refuseStop) {
+            res.writeHead(fake.refuseStop, { "content-type": "application/json" });
+            return void res.end(JSON.stringify({ error: "This file is open for editing in another tab. Use Edit here instead to take over.", code: "not_editor" }));
+          }
+          const done = () => {
+            if (fake.pinned) fake.pinned = { ...fake.pinned, state: "none" };
+            fake.runner?.stop();
+            const boot = http.request({ host: "127.0.0.1", port: realPort, path: `/api/bootstrap?${url.searchParams}`, headers: rewrite(req.headers) }, (r) => {
+              let t = "";
+              r.on("data", (d) => (t += d));
+              r.on("end", () => {
+                let session = null;
+                try { session = JSON.parse(t).session; } catch {}
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({ ok: true, session: session ? patch(session) : null }));
+                push();
+              });
+            });
+            boot.on("error", () => res.destroy());
+            boot.end();
+          };
+          if (!j.takeBack) return done();
+          const tb = http.request({ host: "127.0.0.1", port: realPort, path: `/api/takeback?${url.searchParams}`, method: "POST", headers: { ...rewrite(req.headers), "content-length": 2 } }, (r) => (r.resume(), r.on("end", done)));
+          tb.on("error", () => res.destroy());
+          return void tb.end("{}");
+        }
         const fwd = http.request({ host: "127.0.0.1", port: realPort, path: `/api/bootstrap?${url.searchParams}`, headers: rewrite(req.headers) }, (r) => {
           let t = "";
           r.on("data", (d) => (t += d));
@@ -177,6 +211,13 @@ export async function startFakeSide(world) {
     u.port = String(fake.port);
     return u.toString();
   };
+  /** Nothing listens on the page's port until `up()`: connections are refused (the real server behind stays up, with the same token). */
+  fake.down = async () => {
+    for (const s of streams) s.res.end();
+    for (const s of sockets) s.destroy();
+    await new Promise((r) => server.close(r));
+  };
+  fake.up = () => new Promise((r) => server.listen(fake.port, "127.0.0.1", r));
   fake.stop = async () => {
     fake.runner?.stop();
     for (const s of streams) s.res.end();

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.jsx";
 import { useMedia } from "./hooks.js";
 import { Shortcuts } from "./Shortcuts.jsx";
+import { pendingWords, stageOf } from "./stage.js";
 
 const STATE_TEXT = {
   idle: "Idle",
@@ -18,7 +19,12 @@ function syncText(session, counts, sending, readOnly) {
   if (readOnly) return { text: "Read-only: open for editing in another tab", tone: "muted", icon: "lock" };
   if (session.state === "closed") return { text: "Session closed", tone: "muted", icon: "lock" };
   if (sending) return { text: "Sending to the agent", tone: "busy", icon: "sync" };
-  if (session.locked) return { text: session.local ? "Working on this Mac: keep editing" : "Agent working: keep editing", tone: "busy", icon: "sync" };
+  if (session.locked) {
+    const st = stageOf(session); // the banner's own words while an agent has the batch ("The agent has your batch")
+    return { text: session.local ? "Working on this Mac: keep editing" : `${["delivered", "writing", "checking"].includes(st.key) ? st.text : "Agent working"}: keep editing`, tone: "busy", icon: "sync" };
+  }
+  const wait = pendingWords(session); // a batch is saved and no agent has it yet
+  if (wait) return { text: wait, tone: "busy", icon: "sync" };
   if (counts.edits) return { text: `${counts.edits} unsent edit${counts.edits > 1 ? "s" : ""}`, tone: "warn", icon: "edit" };
   return { text: "No unsent edits", tone: "ok", icon: "check" };
 }

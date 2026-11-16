@@ -241,6 +241,16 @@ test("finding 1: reload keeps working from the page's stored token; a second tab
   const ans = await req({ path: "/api/answer?s=" + key, method: "POST", headers: { cookie, "x-onionskin-token": token2, origin: `http://127.0.0.1:${srv.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-onionskin-tab": "tabBBBBBB" } }, JSON.stringify({ id: "c1", choice: 0 }));
   assert.equal(ans.status, 409);
   assert.equal(JSON.parse(ans.text).code, "not_editor");
+  // the page's Stop (stop with takeBack) is refused from the read-only tab, and answered from the editing one (nothing in flight: no error)
+  const agentPost = (t, id, body) => req({ path: "/api/agent?s=" + key, method: "POST", headers: { cookie, "x-onionskin-token": t, origin: `http://127.0.0.1:${srv.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-onionskin-tab": id } }, JSON.stringify(body));
+  const roStop = await agentPost(token2, "tabBBBBBB", { action: "stop", takeBack: true });
+  assert.equal(roStop.status, 409);
+  assert.equal(JSON.parse(roStop.text).code, "not_editor");
+  assert.equal((await agentPost(token, "tabAAAAAA", { action: "stop", takeBack: "yes" })).status, 400);
+  assert.equal((await agentPost(token, "tabAAAAAA", { action: "start", takeBack: true })).status, 400);
+  const edStop = await agentPost(token, "tabAAAAAA", { action: "stop", takeBack: true });
+  assert.equal(edStop.status, 200);
+  assert.equal(JSON.parse(edStop.text).ok, true);
   assert.equal((await req({ path: "/api/bootstrap?s=" + key, method: "GET", headers: withTok })).status, 200, "the first tab's token still works");
   // a new tab with no launch link has the cookie but no token: refused
   assert.equal((await req({ path: "/api/bootstrap?s=" + key, method: "GET", headers: { cookie, "sec-fetch-site": "same-origin" } })).status, 401);

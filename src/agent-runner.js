@@ -81,7 +81,7 @@ export function agentRunner(sessions, deps = {}) {
   const entry = (key) => {
     let e = entries.get(key);
     if (!e) {
-      e = { key, holder: bgHolder(key), child: null, state: "none", failure: null, activity: [], starts: [], crashes: 0, nextStartAt: 0, strandedAt: 0, idleSince: 0, waiting: false, external: false, sessionId: null, resumable: false, lastBatch: null };
+      e = { key, holder: bgHolder(key), child: null, state: "none", failure: null, activity: [], starts: [], crashes: 0, nextStartAt: 0, strandedAt: 0, idleSince: 0, waiting: false, external: false, sessionId: null, resumable: false, lastBatch: null, resumeNext: false };
       entries.set(key, e);
     }
     return e;
@@ -175,6 +175,13 @@ export function agentRunner(sessions, deps = {}) {
     if (!s || s.closed) {
       e.state = "none";
       return;
+    }
+    // the first start after a person's Stop (stopAndTakeBack): a fresh conversation (the stopped one still holds the withdrawn batch), and not
+    // one of the hourly starts
+    if (e.resumeNext) {
+      e.resumeNext = false;
+      counted = false;
+      resume = false;
     }
     e.launching = true;
     e.state = "starting";
@@ -312,18 +319,21 @@ export function agentRunner(sessions, deps = {}) {
     }
   }
 
+  /** This agent's polls still registered are answered closed and removed, so no Send is delivered to a process that is going away. */
+  function dropPolls(e, s) {
+    if (!s) return;
+    const mine = s.pollers.filter((p) => p.holder === e.holder);
+    if (!mine.length) return;
+    s.pollers.splice(0, s.pollers.length, ...s.pollers.filter((p) => p.holder !== e.holder));
+    for (const p of mine) p.resolve({ status: "closed", reason: "the agent was stopped" });
+  }
+
   function onExit(e, code, signal) {
     e.child = null;
     fs.rmSync(recordFile(e.key), { force: true });
     const s = sessionOf(e.key);
     // its `onionskin poll` child may outlive it (same group, still connected): that poll is answered closed, so a Send never goes to nobody
-    if (s) {
-      const mine = s.pollers.filter((p) => p.holder === e.holder);
-      if (mine.length) {
-        s.pollers.splice(0, s.pollers.length, ...s.pollers.filter((p) => p.holder !== e.holder));
-        for (const p of mine) p.resolve({ status: "closed", reason: "the agent was stopped" });
-      }
-    }
+    dropPolls(e, s);
     const held = holds(s, e.holder);
     if (held && !s.closed) {
       try {
@@ -339,7 +349,16 @@ export function agentRunner(sessions, deps = {}) {
     if (why) {
       e.state = why === "handover" ? "handover" : "none";
       startWaiting();
-      return notify(e.key);
+      notify(e.key);
+      // a Send that came while the stopped agent was still exiting found it running and started nothing (its polls are answered closed, see
+      // alive()): start for it now. After a person's Stop, and after an idle stop of a file opened for the background agent (no grace there).
+      // An idle stop does not drop its polls, so a poll it had waiting may have taken a Send and handed it back just now (releaseAgent,
+      // which tells nothing): on any other file that Send gets the usual stranded grace here, then tick() starts an agent.
+      const restart = why === "stop" ? e.resumeNext : why === "idle" && s?.openedFor === "background";
+      const left = s && !s.closed && sessions.state(s) === "stranded" && !s.pollers.length;
+      if (restart && left) ensure(e.key);
+      else if (why === "idle" && left && !e.strandedAt) e.strandedAt = now();
+      return;
     }
     if (!s || s.closed || e.external || stoppingAll) {
       e.state = "none";
@@ -393,6 +412,26 @@ export function agentRunner(sessions, deps = {}) {
     return signalGroup(e.record);
   }
 
+  /**
+   * The page's Stop (POST /api/agent {action: "stop", takeBack: true}). The batch is taken back FIRST: the delivery and its lease are gone,
+   * so a later agent-write, apply-report or done from the stopping agent is refused (stale or no batch), and its exit has nothing to hand
+   * back (stopping first would put the batch back to pending). A run that already wrote stays as a Revert-able entry (Sessions.takeBack).
+   * Only then is the agent stopped, and only when this runner's agent held that batch: an agent of the person's own, a run on this Mac,
+   * or an agent that is only starting or listening gets no signal. The next start is a fresh conversation, at once and not counted (launch).
+   */
+  async function stopAndTakeBack(key) {
+    const s = sessions.get(key);
+    const e = entries.get(key);
+    const ours = !!e?.child && holds(s, e.holder); // decided before the take back clears the delivery
+    if (s.delivered || s.pending) sessions.takeBack(key); // nothing in flight (it just finished): nothing to take back, and no error
+    if (!ours) return false;
+    e.resumeNext = true; // the next start: at once, uncounted, and a fresh conversation (launch)
+    e.resumable = false;
+    e.sessionId = null;
+    dropPolls(e, s);
+    return stop(key, "stop");
+  }
+
   /** Server shutdown: every agent's group is signaled; resolves when they all exited or after the kill delay. */
   async function stopAll() {
     stoppingAll = true;
@@ -406,13 +445,14 @@ export function agentRunner(sessions, deps = {}) {
   sessions.on("stranded", (s) => {
     const e = entry(s.key);
     if (e.state === "handover") e.state = "none"; // the Terminal session ended: the background agent may start again
-    if (s.openedFor === "background") return ensure(s.key);
+    if (s.openedFor === "background" || e.resumeNext) return ensure(s.key); // after a Stop, our own agent was the one working: no grace
     if (!e.strandedAt) e.strandedAt = now(); // someone's own agent may be between two polls: wait the grace first (tick)
   });
   sessions.on("superseded", (s, holder) => {
     if (holder !== bgHolder(s.key)) return;
     const e = entry(s.key);
     e.external = true;
+    e.resumeNext = false; // another agent serves the file now: a later start is an ordinary one
     stop(s.key, "superseded");
     notify(s.key);
   });
@@ -432,6 +472,7 @@ export function agentRunner(sessions, deps = {}) {
   sessions.on("change", (s) => {
     const e = entries.get(s.key);
     if (!e) return;
+    if (e.resumeNext && !e.child && foreign(s, e.holder)) e.resumeNext = false; // another agent took over after the Stop: no shortcut past its grace
     // a new delivery to this agent: older reply files are not needed any more (each batch writes a new one)
     const id = holds(s, e.holder) ? s.delivered.batch.batch_id : null;
     if (id && id !== e.lastBatch) {
@@ -457,6 +498,7 @@ export function agentRunner(sessions, deps = {}) {
       e.activity = [];
       e.sessionId = null;
       e.resumable = false;
+      e.resumeNext = false;
     }
     // also when this runner never started it (the server restarted since): Claude Code's copy of that conversation goes too
     const bin = real && !agentsDisabled(env) ? findClaude(env) : null;
@@ -492,7 +534,7 @@ export function agentRunner(sessions, deps = {}) {
   }
 
   /** The page's buttons (POST /api/agent). Returns nothing; the session view carries the result. */
-  async function action(key, { action: a, on, cli }) {
+  async function action(key, { action: a, on, cli, takeBack = false }) {
     const s = sessions.get(key);
     if (a === "start") {
       const e = entry(key);
@@ -503,7 +545,7 @@ export function agentRunner(sessions, deps = {}) {
       if (agentsDisabled(env)) return;
       return ensure(key, { now: true });
     }
-    if (a === "stop") return stop(key, "stop");
+    if (a === "stop") return takeBack ? stopAndTakeBack(key) : stop(key, "stop");
     if (a === "use") {
       settings.writeAgent?.({ cli });
       return;
@@ -526,6 +568,7 @@ export function agentRunner(sessions, deps = {}) {
     await stop(s.key, "handover");
     if (gone) await gone;
     e.state = "handover";
+    e.resumeNext = false; // the conversation goes to Terminal: the background agent must not resume it by itself
     const workDir = ensureWorkDir(s.key);
     const binDir = ensureBin();
     const holder = `onionskin-term-${s.key}`; // a foreign holder: the runner stays down while it polls
@@ -568,11 +611,15 @@ export function agentRunner(sessions, deps = {}) {
     try {
       show = settings.readSettings?.().agent?.show === true;
     } catch {}
-    const base = { cli: e ? "claude" : null, show, activity: e ? e.activity.slice() : [], failure: e?.failure ? { ...e.failure } : null };
+    // startsLeft: the counted starts still allowed in the rolling hour (not shown by the page); read only, the list is pruned at launch
+    const used = e ? e.starts.filter((t) => now() - t < HOUR).length : 0;
+    const startsLeft = Math.max(L.startsPerHour - used, 0);
+    const base = { cli: e ? "claude" : null, show, activity: e ? e.activity.slice() : [], failure: e?.failure ? { ...e.failure } : null, startsLeft };
     let state = "none";
     if (e?.state === "failed") state = "failed";
     else if (e?.state === "handover") state = "handover";
     else if (s && foreign(s, bgHolder(key))) state = "external";
+    else if (e?.child && e.stopping === "stop" && e.resumeNext) state = "none"; // a Stop's agent still exiting: shown stopped at once
     else if (e?.child) state = holds(s, e.holder) ? "working" : s?.pollers.some((p) => p.holder === e.holder) ? "ready" : "starting";
     else if (e && (e.launching || e.waiting || e.nextStartAt || e.state === "starting")) state = "starting";
     if (state !== "failed") base.failure = null;
@@ -586,7 +633,7 @@ export function agentRunner(sessions, deps = {}) {
    */
   const alive = (key) => {
     const e = entries.get(key);
-    return !e?.spawned || !!e.child;
+    return !e?.spawned || (!!e.child && !e.stopping); // a stopping agent's next poll is answered closed too: it never takes a new Send
   };
 
   return { ensure, stop, stopAll, reapOrphans, viewFor, handover, tick, action, alive, isBgHolder, entries };

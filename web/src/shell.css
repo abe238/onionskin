@@ -196,7 +196,7 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .banner > .i { flex: none; }
 .banner-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .banner-text strong { font-weight: 650; letter-spacing: var(--track-head); }
-.banner-text > span { color: var(--ink-2); }
+.banner-text > span { color: var(--ink-2); overflow-wrap: anywhere; }
 .banner-actions { display: flex; gap: 8px; flex: none; }
 .banner-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; margin-top: 4px; }
 .banner-cmd code { flex: 1 1 14em; min-width: 0; margin-top: 0; }
@@ -608,3 +608,12 @@ textarea::placeholder { color: var(--ink-3); opacity: 1; }
 .check-details summary { cursor: pointer; width: fit-content; border-radius: var(--r-sm); }
 .check-details p, .check-details pre { margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font: inherit; }
 @media (prefers-reduced-motion: reduce) { .deeper .spinner { animation-duration: 3s; } }
+
+/* ---- the wait, in words: the draft "Saved" mark, the banner's progress line and counter ---- */
+.card-f .ack { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; align-self: center; padding-left: 4px; font-size: var(--text-xs); color: var(--ink-2); }
+.card-f .ack[data-ack="failed"] { color: var(--warn); font-weight: 650; }
+.banner-text > .banner-head { color: inherit; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
+.banner-head .elapsed { font-variant-numeric: tabular-nums; color: var(--ink-3); }
+/* the "Sent. Follow it in the review panel" chip floats just above the banners, out of their stack (it must not push the working banner up over the document), and only its button takes clicks, so the words under it can still be clicked and typed in */
+.banner.toast[data-has-action="1"] { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); width: max-content; margin-inline: auto; pointer-events: none; }
+.banner.toast[data-has-action="1"] .btn { pointer-events: auto; }

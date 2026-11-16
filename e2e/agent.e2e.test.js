@@ -245,6 +245,64 @@ describe("the real runner with a fake claude on PATH", { skip: !fs.existsSync(ne
       await t.end();
     }
   });
+  test("Stop on the real server: drafts back, one signal, the late write refused, the file unchanged, the next Send starts a fresh conversation without a counted start", async () => {
+    const t = await real("agent-real-stop.docx", "hold");
+    const crypto = await import("node:crypto");
+    const sha = () => crypto.createHash("sha256").update(fs.readFileSync(t.file)).digest("hex");
+    const lines = (f) => (fs.existsSync(path.join(t.dir, f)) ? fs.readFileSync(path.join(t.dir, f), "utf8").split("\n").filter(Boolean) : []);
+    // the agent's view as the page's own request reads it (the page does not show startsLeft)
+    const agentView = () =>
+      t.page.evaluate(async () => {
+        const sid = new URLSearchParams(location.search).get("s");
+        const token = sessionStorage.getItem(`onionskin.token.${sid}`) || "";
+        const r = await fetch(`/api/bootstrap?s=${sid}`, { headers: { "x-onionskin-token": token } });
+        return (await r.json()).session.agent;
+      });
+    try {
+      const before = sha();
+      // one comment and the note
+      await t.page.locator(q("mode-comment")).click();
+      const p8 = t.page.locator(".de-p", { hasText: "Paragraph 008:" }).first();
+      await p8.scrollIntoViewIfNeeded();
+      const b8 = await p8.boundingBox();
+      await t.page.mouse.click(b8.x + Math.min(b8.width / 2, 200), b8.y + 8);
+      await t.page.locator(q("comment-card") + " textarea").last().fill("Is this still current?");
+      await t.page.waitForTimeout(500);
+      await sendNote(t.page, "Please tidy up.");
+      await t.page.locator(q("agent-start")).click();
+      for (let i = 0; i < 160 && !fs.existsSync(path.join(t.dir, "held")); i++) await t.page.waitForTimeout(250);
+      assert.ok(fs.existsSync(path.join(t.dir, "held")), "the fake holds the batch");
+      await t.page.locator(q("agent-stop")).waitFor({ timeout: 10000 });
+      assert.equal(await t.page.locator(q("take-back")).count(), 0, "no Take back beside Stop for the background agent");
+      const left = (await agentView()).startsLeft;
+      assert.equal(left, 4, "one counted start so far");
+      const pids = pidsOf(t.dir);
+      await t.page.locator(q("agent-stop")).click();
+      await t.page.locator(q("banner-working")).waitFor({ state: "detached", timeout: 10000 });
+      await t.page.waitForFunction(() => document.querySelector('[data-testid="overall-note"]')?.value === "Please tidy up.", null, { timeout: 10000 }); // the note is back in the box
+      await t.page.waitForFunction(() => document.querySelector('[data-testid="comment-card"]')?.dataset.status === "draft", null, { timeout: 10000 }); // the comment is a draft again
+      assert.equal(await t.page.locator(q("comment-card") + " textarea").first().inputValue(), "Is this still current?");
+      for (let i = 0; i < 80 && !fs.existsSync(path.join(t.dir, "late.json")); i++) await t.page.waitForTimeout(250);
+      const late = JSON.parse(fs.readFileSync(path.join(t.dir, "late.json"), "utf8"));
+      assert.notEqual(late.status, 0, `the late write is refused: ${late.stdout}${late.stderr}`);
+      assert.equal(JSON.parse(late.stdout).code, "stale_batch", "refused because the batch was taken back");
+      for (let i = 0; i < 40 && pids.some(pidAlive); i++) await t.page.waitForTimeout(250);
+      assert.ok(pids.every((p) => !pidAlive(p)), "the held agent is gone");
+      await t.page.waitForTimeout(5000); // longer than the runner's kill delay: a second signal would land in this window
+      assert.deepEqual(lines("signals"), ["SIGTERM"], "exactly one termination signal");
+      assert.equal(sha(), before, "the file is unchanged");
+      assert.ok(!(await readZipText(t.file, "word/document.xml")).includes("Paragraph LATE:"));
+      assert.equal((await agentView()).state, "none");
+      // the next Send: a fresh conversation (the stopped one held the withdrawn batch), at once, not counted
+      fs.rmSync(path.join(t.dir, "mode"));
+      await t.page.locator(q("send")).click();
+      await t.page.waitForFunction(() => document.body.textContent.includes("Paragraph THREE:"), null, { timeout: 40000 });
+      assert.deepEqual(lines("starts"), ["fresh", "fresh"]);
+      assert.equal((await agentView()).startsLeft, left, "the restart after Stop used no counted start");
+    } finally {
+      await t.end();
+    }
+  });
   test("signed out: the signed_out banner", async () => {
     const t = await real("agent-real-so.docx", "signed_out");
     try {

@@ -18,6 +18,7 @@ import { setupRewriterStatus, startSetupRewriter, suggest, suggestStatus, useSug
 import { readStyle, writeStyle } from "./style.js";
 import { GUIDE_BODY_MAX, VOICE_BUILD_MAX_BODY, VOICE_POSTS, buildVoiceRequest, learnFromSend, stopVoice, voicePost, voiceState } from "./voice-learn.js";
 import { agentRunner } from "./agent-runner.js";
+import { docWatcher } from "./watch.js";
 import { isBgHolder } from "./agent-detect.js";
 import { BG_PRESETS, MAX_IMAGE_BYTES, SettingsError, readCustomImage, readSettings, removeCustomImage, saveCustomImage, writeBackground } from "./settings.js";
 
@@ -204,6 +205,9 @@ export async function startServer({ port = 0 } = {}) {
   // the background agent (src/agent-runner.js): started for a file opened from a person's terminal, or for a Send nobody took
   const agent = agentRunner(sessions, { tabs: (key) => sse.get(key)?.size || 0 });
   sessions.agent = agent;
+  // a faster outside-edit notice (src/watch.js); the page's /api/stale poll stays the backstop
+  const watcher = docWatcher(sessions);
+  sessions.watch = watcher;
   let auth;
   let lastActivity = Date.now();
 
@@ -299,7 +303,9 @@ export async function startServer({ port = 0 } = {}) {
         if (!AGENT_ACTIONS.includes(body.action)) return sendJson(res, 400, { error: `action must be one of ${AGENT_ACTIONS.join(", ")}` });
         if (body.action === "use" && body.cli !== "claude") return sendJson(res, 400, { error: "only Claude Code runs as the background agent in this version" });
         if (body.action === "show" && typeof body.on !== "boolean") return sendJson(res, 400, { error: "on must be true or false" });
-        await agent.action(key, { action: body.action, cli: body.cli, on: body.on });
+        if (body.takeBack !== undefined && (body.action !== "stop" || typeof body.takeBack !== "boolean")) return sendJson(res, 400, { error: "takeBack goes with stop only, as true or false" });
+        // stop with takeBack: the page's Stop. The batch comes back to drafts first, then the agent that held it is stopped (src/agent-runner.js)
+        await agent.action(key, { action: body.action, cli: body.cli, on: body.on, takeBack: body.takeBack === true });
         return sendJson(res, 200, { ok: true, session: sessions.view(s) });
       }
       if (p === "/api/draft") return sendJson(res, 200, { ok: true, session: (sessions.setDraft(key, body), sessions.view(s)) });
@@ -547,6 +553,7 @@ export async function startServer({ port = 0 } = {}) {
 
   function shutdown() {
     clearInterval(timer);
+    watcher.close();
     for (const k of [...late.keys()]) cancelLate(k, "the server stopped"); // no soffice outlives the server
     stopRewriter(); // nor the local rewriter's worker
     stopVoice(); // nor a learning worker

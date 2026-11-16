@@ -51,7 +51,7 @@ The long reference is in [GUIDE.md](GUIDE.md).
 - macOS only so far, the only platform tested. Node.js 22 or newer. A browser (the full browser test suite runs in Chrome).
 - Claude Code or Codex, already installed and signed in. Onionskin does not include an agent.
 - Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to the agent.
-- Version 0.0.2, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
+- Version 0.0.3, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
 - Charts and SmartArt show as placeholders. Fields, content controls and equations are shown read-only. Macro-enabled files (`.docm`, `.xlsm`, `.pptm`) are refused.
 - Tests: over 1,000 unit tests and 300 browser tests pass (2026-11-13). A clean-machine test on a second Mac passed: install by the pasted sentence, `onionskin doctor`, and one real round.
 
@@ -120,7 +120,7 @@ In a new Terminal window:
 1. ```sh
    onionskin --version
    ```
-   You should see: a version number such as `0.0.2`.
+   You should see: a version number such as `0.0.3`.
 
 2. ```sh
    onionskin setup --dry-run

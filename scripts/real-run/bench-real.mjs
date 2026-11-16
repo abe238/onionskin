@@ -11,6 +11,7 @@ import path from "node:path";
 import { launch, waitDoc } from "../../e2e/helpers/harness.mjs";
 import { prepare, realCheckerPython, repo, sleep } from "./lib.mjs";
 import { commentOnParagraph } from "./scenarios.mjs";
+import { formatHops, hopBreakdown, summarizeHops } from "./bench-marks.mjs";
 
 const arg = (n, d) => (process.argv.includes(`--${n}`) ? process.argv[process.argv.indexOf(`--${n}`) + 1] : d);
 const model = arg("model", "sonnet");
@@ -79,6 +80,7 @@ Write no chat reply during the review. Work only on ${info.file} and inside ${wd
     rec.startup_ms = Date.now() - started; // agent start -> URL (reading the skill, open)
     br = await launch();
     const page = await br.page();
+    await page.addInitScript(() => (window.__onionskinMarks = true)); // the page's timing marks (web/src/marks.js) are off unless asked for
     await page.goto(url);
     await waitDoc(page, ".de-p");
     for (const [k, round] of ROUNDS.entries()) {
@@ -87,6 +89,7 @@ Write no chat reply during the review. Work only on ${info.file} and inside ${wd
       const r = { name: round.name, relisten_wait_ms: Date.now() - listenFrom };
       for (const [para, text] of round.comments) await commentOnParagraph(page, para, text);
       await page.waitForTimeout(300);
+      await page.evaluate(() => (performance.clearMeasures(), performance.clearResourceTimings())); // this round's marks only
       // page-side watch: the moment the wanted text is visible in the document, and the moment the result card appears
       await page.evaluate((want) => {
         const b = (window.__bench = { entries: document.querySelectorAll('[data-testid="activity-entry"]').length });
@@ -127,8 +130,12 @@ Write no chat reply during the review. Work only on ${info.file} and inside ${wd
       r.command_ms = work.reduce((n, c) => n + (c.end - c.start), 0);
       r.deliver_ms = poll ? poll.end - sent : null;
       r.model_ms = r.result_card_ms != null ? r.result_card_ms - r.command_ms - (r.deliver_ms || 0) : null; // thinking + tool round trips
+      // the hops: upload and reload from the page's marks and resource timing, delivery and each command from the CLI trace
+      const snap = await page.evaluate(() => ({ origin: performance.timeOrigin, measures: performance.getEntriesByType("measure").filter((m) => m.name.startsWith("os:")).map((m) => ({ name: m.name, startTime: m.startTime, duration: m.duration })), resources: performance.getEntriesByType("resource").map((e) => ({ name: e.name.split("?")[0], startTime: e.startTime, responseEnd: e.responseEnd })) })).catch(() => null);
+      r.hops = hopBreakdown({ snap, trace: cmds, sent, resultAt: b.result_shown || null });
       rec.rounds.push(r);
       console.log(`  run ${i} round ${k + 1} (${round.name}): ${r.correct ? r.total_ms + " ms" : "WRONG or not finished"}; commands: ${r.commands.join(", ") || "none"}`);
+      console.log(formatHops(r.hops));
       if (!r.correct) break;
     }
     rec.ok = rec.rounds.length === ROUNDS.length && rec.rounds.every((r) => r.correct);
@@ -181,6 +188,10 @@ for (const [k, round] of ROUNDS.entries()) {
   if (!xs.length) continue;
   const t = xs.map((r) => r.total_ms);
   console.log(`  ${String(median(t)).padStart(6)} ms median (min ${Math.min(...t)}, max ${Math.max(...t)}, n ${t.length})  ${round.name}; model ${median(xs.map((r) => r.model_ms))} ms, commands ${median(xs.map((r) => r.command_ms))} ms in ${median(xs.map((r) => r.commands.length))} calls`);
+}
+{
+  const hops = summarizeHops(all.flatMap((r) => r.rounds.filter((x) => x.correct && x.hops).map((x) => x.hops)));
+  console.log(`  PER HOP, median over all rounds (n ${hops.rounds}): upload ${hops.upload_ms} ms, delivery ${hops.deliver_ms} ms, write ${hops.write_ms} ms, reload ${hops.reload_ms} ms (file fetch ${hops.file_fetch_ms}, viewer ${hops.file_render_ms}); ${hops.calls} calls per round, median wait before a call ${hops.call_gap_ms} ms`);
 }
 const warm = all.flatMap((r) => r.rounds.slice(1).filter((x) => x.correct).map((x) => x.total_ms));
 console.log(`  WARM median over all warm rounds: ${median(warm)} ms (min ${warm.length ? Math.min(...warm) : "-"}, max ${warm.length ? Math.max(...warm) : "-"}, n ${warm.length}); startup median ${median(all.map((r) => r.startup_ms).filter(Boolean))} ms`);

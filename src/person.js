@@ -15,6 +15,12 @@ export const AGENT_ENV = ["CLAUDECODE", "CODEX_THREAD_ID", "CODEX_TOOL_CALL_ID",
 
 export const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
+/** A path as one POSIX shell word: bare when it holds only safe characters, else in single quotes. */
+export const shellWord = (s) => (/^[A-Za-z0-9_\/.\-+@%,:=]+$/.test(String(s)) ? String(s) : shellQuote(s));
+
+/** What a person pastes in a terminal, from any folder, to reopen a file: the command with the file's absolute path. */
+export const reopenCommand = (file) => `${BIN} ${shellWord(file)}`;
+
 /** True when an agent or a script runs this command: an agent's environment variable, or stdin or stdout that is not a terminal. */
 export function isAgentRun({ env = {}, stdinTTY = false, stdoutTTY = false } = {}) {
   if (AGENT_ENV.some((k) => env[k])) return true;

@@ -20,3 +20,58 @@ export function stageOf(session) {
   if (i < 0) return { text: "Agent is working", step: 0, of: STAGES.length, key: null };
   return { text: STAGES[i][1], step: i + 1, of: STAGES.length, key: STAGES[i][0] };
 }
+
+// ---- the wait, in words (the banner, the top bar and the review panel read these) --------------------------------------
+
+/**
+ * Words for the window after Send when a batch is saved but no agent has it yet (session state "stranded"): the agent is starting, is waiting for a
+ * free slot, or nobody is listening yet. "" in every other state. The server names no grace countdown, so none is claimed here.
+ */
+export function pendingWords(session) {
+  if (session?.state !== "stranded") return "";
+  const a = session.agent;
+  if (a?.state === "starting") return a.busy ? "Waiting for a free agent. Another document's agent is busy" : "Starting the agent for your batch";
+  if (a?.state === "external" || a?.state === "handover") return "";
+  return "Your batch is saved. Waiting for an agent";
+}
+
+/**
+ * The newest fixed-words line of the agent's current turn, or "". The list is a rolling log, so lines from an earlier batch must not show as this
+ * one's progress: a line counts only from the last "Got your batch" on, and once "Done." or "Waiting for you to press Send" follows it, nothing counts
+ * until the next batch is got.
+ */
+export function progressOf(agent) {
+  const items = agent?.activity;
+  if (!Array.isArray(items) || !["working", "ready"].includes(agent.state)) return "";
+  const texts = items.map((it) => String(it?.text || ""));
+  const from = texts.findLastIndex((t) => t.startsWith("Got your batch"));
+  if (from < 0) return "";
+  const after = texts.slice(from);
+  if (after.some((t) => t.startsWith("Done.") || t === "Waiting for you to press Send")) return ""; // that batch is over: what follows belongs to the next one
+  return after.findLast((t) => t) || "";
+}
+
+/** "12 s", "1 min 05 s": the local wait counter. */
+export function elapsedText(ms) {
+  const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+/** Whether Stop belongs in the banner, and which kind: "stop" for the background agent this page can cancel, "takeback" for the person's own agent session (nothing is signaled; with "stop" the banner shows no separate Take back), null for none. */
+export function stopKind(session, readOnly) {
+  if (readOnly || !(session?.state === "working" || session?.state === "queued") || session.local) return null;
+  const a = session.agent?.state;
+  if (a === "external" || a === "handover") return "takeback";
+  return ["starting", "ready", "working"].includes(a) ? "stop" : null;
+}
+
+/** The note box after Stop: the withdrawn batch's note (the server joins its saved notes with blank lines), then a note typed and not saved yet. The typed
+ *  note is dropped only when it is already there as whole paragraphs (the server sent it back), never because it is part of one. */
+export function noteAfterStop(back, mine) {
+  back = back || "";
+  const paras = (x) => x.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const m = paras(mine || "");
+  if (!m.length) return back;
+  if (`\n\n${paras(back).join("\n\n")}\n\n`.includes(`\n\n${m.join("\n\n")}\n\n`)) return back;
+  return back ? `${back}\n\n${mine}` : mine;
+}

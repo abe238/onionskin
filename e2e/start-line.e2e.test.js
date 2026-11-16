@@ -28,7 +28,7 @@ test("stranded banner: a Start button and the /onionskin way, no command line; n
   const start = page.locator(q("agent-start"));
   assert.equal((await start.textContent()).trim(), "Start the agent");
   const text = await page.locator(q("banner-stranded")).textContent();
-  assert.match(text, /Press Start and Onionskin runs an agent in the background for you\. Using Claude Code yourself\? Type \/onionskin start-line\.docx there\./);
+  assert.match(text, /Press Start and Onionskin runs an agent in the background for you\. Using Claude Code yourself\? Type \/onionskin \/[^\n]*\/start-line\.docx there\./, "the full path: a Claude Code session is rarely in the file's folder");
   assert.ok(!/onionskin poll|onionskin '/.test(text), "no command line");
   assert.equal(await page.locator(q("stranded-command")).count() + (await page.locator(q("stranded-start")).count()) + (await page.locator(q("copy-command")).count()), 0);
   for (const [width, height] of [[390, 844], [360, 740]]) {

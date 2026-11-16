@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.3 (2026-11-15)
+
+### Added
+- Stop the agent: while Onionskin's background agent works, the banner has a Stop the agent button. It takes your batch back first (comments become drafts again, the note goes back to its box, and anything the agent already wrote stays as a run you can revert), then stops the agent, so a late write from it is refused and the file is not touched. The next Send starts a new agent at once, in a fresh conversation that never saw the request you took back, and that start does not count toward the 5 starts an hour. Tried with a real agent: the page unlocked 0.5 s after Stop, the file was untouched, and the next Send's change landed 4.6 s later. The banner then has no separate "Take back editing", since taking the batch back alone would leave the agent running. With your own agent, or one open in Terminal, the banner keeps "Take back editing" instead and nothing is stopped. `POST /api/agent {"action": "stop", "takeBack": true}`.
+- A change made outside Onionskin is noticed within about 1 to 3 seconds: the server watches the document's folder (and checks the file every 2 seconds, since macOS drops a folder event now and then) and the page shows the "Someone changed this file outside Onionskin" message as soon as it hears, also while the agent works. Nothing is written over the outside version. A read-only tab shows nothing. Synced folders may still rely on the focus and 30-second checks. Onionskin's own saves (Send, the agent's writes, a merge) never raise it.
+- While the agent works, the banner shows what it is doing now (one plain line), a seconds counter, and the stage words; the top bar and the review panel use the same words. A draft comment card says "Saved" once the server has it, or "Not saved" while Onionskin keeps trying. After Send, a "Sent. Follow it in the review panel" message has a "Show it in the review panel" button that opens the panel at the comment.
+- When the page stops hearing from Onionskin for about 10 seconds (the server stopped, crashed or is being upgraded), it says so: "Onionskin on this Mac is not answering. Your comments and note are still here and the page keeps trying: if it does not come back, copy them, then open the file again." A Copy my comments button puts the overall note and every draft comment, each after the words it is on, on the clipboard as plain text. The message comes back if a failed Send or save replaced it, until the connection is back. A short drop that reconnects within a few seconds shows nothing. When the connection is back the message goes and comments that said "Not saved" are saved. Before, the message showed only once the browser gave up on the stream, which Chrome never does when the server is gone, and it advised a reload, which loses unsaved comments when the server is gone or came back on a new port.
+
+### Fixed
+- The closed message's command works from any folder. It used to give only the file's name, which failed with "File not found" unless the terminal was already in the file's folder. It now gives `onionskin` and the file's full path (quoted when it has spaces), with a Copy command button. The line for Claude Code in the "no agent is listening" banner gives the full path too.
+
 ## 0.0.2 (2026-11-14)
 
 ### Added

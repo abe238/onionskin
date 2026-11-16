@@ -125,7 +125,7 @@ The background agent is limited on purpose. It can change your document only thr
 - Claude Code or Codex, already installed and signed in. The terminal start needs Claude Code; with Codex, you start from inside it.
 - For quick fixes only: macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without it, grammar fixes go to your agent.
 
-Limits: macOS only so far. This is a pre-release (0.0.2) and has been tested by one person. No Windows, no Linux, no real-time collaboration.
+Limits: macOS only so far. This is a pre-release (0.0.3) and has been tested by one person. No Windows, no Linux, no real-time collaboration.
 
 ## Privacy
 

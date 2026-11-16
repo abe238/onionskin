@@ -96,3 +96,66 @@ test("the page's words for a stage: a run on this Mac reads 'Doing this on your 
   assert.equal(stageOf({ state: "working", stage: "writing" }).text, "Writing your changes");
   assert.equal(stageOf({ state: "idle", stage: null }).text, "");
 });
+
+test("the words for the wait: pending window, progress line of this batch only, counter, and when Stop shows", async () => {
+  const { pendingWords, progressOf, elapsedText, stopKind } = await import("../web/src/stage.js");
+  // the window after Send before an agent has the batch
+  assert.equal(pendingWords({ state: "working", agent: { state: "starting" } }), "");
+  assert.equal(pendingWords({ state: "stranded", agent: { state: "starting" } }), "Starting the agent for your batch");
+  assert.equal(pendingWords({ state: "stranded", agent: { state: "starting", busy: true } }), "Waiting for a free agent. Another document's agent is busy");
+  assert.equal(pendingWords({ state: "stranded", agent: { state: "none" } }), "Your batch is saved. Waiting for an agent");
+  assert.equal(pendingWords({ state: "stranded" }), "Your batch is saved. Waiting for an agent", "an older server sends no agent field");
+  assert.equal(pendingWords({ state: "stranded", agent: { state: "external" } }), "", "the person's own agent: not this page's words");
+  // the progress line: nothing from an earlier batch
+  const at = 1;
+  const a = (state, ...texts) => ({ state, activity: texts.map((text) => ({ at, text })) });
+  assert.equal(progressOf(a("working", "Got your batch: 2 comments", "Reading the instructions", "Writing the changes")), "Writing the changes");
+  assert.equal(progressOf(a("working", "Got your batch", "Making the changes", "Waiting for you to press Send")), "", "back to waiting: no line for a batch that is over");
+  assert.equal(progressOf(a("working", "Got your batch: 1 comment", "Done. The page shows what changed", "Waiting for you to press Send")), "");
+  assert.equal(progressOf(a("working", "Got your batch: 1 comment", "Done. The page shows what changed", "Waiting for you to press Send", "Got your batch: 2 comments")), "Got your batch: 2 comments", "the next batch starts over");
+  assert.equal(progressOf(a("working", "Got your batch", "Done. The page shows what changed", "Waiting for you to press Send", "Thinking")), "", "a line before the batch that is out is the last batch's");
+  assert.equal(progressOf(a("working", "Waiting for you to press Send")), "");
+  assert.equal(progressOf(a("external", "Got your batch", "Writing the changes")), "", "no agent of ours: no line");
+  assert.equal(progressOf(undefined), "");
+  assert.deepEqual([0, 999, 12_400, 60_000, 65_000, 3_725_000, -5, NaN].map(elapsedText), ["0 s", "0 s", "12 s", "1 min 00 s", "1 min 05 s", "62 min 05 s", "0 s", "0 s"]);
+  // Stop: the background agent only; the person's own agent gets take back alone; none on this Mac's own runs or in a read-only tab
+  const w = (agent, extra = {}) => ({ state: "working", agent: { state: agent }, ...extra });
+  assert.deepEqual(["working", "ready", "starting"].map((s) => stopKind(w(s), false)), ["stop", "stop", "stop"]);
+  assert.deepEqual(["external", "handover"].map((s) => stopKind(w(s), false)), ["takeback", "takeback"]);
+  assert.equal(stopKind(w("none"), false), null);
+  assert.equal(stopKind({ state: "working" }, false), null, "no agent field");
+  assert.equal(stopKind(w("working"), true), null, "read-only tab");
+  assert.equal(stopKind(w("working", { local: true }), false), null, "a run on this Mac has no agent to stop");
+  assert.equal(stopKind({ state: "listening", agent: { state: "ready" } }, false), null);
+});
+
+test("timing marks: off by default, on when the page asks, never throw", async () => {
+  const { mark, measure } = await import("../web/src/marks.js");
+  const names = () => performance.getEntries().map((e) => e.name);
+  mark("os:test-off");
+  assert.ok(!names().includes("os:test-off"), "a normal page makes no marks");
+  globalThis.__onionskinMarks = true;
+  try {
+    mark("os:test-a");
+    mark("os:test-b");
+    measure("os:test-ab", "os:test-a", "os:test-b");
+    assert.ok(names().includes("os:test-a") && names().includes("os:test-ab"));
+    assert.doesNotThrow(() => measure("os:test-bad", "os:never-made"), "a missing mark is not an error");
+  } finally {
+    delete globalThis.__onionskinMarks;
+    performance.clearMarks();
+    performance.clearMeasures();
+  }
+});
+
+test("the note after Stop: the withdrawn note, then what was typed and not saved; whole paragraphs compared, never parts of one", async () => {
+  const { noteAfterStop } = await import("../web/src/stage.js");
+  assert.equal(noteAfterStop("Keep it short.", ""), "Keep it short.");
+  assert.equal(noteAfterStop("Keep it short.", "  "), "Keep it short.");
+  assert.equal(noteAfterStop("", "Use US spelling."), "Use US spelling.");
+  assert.equal(noteAfterStop("Keep it short.", "Keep it short."), "Keep it short.", "the saved note came back: not twice");
+  assert.equal(noteAfterStop("Keep it short.\n\nUse US spelling.", "Use US spelling."), "Keep it short.\n\nUse US spelling.", "a paragraph the server joined back");
+  assert.equal(noteAfterStop("Keep it short and formal.", "short"), "Keep it short and formal.\n\nshort", "a short typed note that is part of one paragraph is kept");
+  assert.equal(noteAfterStop("A.\n\nB.\n\nC.", "B.\n\nC."), "A.\n\nB.\n\nC.", "several whole paragraphs");
+  assert.equal(noteAfterStop("A.\n\nB.", "Typed during the run."), "A.\n\nB.\n\nTyped during the run.");
+});

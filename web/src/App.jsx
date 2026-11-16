@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { DocViewer, hashText } from "@engine";
 import { TAB, api, blobToBase64, coalesce, getToken, labelFor, locFromResolved, paragraphText, parseA1, pullSelectionIntoParagraphs, rangeHasCell, uid, unionRange, verifyBlock } from "./lib.js";
 import { catchUpPlan, newestRun, retryDelay } from "./catchup.js";
+import { mark, measure } from "./marks.js";
+import { noteAfterStop } from "./stage.js";
 import { useFrame, useMedia, useSidebar, useTheme, useVisualViewport } from "./hooks.js";
 import { Sidebar } from "./Sidebar.jsx";
 import { Dock, TopBar, Toolbar } from "./Chrome.jsx";
@@ -23,6 +25,8 @@ import { createWriteIn } from "./writein-live.js";
 const FRESH_MS = 5000;
 const PILL_MS = 20_000; // how long the "changes below / above" pill may stay
 const REDUCED_FRESH_MS = 2000; // reduced motion: a still outline for about two seconds instead of the fading pulse
+const LOST_MS = 10_000; // a stream with errors and no open this long: the server is gone (see the server events effect)
+const LOST_TEXT = "Onionskin on this Mac is not answering. Your comments and note are still here and the page keeps trying: if it does not come back, copy them, then open the file again.";
 const plain = (e) => (/failed to fetch|networkerror|load failed/i.test(e.message) ? "Could not reach the Onionskin server. Your edits are still in this page, so try again in a moment." : e.message); // how long changed regions stay highlighted after an agent run lands
 
 export default function App({ sid, initial, product, settings, suggest }) {
@@ -41,6 +45,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState(null); // {kind:'conflict'|'error', message}
   const [notice, setNotice] = useState(null); // short-lived status toast
+  const [noticeAction, setNoticeAction] = useState(null);
+  const [stopping, setStopping] = useState(false); // Stop was pressed and the server has not answered yet
   const [quickAgentFor, setQuickAgentFor] = useState(null); // the note the person chose to send to the agent instead of doing on this Mac
   const quickChangeRef = useRef(null); // {command, count, note, label} while the Send button shows a quick change
   const [quick, setQuick] = useState(null); // Quick ask composer: {kind, anchor, text, blocked, nudge} while open
@@ -110,6 +116,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const noticeTimer = useRef(null);
   const freshTimer = useRef(null);
   const quickRef = useRef(null);
+  const sentChipRef = useRef(null); // the Quick ask comment whose Send waits for the one in flight: it gets its "Sent" chip when that goes through
   const loadPlacesRef = useRef(false); // an agent run landed: fetch its places once the new file is up
   const historyLocRef = useRef(null);
   const peekTimer = useRef(null);
@@ -132,10 +139,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const stampsCtl = useStamps();
   freshRef.current = fresh;
 
-  const say = useCallback((text) => {
+  const say = useCallback((text, action = null) => {
     setNotice(text);
+    setNoticeAction(action); // {label, ariaLabel, onClick}: a button in the same message (it stays longer, so it can be reached)
     clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => setNotice(null), 4500);
+    noticeTimer.current = setTimeout(() => (setNotice(null), setNoticeAction(null)), action ? 10000 : 4500);
   }, []);
 
   // ---- file loading ----------------------------------------------------------------------------------------
@@ -151,7 +159,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
       }
       restoreRef.current = true;
     }
+    mark("os:file-start");
     const { buf, sha } = await api(`/api/file?s=${sid}`, { raw: true });
+    mark("os:file-fetched");
+    measure("os:file-fetch", "os:file-start", "os:file-fetched");
     loadedShaRef.current = sha;
     dirtyRef.current = false;
     setChanges([]);
@@ -165,6 +176,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
   // ---- early check: did someone change the file outside Onionskin? ------------------------------------------------
   // When the tab regains focus, and at most every 30 s while it is visible, ask the server whether the disk still holds the version this page loaded.
   const lastStale = useRef(0);
+  // The server's watcher (src/watch.js) pushes a state event with changedOutside when the disk holds a version Onionskin does not know. The notice is
+  // raised when that event arrives (see onState), never drawn from the field: the field can still say true after the page took the new version.
+  const outsideSeen = useRef(false);
   useEffect(() => {
     const check = async (min) => {
       if (document.visibilityState !== "visible" || roRef.current || sessionRef.current.locked || sessionRef.current.state === "closed") return;
@@ -193,20 +207,39 @@ export default function App({ sid, initial, product, settings, suggest }) {
     // The browser reconnects the stream by itself after a network error. A stream it gave up on (closed for good) is opened again
     // here: after its error (soon, then slowly, then no more: a server that refuses this tab is not asked forever), when the browser
     // is back online and when the tab is looked at again. Without this the page would stay on "Agent working" forever.
+    // A server that is gone (stopped, crashed, upgraded) refuses the connection, and then the browser keeps the stream CONNECTING and retries by
+    // itself forever: the CLOSED path below never runs. So a stream that has had errors and no open for LOST_MS says so too, whatever its state.
+    // A short drop (laptop wake, one lost connection) reopens well within that time and shows nothing. Until the next open it is said again every
+    // LOST_MS: a failed Send or save meanwhile replaces it with a plain error, and that would hide Copy my comments exactly when it is needed.
     let es = null;
     let streamTries = 0;
     let streamTimer = null;
+    let lostTimer = null; // set at the first error after an open, cleared by the next open
+    const lost = () => {
+      setProblem((p) => (!p || (p.kind === "error" && !p.stream) ? { kind: "error", stream: true, message: LOST_TEXT } : p)); // an outside change or a conflict stays
+      lostTimer = setTimeout(lost, LOST_MS);
+    };
     const connect = () => {
       es?.close();
       es = new EventSource(`/api/events?s=${sid}&tab=${TAB}&t=${encodeURIComponent(getToken())}`);
       es.addEventListener("state", (e) => onState(JSON.parse(e.data)));
       es.addEventListener("reload", (e) => onReload(JSON.parse(e.data)));
-      es.onopen = () => (streamTries = 0);
+      es.onopen = () => {
+        streamTries = 0;
+        clearTimeout(lostTimer);
+        lostTimer = null;
+        setProblem((p) => (p?.stream ? null : p)); // the stream is back: its "Connection lost" message goes
+      };
       es.onerror = () => {
+        lostTimer ??= setTimeout(lost, LOST_MS);
         if (es?.readyState !== EventSource.CLOSED) return; // the browser is reconnecting by itself
         const ms = retryDelay(streamTries++);
         clearTimeout(streamTimer);
         if (ms != null) streamTimer = setTimeout(ensureStream, ms);
+        else {
+          clearTimeout(lostTimer);
+          lost(); // all retries used: say it now
+        }
       };
     };
     const ensureStream = () => {
@@ -241,6 +274,14 @@ export default function App({ sid, initial, product, settings, suggest }) {
       return plan === "reload" || plan === "merge";
     };
     const onState = (view) => {
+      // raised on arrival, also while a batch is out (a mid-run outside edit shows only here: the stale check above skips a locked page), never in a
+      // read-only tab. Only on the turn from false to true: the agent's activity pushes the same flag again and again, and a closed notice stays closed.
+      // A tab that is read-only still follows the flag, so taking over editing does not raise an old notice. Ceiling: the flag is a boolean, so a
+      // second outside save while it is still true is not raised again here; the focus and 30 s stale check above still catch it once unlocked.
+      const out = !!view.changedOutside;
+      const roNow = roRef.current || (!!view.editor && view.editor !== TAB);
+      if (out && !outsideSeen.current && !roNow && view.state !== "closed") setProblem((p) => (p && p.kind !== "outside" ? p : { kind: "outside" }));
+      outsideSeen.current = out;
       if (catchUp(view)) return;
       merge(view);
       if (mergeDue.current) mergeHeldRef.current?.(view); // the agent let go: carry the held edits over now
@@ -285,8 +326,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
       restoreRef.current = true;
       rememberPlace();
       if (!retries.current) setProblem(null);
+      mark("os:reload-start");
       const loaded = loadFile().then(
         () => {
+          measure("os:reload-load", "os:reload-start"); // from the event to the new file being handed to the viewer
           syncedShaRef.current = view.baseSha;
           syncedRunRef.current = newestRun(view);
           if (retries.current) setProblem((p) => (p?.retrying ? null : p));
@@ -312,6 +355,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       es.close();
       es = null;
       clearTimeout(streamTimer);
+      clearTimeout(lostTimer);
       clearTimeout(retryTimer.current);
       window.removeEventListener("online", retry);
       window.removeEventListener("focus", ensureStream);
@@ -325,6 +369,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
     offsRef.current = [];
     hostRef.current = h;
     if (!h) return;
+    mark("os:doc-host");
+    measure("os:file-render", "os:file-fetched", "os:doc-host"); // the viewer opening the file it was handed
     offsRef.current.push(
       h.onEdit((e) => {
         dirtyRef.current = true;
@@ -675,26 +721,52 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }, []);
 
   // ---- draft persistence -----------------------------------------------------------------------------------
-  const saveDraftSoon = useCallback(() => {
+  // "Saved" / "Not saved" on the draft cards: the newest autosave decides (an older answer arriving late changes nothing). A failed save is tried again,
+  // soon and then slowly (retryDelay), and "Not saved" stays until one goes through.
+  const [ack, setAck] = useState(null); // null | "saved" | "failed"
+  const saveSeq = useRef(0);
+  const saveFails = useRef(0);
+  const saveDraftSoon = useCallback((delay = 350) => {
     clearTimeout(saveTimer.current);
     if (roRef.current) return;
     draftPendingRef.current = true;
+    setAck((a) => (a === "failed" ? a : null));
+    const seq = ++saveSeq.current;
     saveTimer.current = setTimeout(() => {
       draftPendingRef.current = false;
-      api(`/api/draft?s=${sid}`, { method: "POST", body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).catch(() => {});
-    }, 350);
-  }, [sid]);
+      api(`/api/draft?s=${sid}`, { method: "POST", body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).then(
+        () => {
+          if (seq !== saveSeq.current) return;
+          saveFails.current = 0;
+          setAck("saved");
+        },
+        () => {
+          if (seq !== saveSeq.current) return;
+          setAck("failed");
+          const ms = retryDelay(saveFails.current++);
+          if (saveFails.current === 1) say("Your comments could not be saved yet. They are still here, and Onionskin keeps trying.");
+          saveDraftSoon(ms ?? 15000); // past the quick retries, every 15 s: the words say "keeps trying" (and the leave-page guard counts the failure)
+        }
+      );
+    }, delay);
+  }, [sid, say]);
 
   // ---- leaving the page --------------------------------------------------------------------------------------
   // Typed document edits live only in this page until Send. Leaving (refresh, tab close, navigation) asks first; a draft that has not
   // been autosaved yet is sent on the way out. (Persisting unsent document edits across a refresh is not done.)
   useEffect(() => {
-    const unsent = () => !roRef.current && (dirtyRef.current || changesRef.current.length > 0 || draftPendingRef.current);
+    const unsent = () => !roRef.current && (dirtyRef.current || changesRef.current.length > 0 || draftPendingRef.current || saveFails.current > 0); // a draft that failed to save is still unsent
     const flush = () => {
       if (!draftPendingRef.current || roRef.current) return;
       clearTimeout(saveTimer.current);
       draftPendingRef.current = false;
-      api(`/api/draft?s=${sid}`, { method: "POST", keepalive: true, body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).catch(() => {});
+      api(`/api/draft?s=${sid}`, { method: "POST", keepalive: true, body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).then(
+        () => {
+          if (saveFails.current) setAck("saved"); // "Not saved" goes once this save went through
+          saveFails.current = 0;
+        },
+        () => saveFails.current > 0 && saveDraftSoon(retryDelay(saveFails.current) ?? 15000) // a tab that was only hidden (or stayed) keeps trying
+      );
     };
     const onBeforeUnload = (e) => {
       flush();
@@ -711,7 +783,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHidden);
     };
-  }, [sid]);
+  }, [sid, saveDraftSoon]);
   const updateComments = (fn) => {
     // the ref moves first: Quick ask creates a comment and sends in the same breath, and send() reads the ref
     const next = fn(commentsRef.current);
@@ -942,9 +1014,30 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (!text) return setQuick({ ...q, nudge: true });
     quietRef.current = { until: Date.now() + 600, quote: q.anchor.quote }; // the selection comes back right after this: no comment chip over it
     closeQuick(true);
-    addComment(q.kind, q.anchor, null, { text, quiet: true });
-    if (sendingRef.current) sendAgainRef.current = true; // a Send is in flight: this comment goes out right after it
-    else send();
+    const c = addComment(q.kind, q.anchor, null, { text, quiet: true });
+    if (sendingRef.current) {
+      sendAgainRef.current = true; // a Send is in flight: this comment goes out right after it, and the chip when that one went through
+      sentChipRef.current = c?.id || null;
+    } else Promise.resolve(send()).then((ok) => ok && c && sentChip(c.id));
+  }
+
+  /** The "Sent. Follow it in the review panel" chip: only once the Send went through (a failed one shows its own error instead). */
+  function sentChip(id) {
+    say("Sent. Follow it in the review panel", { label: "Show it", ariaLabel: "Show it in the review panel", onClick: () => followComment(id) });
+  }
+
+  /** The "Sent. Follow it in the review panel" chip: open the panel, bring that comment's card into view and put the keyboard focus on it (the card's own button: its textarea is off once it is sent). */
+  function followComment(id) {
+    openSidebar();
+    let tries = 0;
+    const go = () => {
+      const card = document.querySelector(`[data-testid="sidebar"] [data-comment-id="${id}"]`);
+      const open = card && !card.closest("[inert]"); // a drawer that is still opening is inert for a moment
+      if (!open) return void (tries++ < 20 && requestAnimationFrame(go));
+      card.scrollIntoView({ block: "nearest" });
+      card.querySelector("button:not([hidden])")?.focus({ preventScroll: true });
+    };
+    requestAnimationFrame(go);
   }
 
   // ---- Quick fixes (src/suggest.js): a stamp tap on one sentence asks the small model first; only "Use this" writes ----------------
@@ -1292,6 +1385,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
     try {
       clearTimeout(saveTimer.current);
       draftPendingRef.current = false; // the Send below carries the comments and the note
+      saveSeq.current++; // an autosave still in flight no longer speaks for these comments
+      saveFails.current = 0;
+      setAck(null);
       if (mergeDue.current && !sessionRef.current.locked) {
         await mergeHeld(); // the page holds edits on an older file: they go onto the new one first
         if (mergeDue.current) return; // not merged (it failed and said so): nothing stale is sent
@@ -1337,7 +1433,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
       setSending(false);
       if (sendAgainRef.current) {
         sendAgainRef.current = false;
-        setTimeout(() => sendFnRef.current?.(), 0);
+        const chip = sentChipRef.current;
+        sentChipRef.current = null;
+        setTimeout(() => Promise.resolve(sendFnRef.current?.()).then((ok) => ok && chip && sentChip(chip)), 0);
       }
     }
   }
@@ -1374,13 +1472,41 @@ export default function App({ sid, initial, product, settings, suggest }) {
   /** A tap on one of the background agent's buttons: only an action name (and cli or on) goes to the server. */
   async function agentAct(action, extra = {}) {
     try {
-      setProblem(null);
+      setProblem((p) => (p?.stream || p?.kind === "outside" ? p : null)); // a lost connection and an outside change are still true after a button press
       const out = await api(`/api/agent?s=${sid}`, { method: "POST", body: { action, ...extra } });
       if (out.session) setSession(out.session);
+      if (action === "stop" && extra.takeBack && out.session) {
+        // Stop takes the batch back like Take back: the withdrawn batch's note comes back with its comments (the stream does not set the note box).
+        // A note typed while the agent worked and not saved yet stays: it is kept after the withdrawn one, never replaced by it.
+        const next = noteAfterStop(out.session.note || "", noteRef.current || "");
+        setNote(next);
+        noteRef.current = next;
+      }
       return true;
     } catch (e) {
       setProblem({ kind: "error", message: plain(e) });
       return false;
+    }
+  }
+  /** Stop (the working banner): one call takes the batch back and ends the agent; the comments come back as drafts through the event stream. */
+  async function stopAgent() {
+    if (stopping || roRef.current) return;
+    setStopping(true);
+    // an autosave due now would reach the server after the take back and put the pre-Stop note over the withdrawn one: it waits, and goes after
+    const due = draftPendingRef.current;
+    clearTimeout(saveTimer.current);
+    draftPendingRef.current = false;
+    saveSeq.current++;
+    let ok = false;
+    try {
+      ok = await agentAct("stop", { takeBack: true });
+    } finally {
+      setStopping(false);
+    }
+    if (due || ok) saveDraftSoon(); // the joined note box (and any draft typed meanwhile) is saved as the page now shows it
+    if (ok) {
+      say("Stopped. Your comments are drafts again.");
+      setTimeout(() => document.querySelector('[data-testid="send"]')?.focus(), 0); // the Stop button goes with its banner: focus moves on (after the drafts render), not to the page body
     }
   }
   /** "Show me" on a note card: the same scroll and outline as History's Show; the place comes from the server's record, not from agent text. */
@@ -1467,6 +1593,24 @@ export default function App({ sid, initial, product, settings, suggest }) {
     } catch (e) {
       setProblem({ kind: "error", message: plain(e) });
     }
+  }
+
+  // "Copy my comments" on the Connection lost banner: the note and every draft, as plain text. writeText is called synchronously in the click (Safari).
+  function copyComments() {
+    const drafts = commentsRef.current.filter((c) => c.status === "draft" && c.text.trim());
+    const parts = [];
+    if (noteRef.current.trim()) parts.push(`Overall instructions:\n${noteRef.current.trim()}`);
+    drafts.forEach((c, i) => parts.push(`${i + 1}. ${c.anchor?.quote ? `On "${c.anchor.quote}":\n` : ""}${c.text.trim()}`));
+    if (!parts.length) return say("There are no comments or note to copy.");
+    const blocked = () => say("The browser did not allow copying. Select the words in each comment and copy them yourself.");
+    let p = null;
+    try {
+      p = navigator.clipboard ? navigator.clipboard.writeText(parts.join("\n\n")) : null;
+    } catch {
+      p = null;
+    }
+    if (!p) return blocked();
+    p.then(() => say(!drafts.length ? "Your note was copied." : drafts.length === 1 ? "1 comment copied." : `${drafts.length} comments copied.`), blocked);
   }
 
   async function keepMine() {
@@ -1573,17 +1717,22 @@ export default function App({ sid, initial, product, settings, suggest }) {
             onHeldBackDone={() => setHeldBack(null)}
             problem={problem}
             notice={notice}
+            noticeAction={noticeAction}
+            onStop={stopAgent}
+            stopping={stopping}
             onTakeBack={() => post("takeback")}
             onAgent={agentAct}
             onShowCopy={(p) => api(`/api/show-copy?s=${sid}`, { method: "POST", body: { path: p } }).catch((e) => setProblem({ kind: "error", message: plain(e) }))}
             onDismissConflict={() => post("dismiss-conflict")}
             onReloadDisk={() => {
               setProblem(null);
+              if (!sessionRef.current.locked) outsideSeen.current = false; // the server now knows the disk version (loadForPage), and says nothing: the next outside save is a new turn
               if (sessionRef.current.conflict) post("dismiss-conflict");
               restoreRef.current = true; // comments and pins are placed again on the changed file
               loadFile().catch((e) => setProblem({ kind: "error", message: `Could not reload: ${e.message}` }));
             }}
             onKeepMine={keepMine}
+            onCopyComments={copyComments}
             unsentEdits={counts.edits}
             closeAsk={closeAsk}
             onCloseAnyway={() => (setCloseAsk(false), post("close"))}
@@ -1617,6 +1766,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           sending={sending}
           focusId={focusId}
           onFocused={() => setFocusId(null)}
+          ack={ack}
           onNote={updateNote}
           onText={(id, text) => updateComments((l) => l.map((c) => (c.id === id ? { ...c, text } : c)))}
           onDelete={(id) => updateComments((l) => l.filter((c) => c.id !== id))}

@@ -105,7 +105,7 @@ test("1. ensure twice spawns once; the view goes starting -> ready -> working", 
   w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "" });
   await p.promise;
   assert.equal(w.S.view(s).agent.state, "working");
-  assert.deepEqual(Object.keys(w.S.view(s).agent).sort(), ["activity", "cli", "failure", "show", "state"]);
+  assert.deepEqual(Object.keys(w.S.view(s).agent).sort(), ["activity", "cli", "failure", "show", "startsLeft", "state"]);
 });
 
 test("2. no spawn while another agent polls the file; that agent shows as external", async () => {
@@ -739,4 +739,276 @@ test("24. the background prompt quotes the file and the reply file the way a she
   assert.ok(p.includes('--file "/Users/patq/.onionskin/agents/k/reply-<batch_id>.json"'));
   const odd = backgroundPrompt({ file: "/Users/patq/$HOME's.docx", workDir: "/w", timeout: 590 });
   assert.ok(odd.includes(`onionskin poll '/Users/patq/$HOME'\\''s.docx'`), "a $ in the name: single quotes, never expanded");
+});
+
+// ---- the page's Stop: POST /api/agent {action: "stop", takeBack: true} ----------------------------------------------------------------
+const { sha256 } = await import("../src/fsutil.js");
+const code = (c) => (e) => e instanceof HttpError && e.extra?.code === c;
+
+/** A background agent that holds the delivered batch: returns its child and the batch it polled (with the lease). */
+async function working(w, { background = true } = {}) {
+  const s = w.S.open(doc(), background ? { agent: "background" } : {});
+  w.R.ensure(s.key);
+  await flush();
+  const c = w.spawned.at(-1).child;
+  c.lines({ type: "system", subtype: "init", session_id: "x" });
+  await flush();
+  const p = w.S.poll(s.key, { holder: bgHolder(s.key) });
+  w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "tighten it" });
+  const batch = await p.promise;
+  assert.equal(w.R.viewFor(s.key).state, "working");
+  return { s, c, batch };
+}
+
+test("25. today's order is wrong: a plain stop of a working agent puts the batch back to pending (still sent, waiting for an agent)", async () => {
+  const w = world();
+  const { s, c } = await working(w);
+  await w.R.action(s.key, { action: "stop" });
+  await c.die(null, "SIGTERM");
+  assert.equal(w.S.state(s), "stranded", "requeued through releaseAgent / #expire");
+  assert.equal(s.comments[0].status, "sent");
+  assert.ok(s.pending);
+});
+
+test("26. Stop with takeBack: the batch comes back to drafts FIRST, then the agent is signaled once; nothing is requeued or restarted", async () => {
+  const w = world();
+  const { s, c, batch } = await working(w);
+  const before = fs.readFileSync(s.file);
+  // the agent wrote before the Stop: that run stays Revert-able
+  const agentBytes = docxBytes(paras.map((x) => x + " (agent)"));
+  w.S.agentWrite(s.key, { baseSha: sha256(before), bytes: agentBytes, holder: bgHolder(s.key), token: batch.lease.token, batchId: batch.batch_id });
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  assert.equal(w.S.view(s).agent.state, "none", "shown stopped at once, while the process is still exiting");
+  assert.equal(s.delivered, null);
+  assert.equal(s.pending, null);
+  assert.equal(s.comments[0].status, "draft");
+  assert.equal(s.note, "tighten it", "the note is back in the box");
+  assert.deepEqual(w.signals, [[-c.pid, "SIGTERM"]]);
+  const entry = s.activity.find((a) => a.kind === "agent");
+  assert.ok(entry?.revertRecommended && entry.flags.some((f) => f.code === "taken_back_mid_run"), "the mid-run write is recorded");
+  // the kill window: the stopping agent's late write, apply report, done and next poll are all refused, and the file stays as it was
+  const onDisk = fs.readFileSync(s.file);
+  const claim = { holder: bgHolder(s.key), token: batch.lease.token, batchId: batch.batch_id };
+  assert.throws(() => w.S.agentWrite(s.key, { baseSha: sha256(onDisk), bytes: docxBytes(["late"]), ...claim }), code("not_working"));
+  assert.throws(() => w.S.noteApply(s.key, { ...claim, run: "r", problems: [] }), code("not_working"));
+  assert.throws(() => w.S.done(s.key, { summary: "late", results: [{ comment_id: "c1", status: "done" }] }, claim), code("no_batch"));
+  const late = w.S.poll(s.key, { holder: bgHolder(s.key) });
+  assert.equal((await within(late.promise)).status, "closed", "a poll from the stopping agent never takes the next Send");
+  assert.deepEqual(fs.readFileSync(s.file), onDisk, "the late calls changed nothing");
+  await c.die(null, "SIGTERM");
+  assert.equal(w.S.state(s), "idle", "nothing pending: the exit had nothing to hand back");
+  assert.equal(w.R.viewFor(s.key).state, "none");
+  assert.equal(w.R.viewFor(s.key).failure, null);
+  w.advance(5 * 60 * 1000);
+  await w.tick();
+  assert.equal(w.spawned.length, 1, "no restart until the next Send");
+  w.S.revert(s.key, entry.id);
+  assert.deepEqual(fs.readFileSync(s.file), before, "Revert restores the pre-agent bytes");
+});
+
+test("27. the next Send after a Stop starts a fresh conversation (the withdrawn batch is not in it) at once, without the 20 s grace and without using an hourly start", async () => {
+  const w = world();
+  const { s, c } = await working(w, { background: false });
+  const first = w.spawned[0].argv;
+  const id = first[first.indexOf("--session-id") + 1];
+  assert.equal(w.R.viewFor(s.key).startsLeft, 4);
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  await c.die(null, "SIGTERM");
+  w.S.send(s.key, { baseSha: s.baseSha, comments: s.comments, note: "" });
+  await flush();
+  assert.equal(w.spawned.length, 2, "started at once, although the file was not opened from a terminal");
+  const argv = w.spawned[1].argv;
+  assert.equal(argv.includes("--resume"), false, "the stopped conversation, which holds the withdrawn batch, is not resumed");
+  assert.ok(argv.includes("--session-id"));
+  assert.notEqual(argv[argv.indexOf("--session-id") + 1], id, "a new conversation");
+  assert.equal(w.R.viewFor(s.key).startsLeft, 4, "not counted");
+});
+
+test("28. six Stop-then-Send cycles in an hour never lock the agent out", async () => {
+  {
+    const w = world();
+    const { s, c } = await working(w);
+    let child = c;
+    for (let i = 0; i < 6; i++) {
+      await w.R.action(s.key, { action: "stop", takeBack: true });
+      await child.die(null, "SIGTERM");
+      w.S.send(s.key, { baseSha: s.baseSha, comments: s.comments, note: "" });
+      await flush();
+      child = w.spawned.at(-1).child;
+      assert.ok(!w.spawned.at(-1).argv.includes("--resume"), `cycle ${i + 1}: a fresh conversation`);
+      child.lines({ type: "system", subtype: "init", session_id: "x" });
+      await flush();
+      const p = w.S.poll(s.key, { holder: bgHolder(s.key) });
+      assert.equal((await within(p.promise)).batch_id, s.pending?.batch_id ?? s.delivered.batch.batch_id);
+      assert.equal(w.R.viewFor(s.key).state, "working", `cycle ${i + 1}`);
+    }
+    assert.equal(w.R.viewFor(s.key).failure, null);
+    assert.equal(w.R.viewFor(s.key).startsLeft, 4, "only the first start counted");
+  }
+});
+
+test("29. a Send during the kill window is delivered to the next agent, not the stopping one", async () => {
+  const w = world();
+  const { s, c } = await working(w);
+  const orphan = w.S.poll(s.key, { holder: bgHolder(s.key) }); // its poll child, still connected
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  assert.equal((await within(orphan.promise)).status, "closed");
+  w.S.send(s.key, { baseSha: s.baseSha, comments: s.comments, note: "" });
+  await flush();
+  assert.equal(w.S.state(s), "stranded", "nobody took it while the old agent exits");
+  assert.equal(w.spawned.length, 1);
+  await c.die(null, "SIGTERM");
+  assert.equal(w.spawned.length, 2, "started as soon as the old one is gone");
+  assert.ok(!w.spawned[1].argv.includes("--resume"), "a fresh conversation");
+});
+
+test("30. Stop with nothing running: no signal, no error, and an idle listening agent is left listening", async () => {
+  const w = world();
+  const s = w.S.open(doc(), { agent: "background" });
+  await w.R.action(s.key, { action: "stop", takeBack: true }); // no agent ever started, nothing to take back
+  w.R.ensure(s.key);
+  await flush();
+  const c = w.spawned[0].child;
+  c.lines({ type: "system", subtype: "init", session_id: "x" });
+  w.S.poll(s.key, { holder: bgHolder(s.key) });
+  assert.equal(w.R.viewFor(s.key).state, "ready");
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  assert.deepEqual(w.signals, []);
+  assert.equal(w.R.viewFor(s.key).state, "ready");
+  assert.equal(w.R.viewFor(s.key).failure, null);
+  // a Send nobody has polled yet (the agent is still starting): taken back, the starting agent is not signaled
+  const w2 = world();
+  const s2 = await stranded(w2);
+  assert.equal(w2.spawned.length, 1);
+  await w2.R.action(s2.key, { action: "stop", takeBack: true });
+  assert.equal(s2.pending, null);
+  assert.equal(s2.comments[0].status, "draft");
+  assert.deepEqual(w2.signals, []);
+});
+
+test("31. the person's own agent (external): Stop takes the batch back and signals nothing", async () => {
+  const w = world();
+  const s = w.S.open(doc(), { agent: "background" });
+  const p = w.S.poll(s.key, { holder: "h_person" });
+  w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "" });
+  const batch = await p.promise;
+  assert.equal(w.R.viewFor(s.key).state, "external");
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  assert.deepEqual(w.signals, []);
+  assert.equal(w.spawned.length, 0);
+  assert.equal(s.delivered, null);
+  assert.equal(s.comments[0].status, "draft");
+  assert.throws(() => w.S.done(s.key, { summary: "late", results: [] }, { holder: "h_person", token: batch.lease.token, batchId: batch.batch_id }), code("no_batch"));
+});
+
+test("32. startsLeft counts the hourly starts left and comes back as the hour rolls", async () => {
+  const w = world();
+  const s = w.S.open(doc(), { agent: "background" });
+  assert.equal(w.S.view(s).agent.startsLeft, 5, "no agent yet");
+  w.R.ensure(s.key);
+  await flush();
+  for (let i = 0; i < 4; i++) {
+    await w.spawned.at(-1).child.die(1);
+    w.advance(40_000);
+    await w.tick();
+  }
+  assert.equal(w.R.viewFor(s.key).startsLeft, 0);
+  w.advance(60 * 60 * 1000);
+  assert.equal(w.R.viewFor(s.key).startsLeft, 5);
+});
+
+test("33. after a Stop, when the person's own agent takes over, a later Send waits the usual 20 s grace again", async () => {
+  const w = world();
+  const { s, c } = await working(w, { background: false });
+  await w.R.action(s.key, { action: "stop", takeBack: true });
+  await c.die(null, "SIGTERM");
+  const own = w.S.poll(s.key, { holder: "h_person" });
+  w.S.send(s.key, { baseSha: s.baseSha, comments: s.comments, note: "" });
+  await own.promise; // the person's agent has the batch
+  w.S.takeBack(s.key);
+  w.S.send(s.key, { baseSha: s.baseSha, comments: s.comments, note: "" }); // lands between two of its polls
+  await flush();
+  assert.equal(w.spawned.length, 1, "no shortcut: it may be about to poll again");
+  w.advance(20_000);
+  await w.tick();
+  assert.equal(w.spawned.length, 2, "the grace ran out: the background agent starts");
+});
+
+test("34. alive() is false for every stop reason: a Send in the kill window after an idle stop still gets an agent; handover and close leave nothing behind", async () => {
+  // idle stop of a background-opened file: the stopping agent's next poll is answered closed, a tab comes back and Sends before the exit
+  let open = 0;
+  const w = world({ tabs: () => open });
+  const s = w.S.open(doc(), { agent: "background" });
+  w.R.ensure(s.key);
+  await flush();
+  const c = w.spawned[0].child;
+  c.lines({ type: "system", subtype: "init", session_id: "x" });
+  const first = w.S.poll(s.key, { holder: bgHolder(s.key) });
+  await w.tick();
+  w.advance(20 * 60 * 1000);
+  await w.tick();
+  assert.equal(w.signals.length, 1, "the idle stop went out");
+  first.cancel(); // its poll timed out; the agent polls again while it exits
+  assert.equal((await within(w.S.poll(s.key, { holder: bgHolder(s.key) }).promise)).status, "closed");
+  open = 1;
+  w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "" });
+  await flush();
+  assert.equal(w.S.state(s), "stranded", "the stopping agent did not take it");
+  assert.equal(w.spawned.length, 1);
+  await c.die(null, "SIGTERM");
+  assert.equal(w.spawned.length, 2, "an agent starts for the Send once the idle one is gone; the batch is not left waiting");
+  assert.equal(w.S.state(s), "stranded", "the batch is still pending, nothing dropped");
+
+  // handover with a batch delivered: the stopping agent's poll is answered closed, and its exit hands the batch back (pending, not lost)
+  const w2 = world();
+  const { s: s2, c: c2 } = await working(w2);
+  const prev = process.env.ONIONSKIN_OPEN_STUB;
+  process.env.ONIONSKIN_OPEN_STUB = path.join(root, "open-stub-34.txt");
+  try {
+    const ho = w2.R.action(s2.key, { action: "terminal" });
+    await flush();
+    assert.equal(w2.signals.length, 1);
+    assert.equal((await within(w2.S.poll(s2.key, { holder: bgHolder(s2.key), ack: true }).promise)).status, "closed", "no new poll during the kill window");
+    await c2.die(null, "SIGTERM");
+    await ho;
+  } finally {
+    if (prev === undefined) delete process.env.ONIONSKIN_OPEN_STUB;
+    else process.env.ONIONSKIN_OPEN_STUB = prev;
+  }
+  assert.equal(w2.S.state(s2), "stranded", "the batch is pending again, for the Terminal agent");
+  assert.equal(w2.S.view(s2).locked, false, "the page is not left locked by the stopped agent");
+  assert.equal(w2.S.view(s2).agent.state, "handover");
+  assert.equal(w2.spawned.length, 1, "no background agent starts while it is open in Terminal");
+
+  // close: the stopping agent's poll is closed and nothing restarts
+  const w3 = world();
+  const { s: s3, c: c3 } = await working(w3);
+  w3.S.close(s3.key);
+  await flush();
+  assert.equal((await within(w3.S.poll(s3.key, { holder: bgHolder(s3.key) }).promise)).status, "closed");
+  await c3.die(0);
+  assert.equal(w3.spawned.length, 1, "a closed session never restarts its agent");
+});
+
+test("35. a Send taken by an idle-stopped agent in its kill window (file not opened for it) is not stranded: it gets the 20 s grace, then an agent", async () => {
+  const w = world();
+  const s = w.S.open(doc());
+  w.R.ensure(s.key);
+  await flush();
+  const c = w.spawned[0].child;
+  c.lines({ type: "system", subtype: "init", session_id: "x" });
+  await flush();
+  w.S.poll(s.key, { holder: bgHolder(s.key) }); // its poll waits
+  await w.tick();
+  w.advance(20 * 60 * 1000);
+  await w.tick();
+  assert.equal(w.signals.length, 1, "the idle stop went out");
+  w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "" }); // the dying agent's poll takes it
+  await flush();
+  await c.die(null, "SIGTERM");
+  assert.equal(w.S.state(s), "stranded", "the batch is pending again");
+  assert.equal(w.spawned.length, 1);
+  w.advance(20_000);
+  await w.tick();
+  assert.equal(w.spawned.length, 2, "after the grace, an agent starts for it");
 });

@@ -7,7 +7,7 @@ import { History } from "./History.jsx";
 import { MOD, commentNavDir } from "./keys.js";
 import { StylePrefs } from "./StylePrefs.jsx";
 import { ReviewDraftButton } from "./VoiceReviewButton.jsx";
-import { stageOf } from "./stage.js";
+import { pendingWords, stageOf } from "./stage.js";
 import { buildStack } from "./stack.js";
 import { Question } from "./Question.jsx";
 import { QuickChange } from "./QuickChange.jsx";
@@ -44,7 +44,7 @@ function Num({ n, pin, done }) {
   );
 }
 
-function Card({ live, mac, readOnly, c, n, rz, focus, onFocused, onText, onDelete, onGoto, onBack, onAnswer, format, activeSheet, open, canFold, onToggle }) {
+function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, onDelete, onGoto, onBack, onAnswer, format, activeSheet, open, canFold, onToggle }) {
   const ta = useRef(null);
   const li = useRef(null);
   useEffect(() => {
@@ -163,6 +163,11 @@ function Card({ live, mac, readOnly, c, n, rz, focus, onFocused, onText, onDelet
         </p>
       )}
       <div className="card-f">
+        {ack && editable && c.text.trim() && (
+          <span className="ack" data-testid="card-ack" data-ack={ack}>
+            {ack === "saved" ? <Icon name="check" size={11} /> : <Icon name="alert" size={11} />} {ack === "saved" ? "Saved" : "Not saved"}
+          </span>
+        )}
         <button type="button" className="iconbtn sm danger" onClick={() => onDelete(c.id)} data-testid="delete-comment" disabled={readOnly} aria-label={`Delete ${pin ? "pin" : "comment"} ${n}`} title="Delete">
           <Icon name="trash" size={14} />
         </button>
@@ -525,7 +530,7 @@ export function Sidebar(p) {
         <div className="pane main">
         <div className="side-h">
           <h2>Review</h2>
-          <span className="side-sub">{working ? stage.text : "Edit, comment, then send"}</span>
+          <span className="side-sub" data-testid="side-sub">{working ? stage.text : pendingWords(session) || "Edit, comment, then send"}</span>
           <button type="button" className="iconbtn" onClick={p.onToggle} aria-label="Hide the review panel" title="Hide (Ctrl or Cmd + \)" data-testid="sidebar-hide">
             <Icon name={narrow ? "close" : "panel"} />
           </button>
@@ -541,7 +546,7 @@ export function Sidebar(p) {
           <ul className="list stack" data-testid="panel-stack" aria-label="Your edits and comments and the agent's answers, oldest first">
             {stack.map((it) =>
               it.t === "comment" ? (
-                <Card key={it.key} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
+                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
               ) : it.t === "edit" ? (
                 <li key={it.key} className="change" data-testid="change-item" data-kind={it.e.kind}>
                   <div className="change-h">
@@ -592,7 +597,7 @@ export function Sidebar(p) {
             {parts.length > 0 && <span className="send-counts">{parts.join(", ")}</span>}
           </button>
           <p className="send-hint" id="send-hint">
-            {closed ? "This session is closed." : p.quickLabel ? "Onionskin does this itself on this Mac. You can undo it." : p.readOnly ? "This tab is read-only. Use the other tab to send." : p.pendingSend === 0 && p.heldEdits > 0 ? "What you type now is merged when the agent finishes." : p.pendingSend === 0 ? "Nothing to send yet. Edit, comment or write a note." : working ? "Your batch waits until the agent finishes." : `The agent gets your edits, comments, pins and note as one batch. ${MOD}+Enter sends from any comment box.`}
+            {closed ? "This session is closed." : p.quickLabel ? "Onionskin does this itself on this Mac. You can undo it." : p.readOnly ? "This tab is read-only. Use the other tab to send." : p.pendingSend === 0 && p.heldEdits > 0 ? "What you type now is merged when the agent finishes." : p.pendingSend === 0 ? (working ? `${stage.text || "The agent is working"}. Nothing new to send yet.` : "Nothing to send yet. Edit, comment or write a note.") : working ? `${stage.text || "The agent is working"}. Your next batch waits until it finishes.` : `The agent gets your edits, comments, pins and note as one batch. ${MOD}+Enter sends from any comment box.`}
           </p>
         </div>
       </aside>
