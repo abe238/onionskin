@@ -28,21 +28,14 @@ Install steps for AI coding agents.
 
 ## What you can do
 
-- **Edit directly.** Type in the document like any editor. Your own edits are saved to the file and listed in the review panel.
-- **Comment on anything.** Select a sentence, a cell, a range, a shape or a slide, and tell the agent what to change there.
-- **Drop numbered pins.** Pin a note to a spot on the page when a selection is not the right shape for the request.
-- **One overall note.** Ask for changes across the whole file, like making every heading bold or fixing inconsistent spacing.
-- **One-tap stamps.** Shorter, Friendlier, Fix grammar and Translate are one tap on a selection. You can edit the list.
-- **The agent can ask you.** When the agent needs an answer, it shows a question as a card in the panel, and you answer in place.
-- **Review first.** The agent reads the file and suggests changes as cards. Nothing changes until you accept.
-- **History and revert.** The last 20 updates are listed with a red and green change view and a What changed note. Revert the last run in one click.
-- **Changes shown in place.** After a run, the new words are drawn in where they stand, and the old words show briefly.
-- **Real tracked changes.** Export a Word file with real tracked changes. We checked it by opening it in Microsoft Word.
-- **Your own voice guide.** Ask the agent to build your voice guide. It drafts 12 sections, you review them, and nothing is saved without your approval.
-- **HTML pages.** Open a .html or .htm page, comment on any part, fix text directly and press Send. The page shows as a still view: scripts never run and nothing loads from the internet.
-- **Table rows, columns and slides.** The agent can add or delete a table row or column in Word, and copy, delete or move a slide in PowerPoint. Charts are declined with a plain message: the agent says to insert the chart in Word or PowerPoint.
-- **Merged cells in Excel.** The agent is told which cells are merged, and a write into a covered cell is refused.
-- **Watch the agent work.** A Show the agent switch lists what the background agent is doing. Open in Terminal opens the same conversation in Terminal.
+- **Edit directly.** Type in the file like any editor.
+- **Comment on anything.** A sentence, a cell, a shape, a slide or part of a page.
+- **Pins and one overall note.** For a spot on the page, or a change across the whole file.
+- **One-tap stamps.** Shorter, Friendlier, Fix grammar, Translate.
+- **Review first.** The agent suggests changes as cards. Nothing changes until you accept.
+- **History and revert.** See what changed. Undo the last run in one click.
+- **Real tracked changes.** Export a Word file with tracked changes, checked in Microsoft Word.
+- **HTML pages.** A still view: scripts never run and nothing loads from the internet.
 
 ## How the pieces fit
 
@@ -56,15 +49,13 @@ The editor and the server run on your computer, and your coding agent edits the 
 
 ## Two ways to start
 
-Start from a terminal and Onionskin starts its own background agent. Start from inside Claude Code or Codex and the agent you are talking to does the work.
+Start from a terminal, or from inside your agent.
 
-- **From a terminal.** Type onionskin report.docx. The background agent is Claude Code only: it needs Claude Code installed and signed in, and it runs on your own Claude plan. If the plan limit is reached, the panel says so.
-- **From inside an agent.** Say open report.docx in Onionskin to Claude Code or Codex. We exercised both in real agent runs; a Codex round took about 26 seconds from Send to the file changing, in one run.
-- **Limited on purpose.** The background agent can change your document only through Onionskin's own commands. It cannot read your other files: in our tests, reading outside its two folders, your home folder, network fetches and writes elsewhere were all refused. It is started without API keys in its environment. It can run read-only commands and read files inside its own work folder and the skill's reference folder.
-- **See what it does.** The Show the agent switch lists what it is doing. Open in Terminal opens the same conversation in Terminal.
-- **Codex without Claude Code.** On a Mac with Codex but no Claude Code, the terminal start says so in plain words and tells you to ask Codex.
+- **From a terminal.** Type onionskin report.docx. Onionskin starts its own Claude Code agent on your Claude plan.
+- **From inside Claude Code or Codex.** Say open report.docx in Onionskin. The agent you are talking to does the work.
+- **Limited on purpose.** The background agent changes your file only through Onionskin. In our tests it could not read your other files or reach the network.
 
-With the background agent, a real round from Send to the file changing took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session a warm round took about 2 to 3 seconds. Onionskin needs Claude Code or Codex already installed.
+A round from Send to the changed file took about 5 to 13 seconds in our runs.
 
 ## Keep working while the agent works
 
