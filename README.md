@@ -105,7 +105,7 @@ The simplest way: tell your agent "update Onionskin". Or run this in Terminal:
 onionskin update
 ```
 
-`onionskin update` is new in 0.0.4. On 0.0.3 or older (`onionskin --version` shows yours), paste the install sentence into your agent again, or with npm run the two npm commands in the table below. Either brings the latest release.
+`onionskin update` is new in 0.0.5. On 0.0.3 or older (`onionskin --version` shows yours), paste the install sentence into your agent again, or with npm run the two npm commands in the table below. Either brings the latest release.
 
 `onionskin update` updates your copy the way it was installed, the app and the skill together, and keeps your snapshots. `onionskin update --check` only says whether a newer release exists. If Terminal says the command is not found, run `~/.local/bin/onionskin update`.
 
