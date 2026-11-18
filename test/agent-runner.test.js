@@ -3,7 +3,7 @@
 // Toy DOCX files and the state dir live in a temp dir only.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { spawn as realSpawn } from "node:child_process";
+import { spawn as realSpawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -18,9 +18,9 @@ process.env.ONIONSKIN_NO_SOFFICE = "1";
 delete process.env.ONIONSKIN_PYTHON;
 const { Sessions, HttpError } = await import("../src/session.js");
 const { ensureStateDir } = await import("../src/paths.js");
-const { agentRunner } = await import("../src/agent-runner.js");
+const { agentRunner, LIMITS } = await import("../src/agent-runner.js");
 const { bgHolder, buildArgv, cleanEnv, findClaude, findCodex } = await import("../src/agent-detect.js");
-const { refDir, readSkill, backgroundPrompt } = await import("../src/agent-prompt.js");
+const { refDir, readSkill, backgroundPrompt, resumePrompt } = await import("../src/agent-prompt.js");
 ensureStateDir();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -312,6 +312,25 @@ test("10. the command line is exactly the least-privilege form, run in the agent
   // the Terminal form: the same limits, no -p, no stream flags
   const term = buildArgv({ skill: "S", sessionId: sid, resume: true, workDir: W, refDir: REF, print: false });
   assert.ok(!term.includes("-p") && !term.includes("--output-format") && term.includes("--restricted") && term.includes("dontAsk") && term[term.indexOf("--resume") + 1] === sid);
+  // with a prompt it is one positional FIRST (an option taking several values, such as --allowedTools, would swallow it if it came after),
+  // and everything else is exactly the Terminal form: the same limits, no -p, no stream flags
+  const limits = (idFlag) => [
+    "--append-system-prompt", "S",
+    "--model", "sonnet",
+    idFlag, sid,
+    "--restricted",
+    "--tools", "Bash,Read,Write",
+    "--allowedTools", "Bash(onionskin poll:*)", "Bash(onionskin reply:*)", "Bash(onionskin status:*)", `Read(/${REF}/**)`, `Read(/${W}/outline/**)`, `Edit(/${W}/**)`,
+    "--add-dir", REF,
+    "--add-dir", `${W}/outline`,
+    "--permission-mode", "dontAsk",
+    "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands",
+  ];
+  assert.deepEqual(term, limits("--resume"), "no prompt given: no positional");
+  for (const resume of [false, true]) {
+    const withPrompt = buildArgv({ prompt: "P go on", skill: "S", sessionId: sid, resume, workDir: W, refDir: REF, print: false });
+    assert.deepEqual(withPrompt, ["P go on", ...limits(resume ? "--resume" : "--session-id")]);
+  }
 });
 
 test("11. the agent's environment is built from nothing: no API key, no agent-session variables", async () => {
@@ -543,6 +562,8 @@ test("14. the reserved holder is bound to its own file; Open in Terminal stops t
   const body = fs.readFileSync(f, "utf8");
   for (const x of ["--restricted", "dontAsk", "'Bash(onionskin poll:*)'", "--resume", "'ONIONSKIN_HOLDER=onionskin-term-", "/usr/bin/env -i"]) assert.ok(body.includes(x), x);
   assert.ok(!body.includes("sk-") && !body.includes("'-p'"));
+  // a resumed conversation: its first message says to go on polling this file, so it does not wait at its prompt
+  assert.ok(body.includes(` '${resumePrompt({ file: s.file, timeout: 590 })}' '--append-system-prompt' `), "the resume prompt is the first argument");
   w.advance(10 * 60 * 1000);
   await w.tick();
   assert.equal(w.spawned.length, 1, "no restart while it is open in Terminal");
@@ -1011,4 +1032,101 @@ test("35. a Send taken by an idle-stopped agent in its kill window (file not ope
   w.advance(20_000);
   await w.tick();
   assert.equal(w.spawned.length, 2, "after the grace, an agent starts for it");
+});
+
+/** Open in Terminal on `w`, with Terminal replaced by a stub that records the path; returns the .command file. */
+async function openInTerminal(w, s, stub) {
+  const prev = process.env.ONIONSKIN_OPEN_STUB;
+  process.env.ONIONSKIN_OPEN_STUB = stub;
+  try {
+    await w.R.action(s.key, { action: "terminal" });
+  } finally {
+    if (prev === undefined) delete process.env.ONIONSKIN_OPEN_STUB;
+    else process.env.ONIONSKIN_OPEN_STUB = prev;
+  }
+  return fs.readFileSync(stub, "utf8").trim().split("\n").at(-1);
+}
+
+test("36. Open in Terminal, new conversation: the .command file passes the background prompt as the first argument, each word whole, for a path with a space, a quote, $ and \"", async () => {
+  const names = ["it's a draft.docx", `say "hi" $HOME it's.docx`]; // the second also takes the prompt's own '\'' quoting branch
+  for (const [i, name] of names.entries()) {
+    const dir = path.join(root, `term-${i}`);
+    fs.mkdirSync(dir);
+    const out = path.join(dir, "argv.bin");
+    // a stub `claude` that only records the words it got, NUL-separated (never the real one); the .command clears the environment, so the
+    // output path is written into the stub itself
+    const stubBin = path.join(dir, "bin");
+    fs.mkdirSync(stubBin);
+    fs.writeFileSync(path.join(stubBin, "claude"), `#!/bin/sh\nfor a in "$@"; do printf '%s\\0' "$a"; done > '${out}'\n`, { mode: 0o755 });
+    const w = world({ env: { ONIONSKIN_AGENT_PATH: stubBin } });
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, docxBytes(paras));
+    const s = w.S.open(fs.realpathSync(file), { agent: "background" });
+    const f = await openInTerminal(w, s, path.join(dir, "opened.txt"));
+    assert.equal(w.S.view(s).agent.state, "handover");
+    assert.equal(spawnSync("/bin/sh", ["-n", f]).status, 0, "valid shell");
+    const r = spawnSync("/bin/sh", [f], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const got = fs.readFileSync(out, "utf8").split("\0").slice(0, -1);
+    const W = fs.realpathSync(path.join(process.env.ONIONSKIN_STATE_DIR, "agents", s.key));
+    const sid = w.R.entries.get(s.key).sessionId;
+    const prompt = backgroundPrompt({ file: s.file, workDir: W, timeout: 590 });
+    assert.ok(prompt.includes(name), "the prompt names the file");
+    assert.deepEqual(got, buildArgv({ prompt, skill: readSkill(), sessionId: sid, workDir: W, refDir: refDir(), print: false }), "every word arrives whole, the prompt first");
+    assert.equal(got[0], prompt);
+    assert.equal(got[got.indexOf("--session-id") + 1], sid, "a new conversation");
+    assert.ok(!got.includes("-p") && !got.includes("--resume"));
+  }
+});
+
+test("37. a Send while the Terminal agent is still starting waits the grace for its first poll; one that never polls gets the background agent", async () => {
+  // the Terminal agent polls within the grace: it takes the batch, and no background agent starts beside it
+  const w = world();
+  const s = w.S.open(doc(), { agent: "background" });
+  await openInTerminal(w, s, path.join(root, "open-stub-37a.txt"));
+  w.S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1)], note: "" });
+  await flush();
+  assert.equal(w.spawned.length, 0, "not at once, although the file was opened from a terminal");
+  w.advance(LIMITS.graceMs - 1);
+  await w.tick();
+  assert.equal(w.spawned.length, 0);
+  const term = w.S.poll(s.key, { holder: `onionskin-term-${s.key}` });
+  assert.ok((await within(term.promise)).batch_id, "the Terminal agent's first poll takes the batch");
+  w.advance(10 * 60 * 1000);
+  await w.tick();
+  assert.equal(w.spawned.length, 0, "no background agent beside it");
+  assert.equal(w.S.view(s).agent.state, "handover");
+
+  // the Terminal window was closed: after the grace the background agent starts, so the Send is never stuck
+  const w2 = world();
+  const s2 = w2.S.open(doc(), { agent: "background" });
+  await openInTerminal(w2, s2, path.join(root, "open-stub-37b.txt"));
+  w2.S.send(s2.key, { baseSha: s2.baseSha, comments: [comment("c1", 1)], note: "" });
+  await flush();
+  w2.advance(LIMITS.graceMs);
+  await w2.tick();
+  assert.equal(w2.spawned.length, 1, "the fallback starts one");
+  assert.notEqual(w2.S.view(s2).agent.state, "handover");
+
+  // a batch already pending at the handover (the stopped agent handed it back) gets the same grace and the same fallback
+  const w3 = world();
+  const { s: s3, c: c3 } = await working(w3);
+  const prev = process.env.ONIONSKIN_OPEN_STUB;
+  process.env.ONIONSKIN_OPEN_STUB = path.join(root, "open-stub-37c.txt");
+  try {
+    const ho = w3.R.action(s3.key, { action: "terminal" });
+    await flush();
+    await c3.die(null, "SIGTERM");
+    await ho;
+  } finally {
+    if (prev === undefined) delete process.env.ONIONSKIN_OPEN_STUB;
+    else process.env.ONIONSKIN_OPEN_STUB = prev;
+  }
+  assert.equal(w3.S.state(s3), "stranded");
+  w3.advance(LIMITS.graceMs - 1);
+  await w3.tick();
+  assert.equal(w3.spawned.length, 1, "only the stopped one so far");
+  w3.advance(1);
+  await w3.tick();
+  assert.equal(w3.spawned.length, 2, "nobody polled in Terminal: the background agent starts for the pending batch");
 });

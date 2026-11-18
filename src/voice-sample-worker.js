@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { parentPort, workerData } from "node:worker_threads";
+import { unknownFormat } from "./constants.js";
 import { readDocxParagraphs } from "./docx.js";
 import { validatePackage } from "./package.js";
 import { parseDeck } from "./pptx.js";
@@ -35,8 +35,9 @@ function office(bytes, format, index) {
   if (zip.names.some((n) => MACRO_PART.test(n))) throw new SampleError(index, "macro");
 }
 
-const textsOf = (format, bytes) => {
+export const textsOf = (format, bytes) => {
   if (format === "docx") return readDocxParagraphs(bytes).map((p) => p.text);
+  if (format !== "pptx") return unknownFormat(format, "textsOf");
   const deck = parseDeck(bytes);
   deck.ensure();
   return deck.slides.flatMap((s) => [s.title, ...(s.shapes || []).map((sh) => sh.text)]);
@@ -84,12 +85,12 @@ export function sampleSources({ open = null, files = [], texts = [], shares = 0 
   return { sources };
 }
 
-// Run in a worker thread (the same pattern as voice-worker.js), with a timeout in the caller. One message back: {ok: true, sources} or
+// Run in a worker thread by src/worker-host.js, with a timeout in the caller. One message back: {ok: true, sources} or
 // {ok: false, index, code}. Anything else that goes wrong is {ok: false, index: -1, code: "unreadable"}.
-if (parentPort) {
+export function work(data) {
   try {
-    parentPort.postMessage({ ok: true, ...sampleSources(workerData) });
+    return { ok: true, ...sampleSources(data) };
   } catch (err) {
-    parentPort.postMessage(err instanceof SampleError ? { ok: false, index: err.index, code: err.code } : { ok: false, index: -1, code: "unreadable" });
+    return err instanceof SampleError ? { ok: false, index: err.index, code: err.code } : { ok: false, index: -1, code: "unreadable" };
   }
 }

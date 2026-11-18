@@ -50,7 +50,8 @@ export function selectionShape({ format, kind, anchor, paraText = null }) {
   if (loc.protected) return { shape: "no", never: true }; // a read-only shape
   if (format === "docx") {
     if (!Array.isArray(loc.blockPath) || loc.blockPath.length < 1 || loc.blockPath.length > 2) return { shape: "no", never: true }; // a table cell or a nested paragraph
-  } else if (loc.cell || loc.tableCell || loc.row != null || loc.col != null) return { shape: "no", never: true }; // a slide table
+  } else if (format !== "pptx" && format !== "xlsx") return { shape: "no", never: true }; // a format with no quick fixes
+  else if (loc.cell || loc.tableCell || loc.row != null || loc.col != null) return { shape: "no", never: true }; // a slide table
   const whole = format === "docx" && !!paraText && norm(paraText) === norm(quote);
   if (!/^["'(\[“‘]?[\p{Lu}\p{N}]/u.test(quote)) return { shape: "no" };
   if (/[.!?]["')\]”’]*\s+\S/u.test(quote)) return { shape: "no" }; // another sentence end inside

@@ -2,9 +2,11 @@ import crypto from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
-import { REFUSED_EXTENSIONS, FORMATS, MAX_DOC_BYTES, PRODUCT, env } from "./constants.js";
-import { buildDurable, readUnits, resolveDurableAny, resolveView, viewDurable } from "./anchors.js";
-import { durableFromEngine, headingBefore, resolveDurable } from "./docx.js";
+import { EDITS_OVERFLOW, ONLY_FORMATS, REFUSED_EXTENSIONS, REFUSED_PAGES, MAX_DOC_BYTES, PRODUCT, env, formatOfExt } from "./constants.js";
+import { readAll, unitsFor } from "./anchors.js";
+import { anchorWork, weakDurable } from "./anchor-work.js";
+import { scanBudget } from "./text.js";
+import { CapError } from "./xml.js";
 import { checkRegularOwned, readDoc, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
 import { buildBatch, compactBatch, withOutline } from "./batch.js";
 import { styleChangedOutside, styleNote } from "./style.js";
@@ -13,7 +15,10 @@ import { cleanVoiceDraft } from "./voice-guide.js";
 import { voiceJob } from "./voice-learn.js";
 import { clearTickets, saveTicket, ticketOf } from "./lease.js";
 import { analyze } from "./analyze.js";
+import { anchorTimeoutMs, anchorsOffThread, htmlWriteOffThread, mergeOffThread, readOffThread, renderOffThread, startWorker } from "./offload.js";
 import { deepNotice, validatePackage } from "./package.js";
+import { HtmlEncodingError } from "./html.js";
+import { ACTIVE_REFUSED } from "./html-active.js";
 import { execFile } from "node:child_process";
 import { reopenCommand } from "./person.js";
 import { sessionKey, stateDir, sub, writeStateFile } from "./paths.js";
@@ -21,16 +26,17 @@ import { cleanFlag, hasControlChars, untrusted, userText } from "./sanitize.js";
 import { addUpdate, historyDetail, historyList, visibleUpdates } from "./history.js";
 import { BAD_QUESTION_NOTE, QUESTIONS_PER_BATCH, cleanQuestion } from "./question.js";
 import { validateOps } from "./ops/schema.js";
-import { Worker } from "node:worker_threads";
 import { AUTHORS, wordDate } from "./redline.js";
 import { deepRedline } from "./checker.js";
 import { TRACKED, formattingText, savedText, unsupportedText } from "./tracked-words.js";
 import { LOCAL_HOLDER } from "./local.js";
 import { bgHolder, isAgentHolder, isBgHolder, termHolder, TERM_PREFIX } from "./agent-detect.js";
-import { OUTLINE_FILE_MAX, REVIEW_ASKS, REVIEW_KINDS, SUGGESTIONS_MAX, UNITS_MAX, cardsFrom, outlineOf, reviewSummary, unitsOf } from "./review.js";
+import { OUTLINE_FILE_MAX, REVIEW_ASKS, REVIEW_KINDS, SUGGESTIONS_MAX, UNITS_MAX, outlineOf, reviewSummary, unitsOf } from "./review.js";
 import { VOICE_BATCH_MAX_CHARS } from "./voice-samples.js";
 import { STAMP_WORDS } from "./stamp-words.js";
-import { USE_SUMMARY, buildUseReply, placeOf } from "./suggest-reply.js";
+import { USE_SUMMARY } from "./suggest-reply.js";
+import { mergeNote } from "./notes.js";
+import { COMMENT_MAX, COMMENT_TEXT_MAX, COMMENTS_MAX, EDITS_MAX, NOTE_MAX, TOO_MANY_COMMENTS, REQUEST_MAX, SESSION_MAX, capComment, cleanEdit, cleanPageAnchor, cleanView, cutText, jsonSize } from "./retain.js";
 
 /** The line under a comment whose quick fixes could not be written on this Mac (docs/contracts/routes.md). */
 export const LOCAL_HINT = "This could not be changed on this Mac, so nothing was written. Press Send to ask the agent.";
@@ -59,8 +65,33 @@ export class HttpError extends Error {
   }
 }
 
+/** One comment more than a file keeps (src/retain.js COMMENTS_MAX): 413 too_many_comments, in words the page shows as they are. */
+const tooMany = () => new HttpError(413, TOO_MANY_COMMENTS, { code: "too_many_comments" });
+/** A note longer than Onionskin keeps (src/retain.js NOTE_MAX): 413 note_too_long. `joined`: a waiting note and this one together. */
+const noteTooLong = (joined) =>
+  new HttpError(413, joined ? `The note waiting for the agent and this one together are longer than Onionskin takes (${NOTE_MAX.toLocaleString("en-US")} characters), so nothing was sent. Shorten this note, then Send again.` : `This note is longer than Onionskin takes (${NOTE_MAX.toLocaleString("en-US")} characters), so it was not saved. Shorten it, then try again.`, { code: "note_too_long" });
+/** The page's note as stored: refused (never cut) past NOTE_MAX. */
+function noteOf(v) {
+  const t = userText(v, NOTE_MAX + 1);
+  if ([...t].length > NOTE_MAX) throw noteTooLong(false);
+  return t;
+}
+/** Two notes, the earlier first, as one (a waiting batch's or the queued ones, then the new one): refused past NOTE_MAX. */
+function joinNotes(a, b) {
+  const t = [a, b].filter(Boolean).join("\n\n");
+  if ([...t].length > NOTE_MAX) throw noteTooLong(true);
+  return t;
+}
+
+/** A request whose own data is more than Onionskin keeps (src/retain.js): 413 too_large_request, in words the page shows as they are. */
+export const tooLarge = (what) => new HttpError(413, `${what} is larger than Onionskin takes (${Math.round(REQUEST_MAX / 1024 / 1024)} MB), so nothing was saved. Remove some comments or shorten the longest ones, then try again.`, { code: "too_large_request" });
+
 const LEASE_MS = () => Number(env("LEASE_MS", 15 * 60 * 1000));
+const SENT_TABS = 16; // tabs of one file whose newest committed Send a session remembers (s.sent)
+const DELETED_KEPT = 200; // ids and words of deleted drafts a session remembers for a handover (Sessions.handOver)
+const HANDOVER_MS = 60_000; // how long a tab that lost editing may hand over its unsaved words (Sessions.handOver)
 const MAX_BYTES = MAX_DOC_BYTES;
+const TOO_BIG = `Onionskin cannot read this file: it is larger than ${Math.round(MAX_BYTES / 1024 / 1024)} MB, more than Onionskin can read. Make it smaller (pictures and videos are often most of a file) or split it, and open that.`;
 /** "Show in folder" exists on macOS (`open -R`); elsewhere the page shows the path. ONIONSKIN_NO_OPEN=1 turns it off, ONIONSKIN_OPEN_STUB=<file> records instead of launching. */
 const canReveal = () => !!env("OPEN_STUB") || (process.platform === "darwin" && !env("NO_OPEN"));
 /** readDoc with the size refusal as an HTTP error */
@@ -68,31 +99,81 @@ function readCapped(file) {
   try {
     return readDoc(file);
   } catch (err) {
-    if (err.code === "TOO_LARGE") throw new HttpError(413, `document too large: ${err.message}`, { code: "too_large" });
+    if (err.code === "TOO_LARGE") throw new HttpError(413, `Onionskin cannot read this file: ${err.message}.`, { code: "too_large" });
     throw err;
   }
 }
 
-const num = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 1000) / 1000 : 0);
+/**
+ * Every part the server reads later, of bytes about to become the file (a Send's, an agent's write), so they are refused before anything is
+ * written: past a reader's cap with the reason (CapError: 422 too_large), damaged where the readers look as an invalid package (422), never
+ * as an internal error. The reading is kept for what reads the same version next (unitsFor).
+ */
+function readWhole(format, bytes, sha, refusal = "refusing to write") {
+  try {
+    const units = readAll(unitsFor(format, bytes, sha));
+    readInCaps(format, sha);
+    return units;
+  } catch (err) {
+    if (err instanceof CapError || err instanceof HttpError) throw err;
+    throw new HttpError(422, `${refusal}: ${untrusted(err?.message || err, 200)}`, { code: "invalid_package" });
+  }
+}
+
+// "<format>:<sha256>" of the versions read whole within the readers' caps, on this thread (readWhole) or by the open worker, so a version
+// read again is not read whole again. Ceiling: VERIFIED_KEPT entries, the oldest dropped first (one dropped is read whole again when needed).
+const VERIFIED_KEPT = 256;
+const verified = new Set();
+function readInCaps(format, sha) {
+  const id = `${format}:${sha}`;
+  verified.delete(id);
+  verified.add(id);
+  if (verified.size > VERIFIED_KEPT) verified.delete(verified.values().next().value);
+}
+
+/**
+ * Bytes about to be handed to the engine on this thread (a quick preview, a merge, a change made on this Mac), which reads without the
+ * readers' caps: they are read whole within the caps first (readWhole) unless this version already was, so a file that changed on disk
+ * past a cap is refused with the reason (CapError: 422 too_large) before the engine parses any of it. Returns `bytes`.
+ */
+export function readChecked(format, bytes, { sha = sha256(bytes), refusal = "cannot read the file" } = {}) {
+  if (!verified.has(`${format}:${sha}`)) readWhole(format, bytes, sha, refusal);
+  return bytes;
+}
+
+// bounded before it is rounded, so the result is always finite (1e308 * 1000 is Infinity, stored as null); anything that is not a finite
+// number is 0, as src/retain.js drops what is not of its type
+const num = (v, max) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(Math.min(max, Math.max(0, n)) * 1000) / 1000 : 0;
+};
+const frac = (v) => num(v, 1);
+const PX_MAX = 1_000_000; // a paragraph taller than this is not drawn by any page
 /** A pin: x/y as fractions of the element it sits on (`yPx` is kept for DOCX paragraphs); `on` says what that element is. */
 function cleanPin(p) {
-  const out = { xFrac: num(p.xFrac), yPx: num(p.yPx) };
-  if (p.yFrac != null) out.yFrac = num(p.yFrac);
+  const out = { xFrac: frac(p.xFrac), yPx: num(p.yPx, PX_MAX) };
+  if (p.yFrac != null) out.yFrac = frac(p.yFrac);
   if (["paragraph", "cell", "shape", "slide"].includes(p.on)) out.on = p.on;
   if (p.sxFrac != null) {
-    out.sxFrac = num(p.sxFrac);
-    out.syFrac = num(p.syFrac);
+    out.sxFrac = frac(p.sxFrac);
+    out.syFrac = frac(p.syFrac);
   }
   return out;
 }
 
 const APPLY_STATUS = new Set(["refused", "skipped_protected", "anchor_not_found", "expect_mismatch", "not_applied"]);
-// the three-way merge of each format (loaded on first use: they pull in the engine)
-const MERGERS = { docx: { module: "./merge.js", fn: "mergeDocx" }, xlsx: { module: "./merge-xlsx.js", fn: "mergeXlsx" }, pptx: { module: "./merge-pptx.js", fn: "mergePptx" } };
 const HELD_SHOWN = 5; // items the page's "not in the document" message lists (web/src/Banners.jsx)
 const WRITES_KEPT = 20; // writes per file the merge can trace (src/merge-xlsx.js agentChanges); an older base finds no record and is handed back
-/** What the page says the user did during the run: kinds and places only, used to hold edits back or to name what is not carried, never to write. */
-const editKinds = (edits) => (Array.isArray(edits) ? edits.slice(0, 2000) : []).map((e) => ({ kind: String(e?.kind ?? "").slice(0, 40), sheet: typeof e?.sheet === "string" ? e.sheet.slice(0, 100) : null, slide: Number.isInteger(e?.slide) ? e.slide : null }));
+/**
+ * What the page says the user did during the run: kinds and places only, used to hold edits back or to name what is not carried, never to
+ * write. The first EDITS_KEPT; past them one more entry of kind EDITS_OVERFLOW says the list was cut, so a planner that needs the whole list
+ * refuses the merge (src/merge-xlsx.js) instead of reading the cut list as complete. The proof of the merge never reads it.
+ */
+const EDITS_KEPT = 2000;
+export const editKinds = (edits) => {
+  const list = (Array.isArray(edits) ? edits.slice(0, EDITS_KEPT) : []).map((e) => ({ kind: String(e?.kind ?? "").slice(0, 40), sheet: typeof e?.sheet === "string" ? e.sheet.slice(0, 100) : null, slide: Number.isInteger(e?.slide) ? e.slide : null }));
+  return Array.isArray(edits) && edits.length > EDITS_KEPT ? [...list, { kind: EDITS_OVERFLOW, sheet: null, slide: null }] : list;
+};
 /** One op `apply` did not apply, as the page shows it: codes and short reasons only (never document text). */
 function cleanProblem(p, run = "") {
   return {
@@ -101,7 +182,8 @@ function cleanProblem(p, run = "") {
     op: untrusted(p?.op, 40),
     status: APPLY_STATUS.has(p?.status) ? p.status : "refused",
     code: p?.code ? untrusted(p.code, 60) : null,
-    reason: untrusted(p?.reason, 200),
+    // the R1 refusal in the server's own words, never the reason text an agent's report carries
+    reason: p?.code === "active_content" ? ACTIVE_REFUSED : untrusted(p?.reason, 200),
   };
 }
 
@@ -109,16 +191,46 @@ function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-/** A stored durable anchor re-resolved against `units` (the bytes the agent will read next); null when the unit is gone. Without a durable, one is built from the browser's anchor. */
-function reanchor(units, c) {
-  const d = c.durable;
-  if (!d) return buildDurable(units, c.anchor);
-  const r = resolveDurableAny(units, d);
-  if (r.method === "none") return null;
-  if (units.format === "docx") return { ...d, ...r, format: "docx", quote: d.quote, prefix: d.prefix, suffix: d.suffix, paraText: r.text, engineDelta: r.engineDelta };
-  if (units.format === "xlsx") return buildDurable(units, { location: { sheetIndex: r.sheetIndex, sheetName: r.sheetName, range: r.range } });
-  return buildDurable(units, { location: { slideIndex: r.slideIndex, slideId: r.slideId, shapeId: r.shapeId ?? undefined, shapeName: r.shapeName, cell: d.cell || undefined }, quote: d.quote, prefix: d.prefix, suffix: d.suffix, hitKind: d.quote ? undefined : "shape" });
+/**
+ * An HTML file that is not saved as UTF-8 (PLAN-html R10, R18): 400 with the fixed sentence as it is and `code` (not_utf8 or the
+ * reason). The page shows the sentence; the UTF-8 copy it offers is a CLI action (`onionskin open` prints its command: src/html-utf8.js).
+ */
+function encodingRefusal(real, r) {
+  return new HttpError(400, r.error, { code: r.code === "not_utf8" ? "not_utf8" : "encoding" });
 }
+
+/** The person's pending HTML text edits a Send or "Save my edits" carries (web/src/html-view.js createEdits): checked fields only. */
+const HTML_EDITS_MAX = 2000;
+const HTML_EDIT_TEXT_MAX = 1_000_000; // one text node's new text; the whole request is held to REQUEST_MAX (src/server.js)
+export function cleanHtmlEdits(list) {
+  if (list == null) return [];
+  if (!Array.isArray(list) || list.length > HTML_EDITS_MAX) throw new HttpError(400, `htmlEdits must be a list of at most ${HTML_EDITS_MAX} edits`, { code: "bad_edits" });
+  return list.map((e) => {
+    const ok = e && typeof e === "object" && Number.isSafeInteger(e.nodeId) && e.nodeId >= 0 && typeof e.versionSha === "string" && /^[0-9a-f]{64}$/.test(e.versionSha) && typeof e.baseTextHash === "string" && /^[0-9a-f]{14}$/.test(e.baseTextHash) && typeof e.newText === "string" && e.newText.length <= HTML_EDIT_TEXT_MAX;
+    if (!ok) throw new HttpError(400, "an HTML text edit must be {nodeId, versionSha, baseTextHash, newText}", { code: "bad_edits" });
+    return { nodeId: e.nodeId, versionSha: e.versionSha, baseTextHash: e.baseTextHash, newText: e.newText };
+  });
+}
+/** 409 version_changed: the page's edits were made on a version that is not the file on disk now (it reloads the view and places them again). */
+const VERSION_CHANGED = "The file changed since this page loaded it, so your text edits were not written. The page shows the new version and puts your edits back where it can find their text; check them, then Send again.";
+/** The write check refused the person's text edits: 409 for an edit made on other text (the page reloads), 422 for the others; nothing was written. */
+function htmlEditRefusal(c) {
+  if (c.code === "edit_moved") return new HttpError(409, VERSION_CHANGED, { code: "version_changed" });
+  if (c.code === "check_failed" || c.failed) return new HttpError(503, `Your text edits could not be checked: ${c.reason || c.why || "the check did not finish"}. Nothing was written; your edits are still in this page. Try again in a moment.`, { code: "check_failed" });
+  return new HttpError(422, `Your text edits were not written: ${c.reason}.`, { code: c.code, ...(c.reasons ? { reasons: c.reasons } : {}) });
+}
+
+// The tasks the anchor work does for a request (src/anchor-work.js), and how a result is matched to its task: by the task's own content,
+// so a comment changed while the worker ran finds no answer and goes out weaker instead of with another one's anchor.
+const buildTask = (c) => ({ op: "build", anchor: c.anchor, pin: c.kind === "pin" });
+const reanchorTask = (c) => ({ op: "reanchor", c: { durable: c.durable ?? null, anchor: c.durable ? null : c.anchor } });
+const editAnchor = (e) => ({ location: e.location, quote: e.after, ...(e.cut ? { cut: true } : {}) });
+const cardsTask = (results, ix, run) => ({ op: "cards", list: results.suggestions, units: ix.units, index: ix.index, reviewId: run.batch.batch_id });
+// a quick fix's Use: the page anchor's location and text only (its kind of selection does not change where the sentence is)
+const useTask = (a, rec, id) => ({ op: "use", anchor: { location: a.location, quote: a.quote, prefix: a.prefix, suffix: a.suffix }, rec: { quote: rec.quote, before: rec.before, after: rec.after }, id });
+const taskKey = (t) => JSON.stringify(t);
+/** A task's result that can be used: not missing, not an error of its own. A null anchor (the unit is not in the file) is a result. */
+const usable = (r) => r !== undefined && !(r && typeof r === "object" && "error" in r && Object.keys(r).length === 1);
 
 /**
  * All session state and transitions, with no HTTP in it.
@@ -128,17 +240,31 @@ function reanchor(units, c) {
  *  - Send while working: comments only, kept as `queued`; released to the next poller after `done`.
  *  - Lease expiry or Take back: `delivered` is withdrawn, the document unlocks.
  */
+// What one request may spend scanning a whole reading for moved anchors (src/text.js scanBudget): about 0.1 to 0.3 s here. Fifty moved
+// comments on a Word document of 26,000 paragraphs took 10 s before. Past it, the rest resolve as moved or removed, and an anchor being
+// made is made without the text it cannot pay for (src/xlsx.js xlsxDurable). The server's routes make and resolve anchors in the anchor
+// worker (src/anchor-worker.js, ten times this budget, within a time limit); the synchronous methods (Send, done, revert, resolve, Use of
+// a quick fix) do it on the caller's thread under this budget.
+export const SCAN_BUDGET = 40_000_000;
+const REFUSED_KEPT = 64;
+const REFUSED_MS = 2 * 60_000;
+
 export class Sessions extends EventEmitter {
   // delivered run -> styleChangedOutside() when it went out; memory only, so a run reloaded after a restart has none and is not flagged
   #styleSeen = new WeakMap();
   // delivered run -> guideChangedOutside() when it went out (the same idea for voice-guide.json); taking it also arms the guide's guard
   #guideSeen = new WeakMap();
-  constructor({ now = Date.now } = {}) {
+  // the last outline built for an agent Onionskin started: {key, sha, all} (one entry; ceiling: two such agents in turn build twice)
+  #outline = null;
+  // `anchors`: the anchor worker's call (src/offload.js anchorsOffThread); a test passes its own to control when the work answers
+  constructor({ now = Date.now, anchors = anchorsOffThread } = {}) {
     super();
     this.now = now;
+    this.anchors = anchors;
     this.map = new Map(); // key -> session
     this.createdCopies = new Set(); // absolute paths of conflict copies THIS server wrote: the only paths `showCopy` will reveal
     this.editors = new Map(); // key -> id of the one browser tab that may edit (in memory only: a tab's id lives as long as its page)
+    this.handovers = new Map(); // key -> {tab, until}: the tab another tab just took editing from (memory only), see handOver()
     this.briefed = new Map(); // key -> Set of holders that already received a complete batch in this session (memory only: a restarted server briefs again)
     // key -> how the file got from one version to the next, oldest first: {from, to, route: "apply", ops, partial, anchors} for an agent's
     // apply, {from, to, route: "commit"} for a commit, {from, to, route: "merge", stable} for a pass of the user's merge. The merge reads it
@@ -157,10 +283,67 @@ export class Sessions extends EventEmitter {
     if (s.closed) return false; // a closed session has no editor; the tab that reopens it claims it
     if (cur && cur !== tab && !takeover) return false;
     if (cur !== tab) {
+      if (cur) this.handovers.set(key, { tab: cur, until: this.now() + HANDOVER_MS }); // the tab that lost editing may hand over its unsaved words once
       this.editors.set(key, tab);
       this.emit("change", s, "state");
     }
     return true;
+  }
+
+  /**
+   * The tab that just lost editing to another ("Edit here instead") hands over the words it had not saved yet: once, within HANDOVER_MS, and
+   * only that tab. Nothing another tab saved is replaced: a comment it made is added as a draft; words it typed into a draft nobody changed since
+   * it last saved it (`base`, per comment) replace it; words typed into one the store holds otherwise become a new draft next to it; its note is merged into the stored one from the note it started from (`base`, src/notes.js mergeNote),
+   * and the tab that edits now gets it as a note the server gave back (its stale save cannot overwrite it). Refused (409 `no_handover`) for
+   * any other tab or later, and like a draft save past a cap (413, nothing changes). The page that cannot hand over keeps the words visible
+   * with Copy my comments (web/src/App.jsx).
+   */
+  // key -> (tab -> {sent, seq}): the note the newest draft save of each tab carried, and the session `seq` it stored at (memory only, the last 8 tabs). A tab that hands over a note the server already took
+  // from it (its save's answer was lost, so it did not know) hands over nothing new: whatever happened to that note since is not its loss
+  #noteFrom = new Map();
+  handOver(key, tab, { comments, note, base, baseSeq, noteRev } = {}) {
+    const s = this.get(key);
+    const h = this.handovers.get(key);
+    if (!h || h.tab !== tab || h.until < this.now()) throw new HttpError(409, "This tab no longer edits the file.", { code: "no_handover" });
+    if (!Array.isArray(comments)) throw new HttpError(400, "comments must be an array");
+    const byId = new Map(s.comments.map((c) => [c.id, c]));
+    const next = [...s.comments];
+    for (const c of comments.filter((x) => x && typeof x === "object")) {
+      const id = cutText(String(c.id), 64);
+      const old = byId.get(id);
+      const text = userText(c.text, COMMENT_TEXT_MAX);
+      const del = s.deletedDrafts?.[id];
+      if (!old && del === text) continue; // deleted in the tab that edits now, with these very words: it stays deleted
+      if (!old) next.push(this.#draft(c, del === undefined ? id : cutText(`${id}~h${crypto.randomBytes(3).toString("hex")}`, 64), null)); // deleted there, with other words: these come back as a new draft
+      else if (text === old.text) continue;
+      else if (old.status === "draft" && !old.answer && typeof c.base === "string" && userText(c.base, COMMENT_TEXT_MAX) === old.text) next[next.indexOf(old)] = this.#draft(c, id, old); // nobody changed it since: the newer words replace it
+      else next.push(this.#draft(c, cutText(`${id}~h${crypto.randomBytes(3).toString("hex")}`, 64), null));
+    }
+    if (next.length > COMMENTS_MAX) throw tooMany();
+    for (const c of next) if (c.status === "draft" && jsonSize(c) > COMMENT_MAX) throw tooLarge("This draft");
+    let text = s.note;
+    const from = this.#noteFrom.get(key);
+    const last = from?.get(tab);
+    const already = typeof note === "string" && (last?.sent === userText(note, NOTE_MAX + 1) || this.#noteTaken(s, noteRev, tab)); // or a Send of that tab took it
+    if (typeof note === "string" && note !== s.note && !already) {
+      // what it started from: the note the page's box is based on (`base`) when that came from a state at or after that tab's last save
+      // (`baseSeq`: the page took that save's answer, or something newer, as a Take back's); else the note that save carried (its answer
+      // was lost, so the box is that note and what was typed since); with no save of that tab, what the page says
+      const fresh = typeof base === "string" && Number.isSafeInteger(baseSeq) && (!last || baseSeq >= last.seq);
+      const from = fresh ? base : last ? last.sent : typeof base === "string" ? base : "";
+      const mine = noteOf(note);
+      // the box was emptied here since (a Send took the note that tab started from): only what that tab added after it is handed over
+      text = !s.note && from && mine.startsWith(from) ? mine.slice(from.length).replace(/^\s+/, "") : mergeNote(from, s.note, mine);
+    }
+    if ([...text].length > NOTE_MAX && [...text].length > [...s.note].length) throw noteTooLong(true);
+    const before = s.note;
+    this.#commitDraft(s, { comments: next, note: before }, null, tab, true);
+    this.handovers.delete(key);
+    if (text !== before) {
+      this.#giveNote(s, text);
+      this.#changed(s, "draft");
+    } else this.emit("change", s, "draft");
+    return s;
   }
 
   /** The tab's event stream ended (closed, reloaded): the file has no editor until a tab claims it. */
@@ -178,8 +361,50 @@ export class Sessions extends EventEmitter {
   }
 
   // ---- open ------------------------------------------------------------------------------------------------
-  /** `opts.agent === "background"`: the person opened it from a terminal, so the server's background agent works on it (stored on the session). */
-  open(input, opts = {}) {
+  /**
+   * open() as the server's routes call it: the file is first read in a worker thread with a time and memory limit (src/offload.js
+   * readOffThread: the package check and every part the server reads later), so a slow or hostile file never stalls the server, and a
+   * file no reader accepts is refused here, with the reason, instead of failing later at Send.
+   */
+  async openAsync(input, opts = {}) {
+    const { real, format } = this.#checkInput(input);
+    // A file that changes between the worker's reading and open()'s own (a swap, a save in progress) is read in the worker again, once:
+    // open() never takes bytes the worker has not read, so nothing on this thread reads a version past the readers' caps.
+    for (let attempt = 0; ; attempt++) {
+      const bytes = readCapped(real);
+      const sha = sha256(bytes);
+      const known = this.#refused.get(`${format}:${sha}`);
+      const r = known && this.now() - known.at < REFUSED_MS ? known : await readOffThread(bytes, format);
+      if (r.ok) readInCaps(format, r.sha);
+      if (!r.ok) {
+        // the same bytes are refused again at once (an agent's polls fall back to opening a file that is not open, again and again)
+        if (r.stage !== "busy") this.#refuse(`${format}:${sha}`, r);
+        if (r.stage === "encoding") throw encodingRefusal(real, r);
+        if (r.stage === "invalid") throw new HttpError(400, `Not a valid .${format}: ${r.error}`);
+        if (r.stage === "busy") throw new HttpError(503, `Onionskin is busy opening other files: ${r.error}. Try again in a minute.`, { code: "busy" });
+        const hint = r.stage === "timeout" || r.stage === "memory" ? " It may be damaged, or made to stall programs that read it." : "";
+        throw new HttpError(400, `This file could not be opened: ${r.error}.${hint}`, { code: r.stage === "timeout" ? "open_timeout" : "unreadable" });
+      }
+      try {
+        return this.open(input, { ...opts, checkedSha: r.sha, onlyChecked: true });
+      } catch (err) {
+        if (err?.extra?.code !== "changed_while_opening" || attempt >= 1) throw err;
+      }
+    }
+  }
+
+  // "<format>:<sha256>" -> what the open worker said about those bytes when it refused them, for REFUSED_MS (a refusal for time may not hold once the
+  // Mac is less busy); at most REFUSED_KEPT, oldest dropped first
+  #refused = new Map();
+  #refuse(id, r) {
+    if (r.at) return; // already a remembered answer
+    this.#refused.delete(id);
+    this.#refused.set(id, { ok: false, stage: r.stage, error: r.error, code: r.code, copyable: r.copyable, at: this.now() });
+    if (this.#refused.size > REFUSED_KEPT) this.#refused.delete(this.#refused.keys().next().value);
+  }
+
+  /** The path checks of open(): the real path, its format and its lstat. Throws HttpError. */
+  #checkInput(input) {
     let real;
     try {
       real = fs.realpathSync(path.resolve(input));
@@ -190,23 +415,36 @@ export class Sessions extends EventEmitter {
     if (hasControlChars(real)) throw new HttpError(400, "This file's path contains control or bidirectional-text characters. Rename or move the file and open it again.", { code: "unsafe_path" });
     const ext = path.extname(real).toLowerCase();
     if (REFUSED_EXTENSIONS.has(ext)) throw new HttpError(400, `${ext} (macro-enabled) files are refused`);
-    const format = ext.slice(1);
-    if (!FORMATS[format]) throw new HttpError(400, "Only .docx, .xlsx and .pptx files are supported");
+    if (Object.hasOwn(REFUSED_PAGES, ext)) throw new HttpError(400, REFUSED_PAGES[ext], { code: "refused_kind" });
+    const format = formatOfExt(ext);
+    if (!format) throw new HttpError(400, ONLY_FORMATS);
     let st;
     try {
       st = checkRegularOwned(real);
     } catch (err) {
       throw new HttpError(400, err.message);
     }
+    return { real, format, st };
+  }
+
+  /** `opts.agent === "background"`: the person opened it from a terminal, so the server's background agent works on it (stored on the session). */
+  open(input, opts = {}) {
+    const { real, format, st } = this.#checkInput(input);
     const bytes = readCapped(real);
-    try {
-      validatePackage(bytes, format);
-    } catch (err) {
-      throw new HttpError(400, `Not a valid .${format}: ${err.message}`);
+    const sha = sha256(bytes);
+    // openAsync already read these exact bytes in a worker; for it, other bytes (the file changed since) go back to the worker. Any other
+    // caller (tests, tools) gets the package check here.
+    if (opts.onlyChecked && opts.checkedSha !== sha) throw new HttpError(409, "The file kept changing while Onionskin opened it. Open it again once it is saved.", { code: "changed_while_opening" });
+    if (opts.checkedSha !== sha) {
+      try {
+        validatePackage(bytes, format);
+      } catch (err) {
+        if (err instanceof HtmlEncodingError) throw encodingRefusal(real, { error: err.message, code: err.code, copyable: err.copyable });
+        throw new HttpError(400, `Not a valid .${format}: ${err.message}`);
+      }
     }
     const key = sessionKey(real);
     let s = this.map.get(key);
-    const sha = sha256(bytes);
     if (!s) {
       s = this.#load(key) || this.#fresh(key, real, format, sha);
       s.file = real;
@@ -269,8 +507,128 @@ export class Sessions extends EventEmitter {
   }
 
   #save(s) {
+    const { raw, cut } = this.#encode(s);
+    if (cut) Object.assign(s, cut); // in memory too
+    writeStateFile(path.join(sub("sessions"), `${s.key}.json`), raw);
+  }
+
+  /**
+   * The session file's text for `s`: {raw, cut}. The one cap on a session file (src/retain.js SESSION_MAX, in bytes): past it every
+   * comment's page anchor and every typed edit are cut further (`cut`: those lists, for the caller to keep); nothing is dropped. Each part
+   * is cut where it is stored, so this is a last line. `raw` can still be past the cap; a change the page asked for is then refused (#fits).
+   */
+  #encode(s) {
     const { pollers, snapshots, ...rest } = s;
-    writeStateFile(path.join(sub("sessions"), `${s.key}.json`), JSON.stringify(rest));
+    const raw = JSON.stringify(rest);
+    if (Buffer.byteLength(raw) <= SESSION_MAX) return { raw, cut: null };
+    const cut = {
+      comments: rest.comments.map((c) => capComment({ ...c, anchor: c.anchor && { ...c.anchor, cut: true, quote: cutText(c.anchor.quote, 2000), paraText: cutText(c.anchor.paraText, 2000) } })),
+      edits: rest.edits.map((e) => ({ ...e, before: cutText(e.before, 2000), after: cutText(e.after, 2000), cut: true })),
+    };
+    return { raw: JSON.stringify({ ...rest, ...cut }), cut };
+  }
+
+  /** Whether the session with `patch` fits its file once cut (#encode): checked before a change the page asked for touches anything. */
+  #fits(s, patch) {
+    return Buffer.byteLength(this.#encode({ ...s, ...patch }).raw) <= SESSION_MAX;
+  }
+
+  /** The page's typed edits since the last Send, as they are kept for the next batch: each field cut (src/retain.js), at most EDITS_MAX in all. */
+  #editsToTake(s, edits) {
+    return (Array.isArray(edits) ? edits.slice(0, Math.max(0, EDITS_MAX - s.edits.length)) : []).map(cleanEdit);
+  }
+
+  // ---- anchor work: the anchor worker, or this thread (src/anchor-work.js) ------------------------------------------------
+  /**
+   * The results of `tasks` on the version `sha` (`bytes`: a Buffer, or a function that returns it). With `prepared` (what the anchor
+   * worker answered for the same tasks, src/session.js #offThread) they are taken from it, and nothing is read here: a task it has no
+   * answer for (its work did not finish, or it was for another version) reads as not done. Without, they are worked out on this thread
+   * under the request's budget, as the synchronous methods always did. Returns {read, outline, at(i)}.
+   */
+  #results(format, bytes, sha, tasks, prepared, { check = false } = {}) {
+    if (prepared) {
+      const ok = prepared.ok && prepared.sha === sha;
+      return { read: ok ? prepared.read : null, outline: ok ? prepared.outline : null, at: (i) => (ok ? prepared.map.get(taskKey(tasks[i])) : undefined) };
+    }
+    // an HTML file is read in workers only (the parser is not on this thread): without the worker's answer the work is not done, and each
+    // caller makes its anchors weaker, as when the worker did not finish
+    if (format === "html") return { read: null, outline: null, at: () => undefined };
+    const r = anchorWork({ format, bytes, sha, check, tasks, budget: SCAN_BUDGET });
+    return { read: r.read, outline: null, at: (i) => r.results[i] };
+  }
+
+  /** Bytes about to become the file: what their reading found. Past a cap 422 (CapError); not read in time and never read whole before: 503. */
+  #readVerdict(work, format, sha, refusal) {
+    const read = work.read;
+    if (read?.ok) return readInCaps(format, sha);
+    if (read?.cap) throw new CapError(read.cap);
+    if (read?.invalid) throw new HttpError(422, `${refusal}: ${untrusted(read.invalid, 200)}`, { code: "invalid_package" });
+    if (verified.has(`${format}:${sha}`)) return; // the work did not finish, but this version was read whole within the caps before
+    throw new HttpError(503, "Onionskin could not finish reading the file in time, so nothing was sent. Your comments are kept. Try again in a moment.", { code: "read_timeout" });
+  }
+
+  /** `job` ({source, check, tasks, outline}) in the anchor worker: {ok: true, sha, read, outline, map: task key -> result} or {ok: false, why}. */
+  async #offThread(format, job) {
+    const r = await this.anchors({ format, ...job });
+    if (!r.ok) return { ok: false, why: r.failed };
+    const map = new Map();
+    job.tasks.forEach((t, i) => map.set(taskKey(t), r.r.results[i]));
+    return { ok: true, sha: r.sha, read: r.r.read, outline: r.r.outline ?? null, map };
+  }
+
+  // the async methods of one file run in turn (another file's never wait for them); synchronous ones keep their own order
+  #chains = new Map();
+  #serial(key, fn) {
+    const prev = this.#chains.get(key) || Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.then(() => {}, () => {});
+    this.#chains.set(key, tail);
+    tail.then(() => this.#chains.get(key) === tail && this.#chains.delete(key));
+    return run;
+  }
+
+  /**
+   * `fn` (a synchronous change the page asks for: a draft save, Take back, an answer) in this file's turn, as the server's routes call it.
+   * One that arrives while a Send waits for the anchor worker is applied after that Send commits, against what it committed, as when Send
+   * was synchronous. Never called from inside a turn (it would wait for itself).
+   */
+  inTurn(key, fn) {
+    this.get(key);
+    return this.#serial(key, () => fn());
+  }
+
+  /** setDraft() in this file's turn (the route POST /api/draft). */
+  setDraftAsync(key, args) {
+    return this.inTurn(key, () => this.setDraft(key, args));
+  }
+
+  /**
+   * Resolves once every request of this file that arrived before now is answered, so a page that loads (or reloads) during a Send starts
+   * from what it committed, never from the middle of it. Bounded: a Send plans its worker job at most twice, each within the worker's time
+   * limit; past that the page gets the state as it is then.
+   */
+  async settled(key, ms = 2 * anchorTimeoutMs() + 5_000) {
+    const tail = this.#chains.get(key);
+    if (!tail) return;
+    let timer;
+    await Promise.race([tail, new Promise((r) => (timer = setTimeout(r, ms)))]);
+    clearTimeout(timer);
+  }
+
+  /**
+   * An agent Onionskin started polls while a batch waits for it (src/server.js /cli/poll): the outline its delivery carries is built in
+   * the anchor worker first, so the delivery finds it (#withOutline's memo) instead of reading the file on this thread.
+   */
+  async outlineAhead(key, holder) {
+    const s = this.get(key);
+    if (!isAgentHolder(holder) || !s.pending || s.delivered || s.pending.instructions?.review || s.pending.instructions?.voice_request) return;
+    const r = await anchorsOffThread({ format: s.format, source: { path: s.file }, tasks: [], outline: true });
+    if (r.ok && r.r.read.ok && r.r.outline) this.#outline = { key: s.key, sha: r.sha, all: r.r.outline };
+  }
+
+  /** An agent Onionskin started is waiting for this file: its delivery carries the outline, which the anchor worker then builds too. */
+  #wantsOutline(s) {
+    return s.pollers.some((p) => isAgentHolder(p.holder));
   }
 
   get(key) {
@@ -325,6 +683,9 @@ export class Sessions extends EventEmitter {
       strandedCommand: state === "stranded" ? `${PRODUCT.bin} poll ${shellQuote(s.file)}` : null,
       startCommand: state === "stranded" ? `${PRODUCT.bin} ${shellQuote(s.file)}` : null, // what a person types in a terminal to start an agent on this file
       seq: s.seq,
+      // per tab, the newest Send (or quick fix's Use) of it that committed: {tab: {rev, noteRev}}. A page whose Send got no answer learns
+      // from it whether that Send went through (web/src/App.jsx checkSent)
+      sent: s.sent || {},
       editor: this.editors.get(s.key) || null,
       conflict: s.conflict || null,
       canReveal: canReveal(),
@@ -343,31 +704,198 @@ export class Sessions extends EventEmitter {
   }
 
   // ---- drafts ----------------------------------------------------------------------------------------------
-  /** Browser replaces its list of comments/pins and the overall note. Server-owned fields (status, results) are kept. */
-  setDraft(key, { comments, note }) {
+  // key -> {tab, rev}: the newest save or Send a tab numbered (memory only: a reloaded page is a new tab and counts again). Saves and Sends
+  // run in turn (inTurn), but two requests of one tab can still arrive out of order: an autosave sent just before Send was pressed can land
+  // after the Send committed, and would put the note the Send took back in the box. One numbered at or below what the tab already sent
+  // changes nothing (test/send-race.test.js).
+  #revs = new Map();
+  // s.sent = {tab: {rev, noteRev}}: per tab (the last SENT_TABS), the newest numbered Send (or Use) of it that committed, and the revision
+  // of its note box the newest such Send took. Stored with the session, so a page still asking whether its Send went through gets the right
+  // answer after the server restarts. A save of that tab whose note is that revision or older (its save on the way out while the Send was in
+  // flight) leaves the note alone, and so does its handover: a note a Send delivered is never put back.
+  #sentRev(s, { rev, tab, noteRev }, took = false) {
+    if (!Number.isSafeInteger(rev) || typeof tab !== "string") return;
+    const all = s.sent && typeof s.sent === "object" ? s.sent : {};
+    const last = all[tab];
+    if (last && last.rev > rev) return;
+    const { [tab]: _, ...rest } = all;
+    const entry = { rev, noteRev: took && Number.isSafeInteger(noteRev) ? noteRev : last?.noteRev ?? null };
+    s.sent = Object.fromEntries([...Object.entries(rest), [tab, entry]].slice(-SENT_TABS));
+  }
+  /** Whether `noteRev` of `tab` is a note a committed Send of that tab already took (see s.sent). */
+  #noteTaken(s, noteRev, tab) {
+    const last = typeof tab === "string" ? s.sent?.[tab] : null;
+    return Number.isSafeInteger(noteRev) && Number.isSafeInteger(last?.noteRev) && noteRev <= last.noteRev;
+  }
+
+  /**
+   * Browser replaces its list of comments/pins and the overall note. Server-owned fields (status, results) are kept: a sent, queued or
+   * finished comment is as the server holds it, whatever words the page sends for it. `note` absent (not a string): the stored note is
+   * kept (the page's save while a Send is in flight, which took the note). `rev` (optional): see #revs. Every field is rebuilt from what
+   * Onionskin reads (src/retain.js). Refused (413) before anything changes: more than COMMENTS_MAX comments, a note past NOTE_MAX, a
+   * comment past COMMENT_MAX after its cuts, a session past SESSION_MAX after the writer's. Nothing is dropped or cut without a word.
+   */
+  setDraft(key, { comments, note, rev, tab, noteRev, seen, noteSeen } = {}) {
     const s = this.get(key);
     if (!Array.isArray(comments)) throw new HttpError(400, "comments must be an array");
-    const prev = new Map(s.comments.map((c) => [c.id, c]));
-    s.comments = comments.slice(0, 500).map((c) => {
-      const old = prev.get(String(c.id));
-      const base = {
-        id: String(c.id).slice(0, 64),
-        kind: ["text", "element", "pin"].includes(c.kind) ? c.kind : "element",
-        text: userText(c.text),
-        anchor: c.anchor && typeof c.anchor === "object" ? c.anchor : null,
-        pin: c.pin && typeof c.pin === "object" ? cleanPin(c.pin) : null,
-        pinNo: Number.isInteger(c.pinNo) ? c.pinNo : null,
-      };
-      if (old && old.status !== "draft") return { ...old, text: old.text, kind: old.kind }; // sent/done comments are frozen
-      // an answered question: the words, the question and the answer stay as the person left them (the page cannot change them)
-      const keep = old?.skipLocal ? { skipLocal: true } : {}; // a reverted local run: the next Send of this comment goes to the agent
-      if (old?.localHint && userText(c.text) === old.text) keep.localHint = old.localHint; // the words changed: the hint no longer applies
-      if (old?.answer) return { ...base, text: old.text, status: "draft", durable: old.durable || null, question: old.question, answer: old.answer, ...keep };
-      return { ...base, status: "draft", durable: old?.durable || null, ...keep };
-    });
-    s.note = userText(typeof note === "string" ? note : "");
-    this.#changed(s, "draft");
+    if (this.#overtaken(s, rev, tab, true)) return s;
+    this.#commitDraft(s, this.#draftPlan(s, { comments, note: this.#noteTaken(s, noteRev, tab) ? undefined : note, seen, noteSeen, tab }), rev, tab);
+    if (typeof note === "string" && tab) {
+      const m = this.#noteFrom.get(key) || new Map();
+      m.delete(tab);
+      m.set(tab, { sent: userText(note, NOTE_MAX + 1), seq: s.seq, used: !this.#noteTaken(s, noteRev, tab) }); // see handOver and #draftPlan
+      if (m.size > 8) m.delete(m.keys().next().value); // the tabs of one file: a handful
+      this.#noteFrom.set(key, m);
+    }
     return s;
+  }
+
+  /** Whether this tab already numbered a newer save or Send than `rev` (`orSame`: one numbered the same too). See #revs. */
+  #overtaken(s, rev, tab, orSame = false) {
+    if (!Number.isSafeInteger(rev)) return false;
+    const last = this.#revs.get(s.key);
+    return !!last && last.tab === tab && (orSame ? rev <= last.rev : rev < last.rev);
+  }
+
+  /**
+   * What a draft save of `comments` and `note` would store, {comments, note}, with every limit checked and nothing changed. `note` absent:
+   * the stored note. A note past NOTE_MAX is refused, except one not longer than the stored note (Take back can join notes past it: the
+   * page saves the box it was given, and may shorten it).
+   */
+  #draftPlan(s, { comments, note, seen, noteSeen, tab }) {
+    if (!Array.isArray(comments)) throw new HttpError(400, "comments must be an array");
+    const list = comments.filter((c) => c && typeof c === "object");
+    if (list.length > COMMENTS_MAX) throw tooMany();
+    const long = typeof note === "string" && note.length > NOTE_MAX && note.length <= s.note.length;
+    let text = typeof note !== "string" ? s.note : long ? userText(note, s.note.length) : noteOf(note);
+    // the server gave a note back to the box (#giveNote) that the page had not seen when it sent this (`seen`: the newest session `seq` it
+    // took): the page's note is merged into it, never put over it
+    // (`noteSeen`: the newest state whose note the page's box took or is based on; a page can see a state and keep its own words)
+    const given = s.noteGiven;
+    const ns = Number.isSafeInteger(noteSeen) ? noteSeen : seen;
+    if (typeof note === "string" && given && Number.isSafeInteger(ns) && ns <= given.seq) {
+      // from the note the server held before the first give the page had not seen (`steps`: each give; a session stored before them has
+      // the first one's only); or, when a save of this tab was merged in since (its answer still on its way), from the note that save
+      // carried: the box is that note and what was typed since, and the stored note already has that save's words
+      // (ceiling: the last 50 gives; past that, a page that saw none of the kept ones merges from the oldest note, as before `steps`)
+      const hit = given.steps?.find((g) => g.seq >= ns);
+      const first = hit && !(given.cut && hit === given.steps[0]) ? hit : given;
+      const last = this.#noteFrom.get(s.key)?.get(tab);
+      text = mergeNote(last?.used && last.seq > first.seq ? last.sent : first.before, s.note, text);
+    }
+    const prev = new Map(s.comments.map((c) => [c.id, c]));
+    const next = list.map((c) => {
+      const id = cutText(String(c.id), 64);
+      const old = prev.get(id);
+      return old && old.status !== "draft" ? old : this.#draft(c, id, old); // sent/queued/finished comments are frozen
+    });
+    // a comment on its way to the agent (in a waiting batch, or queued) stays whatever list a save carries: a save never changes what a
+    // Send delivers (a page that had not seen it yet, after a reload, does not take it out of the batch). Nor does a save delete a draft
+    // another tab wrote after the state its page took (`seen`): the page did not know of it (a window that handed over its words, the save
+    // of a page that was left landing after the reloaded page loaded)
+    const named = new Set(next.map((c) => c.id));
+    const unseen = (c) => c.status === "draft" && Number.isSafeInteger(seen) && c.wroteBy && c.wroteBy.tab !== tab && c.wroteBy.seq > seen;
+    for (const c of s.comments) if ((c.status === "sent" || c.status === "queued" || unseen(c)) && !named.has(c.id)) next.push(c);
+    if (next.length > COMMENTS_MAX) throw tooMany();
+    for (const c of next) if (c.status === "draft" && jsonSize(c) > COMMENT_MAX) throw tooLarge("This draft");
+    return { comments: next, note: text, seen: Number.isSafeInteger(noteSeen) ? noteSeen : seen };
+  }
+
+  /**
+   * The server puts `text` in the note box itself (Take back, a run that stopped with comments queued behind it, the Revert of a run on this
+   * Mac). Until a save shows the page has seen it, a save of the note from the page is merged into it (#draftPlan): the note it had then is kept.
+   */
+  #giveNote(s, text) {
+    if (text === s.note) return;
+    const step = { seq: s.seq, before: s.note };
+    if (s.noteGiven) {
+      const steps = [...(s.noteGiven.steps || []), step];
+      s.noteGiven = { ...s.noteGiven, seq: s.seq, steps: steps.slice(-50), ...(steps.length > 50 || !s.noteGiven.steps ? { cut: true } : {}) };
+    } else s.noteGiven = { ...step, steps: [step] };
+    s.note = text;
+  }
+
+  /** Stores a plan of #draftPlan as a draft save: refused (413) past the session cap before anything changes. */
+  #commitDraft(s, plan, rev, tab, quiet = false) {
+    // each draft remembers which tab last wrote its words, and when (#draftPlan: a save does not delete one its page has not seen)
+    const prev = new Map(s.comments.map((c) => [c.id, c]));
+    for (const c of plan.comments) {
+      if (c.status !== "draft") continue;
+      const old = prev.get(c.id);
+      if (!old || old.status !== "draft" || old.text !== c.text) c.wroteBy = { tab: tab ?? null, seq: s.seq + 1 };
+      else if (old.wroteBy && c !== old) c.wroteBy = old.wroteBy;
+    }
+    // the words of drafts this save deletes, by id (the last DELETED_KEPT): a window handing over words afterwards does not bring them back
+    const kept = new Set(plan.comments.map((c) => c.id));
+    const gone = [...prev.values()].filter((c) => c.status === "draft" && !kept.has(c.id));
+    const deleted = gone.length ? Object.fromEntries([...Object.entries(s.deletedDrafts || {}), ...gone.map((c) => [c.id, c.text])].slice(-DELETED_KEPT)) : s.deletedDrafts;
+    const patch = { comments: plan.comments, note: plan.note, seq: s.seq + 1, ...(deleted ? { deletedDrafts: deleted } : {}) };
+    const { raw, cut } = this.#encode({ ...s, ...patch });
+    if (Buffer.byteLength(raw) > SESSION_MAX) throw tooLarge("This draft");
+    if (Number.isSafeInteger(rev) && !this.#overtaken(s, rev, tab)) this.#revs.set(s.key, { tab, rev }); // never lowered
+    Object.assign(s, patch, cut || {});
+    if (s.noteGiven && Number.isSafeInteger(plan.seen) && plan.seen > s.noteGiven.seq) delete s.noteGiven; // the page has seen it
+    writeStateFile(path.join(sub("sessions"), `${s.key}.json`), raw);
+    // `quiet`: a Send's (or a Use's) save, which its commit announces; an event for the moment between would show its note still in the box
+    if (!quiet) this.emit("change", s, "draft");
+  }
+
+  /** One draft as stored, from the page's comment `c` (`old`: the stored draft of the same id, if any). */
+  #draft(c, id, old) {
+    const base = {
+      id,
+      kind: ["text", "element", "pin"].includes(c.kind) ? c.kind : "element",
+      text: userText(c.text, COMMENT_TEXT_MAX),
+      anchor: cleanPageAnchor(c.anchor), // the fields the server and the page read, each cut (src/retain.js)
+      pin: c.pin && typeof c.pin === "object" ? cleanPin(c.pin) : null,
+      pinNo: Number.isInteger(c.pinNo) ? c.pinNo : null,
+    };
+    // an answered question: the words, the question and the answer stay as the person left them (the page cannot change them)
+    const keep = old?.skipLocal ? { skipLocal: true } : {}; // a reverted local run: the next Send of this comment goes to the agent
+    if (old?.localHint && base.text === old.text) keep.localHint = old.localHint; // the words changed: the hint no longer applies
+    if (old?.answer) return capComment({ ...base, text: old.text, status: "draft", durable: old.durable || null, question: old.question, answer: old.answer, ...keep });
+    return capComment({ ...base, status: "draft", durable: old?.durable || null, ...keep });
+  }
+
+  /**
+   * What a Send (or a quick fix's Use: `useId`, the stamp it delivers) stores before it commits, as #draftPlan: nothing changed.
+   * Invariant: a Send commits exactly its own payload, whatever draft save is numbered before or after it. Normally its list and note
+   * replace the stored ones, as a draft save does. When this tab already numbered a newer save (one sent after the Send was pressed whose
+   * body arrived first, as a page's visibility-change save can), that save is the stored list and the Send is authoritative only for what
+   * it delivers: the drafts it names (their words as the Send carried them) and its note. Everything else stays as the newer save left it:
+   * a comment it added is a draft, one it deleted stays deleted (the page cannot delete what a Send in flight carries), its note (none:
+   * it leaves the note to the Send). A Use delivers only its stamp, so then it changes nothing else, not the note either.
+   */
+  #sentPlan(s, { comments, note, rev, tab, seen, noteSeen, sends }, useId = null) {
+    const list = Array.isArray(comments) ? comments : s.comments;
+    // `sends` (optional): the ids the page holds read only for this Send, the drafts it means to deliver; a comment the page still showed as
+    // queued or sent when Send was pressed (and could be typed into after) is not delivered by it
+    const named = Array.isArray(sends) ? new Set(sends.slice(0, COMMENTS_MAX).map((id) => cutText(String(id), 64))) : null;
+    if (!this.#overtaken(s, rev, tab)) {
+      const plan = this.#draftPlan(s, { comments: list, note: typeof note === "string" ? note : s.note, seen, noteSeen, tab });
+      return named && useId == null ? { ...plan, only: named } : plan;
+    }
+    const own = this.#draftPlan(s, { comments: list.filter((c) => c && typeof c === "object" && (useId == null || String(c.id) === useId)), note: useId == null && typeof note === "string" ? note : s.note, seen, noteSeen, tab });
+    const mine = new Map(own.comments.map((c) => [c.id, c]));
+    // `only`: the drafts this Send delivers (the others are the newer save's, and stay drafts)
+    return { comments: s.comments.map((c) => (c.status === "draft" && mine.has(c.id) ? mine.get(c.id) : c)), note: own.note, only: new Set([...mine.keys()].filter((id) => !named || useId != null || named.has(id))) };
+  }
+
+  /** The drafts of `comments` a Send with `plan` delivers: all of them, or those it names when a newer save was stored first. */
+  #delivers(comments, plan) {
+    return comments.filter((c) => c.status === "draft" && (!plan.only || plan.only.has(c.id)));
+  }
+
+  /**
+   * The 413 refusals of a Send, on the state its plan would make (nothing changed yet): the bytes past the cap, a note that joined with
+   * the one waiting (the batch an agent has not taken, or the queued note during a run) would be past NOTE_MAX, a session that would not
+   * fit its file. Run before the worker is asked and again at the commit, against the state then.
+   */
+  #sendLimits(s, plan, payload) {
+    if (payload.bytes?.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
+    if (s.delivered) joinNotes(s.queuedNote, plan.note);
+    else joinNotes(s.pending && !readOnlyKind(s.pending) ? s.pending.instructions?.overall_note || "" : "", plan.note);
+    if (!this.#fits(s, { comments: plan.comments, edits: [...s.edits, ...this.#editsToTake(s, payload.edits)] })) throw tooLarge("This Send");
   }
 
   // ---- send ------------------------------------------------------------------------------------------------
@@ -376,58 +904,211 @@ export class Sessions extends EventEmitter {
    * Compare-and-swap on the disk hash. Returns the session.
    */
   send(key, payload) {
+    return scanBudget(SCAN_BUDGET, () => this.#send(key, payload));
+  }
+
+  /**
+   * send() as the server's route calls it: the reading of the bytes that become the file and every anchor of the batch are worked out
+   * first, in the warm anchor worker with a time limit (src/offload.js anchorsOffThread), then send() commits with what came back and
+   * reads nothing itself. Work that did not finish leaves its comments weaker (src/anchor-work.js weakDurable), never lost; bytes it
+   * could not read in time are refused with "try again" unless that version was read whole before.
+   * Invariant: a Send and the page's draft saves, Take back and answers of one file run in turn (inTurn), as when Send was synchronous.
+   * The Send saves its list and note when its turn comes, then commits exactly that; whatever arrives meanwhile waits and is applied after
+   * the commit, against what it committed. A page loaded meanwhile waits for it too (settled).
+   */
+  async sendAsync(key, payload) {
+    const s = this.get(key);
+    const hasBytes = !!payload.bytes?.length;
+    if (s.closed || (s.delivered && hasBytes)) return this.send(key, payload); // refused there, before anything changes
+    return this.#serial(key, async () => {
+      // refused there, before anything changes: closed, or locked
+      if (s.closed || (s.delivered && hasBytes)) return this.send(key, payload);
+      // nothing is stored before the commit: the worker works on what the Send would store, every limit is checked on it first (a refusal
+      // here changes nothing) and again at the commit
+      let prepared = null;
+      let html = {};
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const queued = !!s.delivered;
+        const plan = this.#sentPlan(s, payload);
+        this.#sendLimits(s, plan, payload);
+        if (s.format === "html") this.#htmlSendChecks(s, payload);
+        const job = this.#sendJob(s, payload, plan);
+        // an HTML file that is not queued: the person's text edits are written through the write check, and every anchor is made on the
+        // version it was made on, then moved onto the bytes this Send writes (#htmlSendWork)
+        if (s.format === "html" && !s.delivered) ({ prepared, html } = await this.#htmlSendWork(s, payload, job));
+        else prepared = job ? await this.#offThread(s.format, job) : null;
+        if (!!s.delivered === queued) break; // a run started or ended while it worked: plan again once, for the other case
+      }
+      return this.send(key, { ...payload, ...html, prepared });
+    });
+  }
+
+  /** An HTML Send's own refusals, before any work: no bytes from the browser ever (PLAN-html 3.1), no text edits during a run (D5). */
+  #htmlSendChecks(s, payload) {
+    if (payload.bytes?.length && !payload.htmlChecked) throw new HttpError(400, "an HTML file's bytes never come from the page; send its text edits", { code: "no_bytes_for_html" });
+    if (payload.htmlEdits?.length && s.delivered) throw new HttpError(423, s.delivered.local ? "the document is locked while a change is made on this Mac" : "the document is locked while the agent works", { code: "locked" });
+  }
+
+  /**
+   * The work of an HTML Send that is not queued, off this thread (the parser exists only in workers):
+   *  1. the person's text edits (R9), when there are any: on the version the page loaded, which must be the file on disk (else 409
+   *     version_changed: the page reloads the view and places its edits again), applied by the write check in a worker (src/html-write.js
+   *     checkedHtmlWrite "edits": one write, the proof, the inventory). Its bytes become the file at the commit (#takePage), which checks
+   *     the disk hash again after these awaits (R12).
+   *  2. the anchors: a page anchor names a node of ONE version (`location.version`, a node id means nothing in another). An anchor made on
+   *     the version this Send writes is built there; one made on another version (a draft that outlived a reload, the typed edits'
+   *     places when this Send changes the bytes) is built on that version first (the file on disk or a stored snapshot), then moved onto
+   *     the bytes this Send writes (reanchor), as a queued comment is moved onto the agent's file at done.
+   * Returns {prepared (what #offThread returns, keyed by this Send's own tasks), html: {bytes, htmlChecked} or {}}.
+   */
+  async #htmlSendWork(s, payload, job) {
+    let disk;
+    try {
+      checkRegularOwned(s.file);
+      disk = readCapped(s.file);
+    } catch (err) {
+      throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
+    }
+    const diskSha = sha256(disk);
+    let target = { bytes: disk, sha: diskSha };
+    let html = {};
+    const edits = cleanHtmlEdits(payload.htmlEdits);
+    if (edits.length) {
+      if (payload.baseSha !== diskSha || edits.some((e) => e.versionSha !== diskSha)) throw new HttpError(409, VERSION_CHANGED, { code: "version_changed", diskSha });
+      const c = await htmlWriteOffThread({ before: disk, edits: edits.map((e) => ({ nodeId: e.nodeId, text: e.newText, baseTextHash: e.baseTextHash })) });
+      if (!c.ok) throw htmlEditRefusal(c);
+      const bytes = Buffer.from(c.bytes.buffer, c.bytes.byteOffset, c.bytes.byteLength);
+      target = { bytes, sha: sha256(bytes) };
+      html = { bytes, htmlChecked: { from: diskSha, to: target.sha } };
+    }
+    const prepared = await this.#htmlAnchorWork(s, job.tasks, target, { disk, diskSha, check: true, outline: job.outline });
+    return { prepared, html };
+  }
+
+  /**
+   * `tasks` (build, reanchor and view tasks of one request) on the version `target` ({bytes, sha}), in the anchor worker, with every build
+   * task whose page anchor was made on another version (`location.version`) built on that version first (`known.disk` when it is the file
+   * on disk, else a stored snapshot) and moved onto `target`. One made on a version no longer stored is moved as a weak anchor (its quote
+   * searched). Returns what #offThread returns, its map keyed by the tasks given.
+   */
+  async #htmlAnchorWork(s, tasks, target, { disk = null, diskSha = null, check = false, outline = false } = {}) {
+    const elsewhere = new Map(); // version -> [task index]
+    tasks.forEach((t, i) => {
+      const v = t.op === "build" ? t.anchor?.location?.version : null;
+      if (v && v !== target.sha) (elsewhere.get(v) || elsewhere.set(v, []).get(v)).push(i);
+    });
+    const moved = new Map(); // task index -> the durable made on its own version (null: not there; undefined: not worked out)
+    for (const [v, list] of elsewhere) {
+      const source = v === diskSha && disk ? { bytes: disk } : s.snapshots.has(v) ? { path: s.snapshots.blob(v), sha: v } : null;
+      if (!source) continue;
+      const r = await this.#offThread("html", { source, tasks: list.map((i) => tasks[i]) });
+      if (r.ok && r.read?.ok) list.forEach((i) => moved.set(i, r.map.get(taskKey(tasks[i]))));
+    }
+    const asked = tasks.map((t, i) => {
+      if (!elsewhere.size || !(t.op === "build" && t.anchor?.location?.version && t.anchor.location.version !== target.sha)) return t;
+      const d = moved.get(i);
+      return { op: "reanchor", c: { durable: usable(d) && d ? d : weakDurable("html", t.anchor), anchor: null } };
+    });
+    const r = await this.#offThread("html", { source: { bytes: target.bytes }, check, tasks: asked, outline });
+    if (!r.ok) return r;
+    const map = new Map();
+    asked.forEach((t, i) => map.set(taskKey(tasks[i]), r.map.get(taskKey(t))));
+    return { ...r, sha: target.sha, map };
+  }
+
+  /** What a Send asks of the anchor worker (the same tasks #send makes, for the list it would store), or null when it needs nothing read. */
+  #sendJob(s, payload, plan) {
+    if (s.delivered) {
+      const need = this.#delivers(plan.comments, plan).filter((c) => !c.durable);
+      if (!need.length || !s.snapshots.has(s.delivered.preSha)) return null;
+      return { source: { path: s.snapshots.blob(s.delivered.preSha), sha: s.delivered.preSha }, tasks: need.map(buildTask) };
+    }
+    const { tasks } = this.#sendTasks(s, this.#editsToTake(s, payload.edits), payload.viewState, plan);
+    const bytes = payload.bytes?.length ? payload.bytes : null;
+    return { source: bytes ? { bytes } : { path: s.file }, check: true, tasks, outline: this.#wantsOutline(s) };
+  }
+
+  /** The tasks of a Send that is not queued: every comment that goes out (drafts, and those of a batch still waiting), the typed edits without an anchor yet, the view. */
+  #sendTasks(s, newEdits, viewState, plan = { comments: s.comments }) {
+    const go = new Set(this.#delivers(plan.comments, plan));
+    const eligible = plan.comments.filter((c) => go.has(c) || c.status === "sent");
+    const edits = [...s.edits, ...newEdits].filter((e) => !e.durable);
+    const vs = cleanView(viewState);
+    return { eligible, edits, vs, tasks: [...eligible.map(buildTask), ...edits.map((e) => ({ op: "build", anchor: editAnchor(e), pin: false })), ...(vs ? [{ op: "view", vs }] : [])] };
+  }
+
+  /**
+   * The commit of a Send: the Send's own list and note are saved first (#sentPlan), then every draft goes out with the note. A batch still
+   * waiting for an agent (not delivered) is replaced by one that carries its comments and its note, then this one's; during a run the
+   * drafts and the note are queued after those already queued. Every 413 (#sendLimits) is refused before anything changes.
+   */
+  #send(key, payload) {
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
+    if (s.format === "html") this.#htmlSendChecks(s, payload);
     const hasBytes = !!payload.bytes?.length;
     if (s.delivered && hasBytes) throw new HttpError(423, s.delivered.local ? "the document is locked while a change is made on this Mac" : "the document is locked while the agent works", { code: "locked" }); // before touching any state
-    this.setDraft(key, { comments: payload.comments ?? s.comments, note: payload.note ?? s.note });
+    // the Send's own list and note (#sentPlan), every limit checked on them before anything changes; then stored as a draft save is, so a
+    // refusal after this (the file changed, could not be read in time) leaves them as editable drafts
+    const plan = this.#sentPlan(s, payload);
+    this.#sendLimits(s, plan, payload);
+    this.#commitDraft(s, plan, payload.rev, payload.tab, true);
+    try {
+      return this.#sendCommit(s, payload, plan);
+    } catch (err) {
+      this.emit("change", s, "draft"); // refused after the save: the page's tabs see the drafts it stored (a Send that commits says so once, at the end)
+      throw err;
+    }
+  }
+
+  /** The rest of #send, once its list and note are stored: the batch (or the queue) and the commit. */
+  #sendCommit(s, payload, plan) {
     if (s.delivered) {
       // queue: comments and note only. A new comment gets its durable anchor from the bytes the page shows (the pre-agent snapshot),
       // never from the disk, which the agent may already have changed; done() then moves it onto the post-agent file.
-      const fresh = s.comments.filter((c) => c.status === "draft");
-      if (fresh.some((c) => !c.durable)) {
-        let units = null;
-        try {
-          units = readUnits(s.format, s.snapshots.read(s.delivered.preSha));
-        } catch {
-          units = null; // no snapshot: done() falls back to building from the post-agent file
-        }
-        if (units) {
-          for (const c of fresh) {
-            if (c.durable) continue;
-            c.durable = buildDurable(units, c.anchor);
-            if (units.format === "pptx" && c.kind === "pin" && c.durable?.shapeId != null) c.durable.pinFallback = buildDurable(units, { location: { slideIndex: c.durable.slideIndex, slideId: c.durable.slideId } });
-          }
-        }
+      const queuedNote = joinNotes(s.queuedNote, s.note); // before anything changes
+      const fresh = this.#delivers(s.comments, plan);
+      const need = fresh.filter((c) => !c.durable);
+      if (need.length) {
+        // no snapshot, or work that did not finish: the anchor stays unset, and done() builds it from the post-agent file
+        const work = this.#results(s.format, () => s.snapshots.read(s.delivered.preSha), s.delivered.preSha, need.map(buildTask), payload.prepared);
+        if (work.read?.ok) need.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : null));
       }
       for (const c of fresh) c.status = "queued";
-      if (s.note) {
-        // the note belongs to the queued batch now; the stored note is cleared so the next Send does not repeat it
-        s.queuedNote = [s.queuedNote, s.note].filter(Boolean).join("\n\n");
-        s.note = "";
-      }
+      // the note belongs to the queued batch now; it leaves the box so the next Send does not repeat it
+      s.queuedNote = queuedNote;
+      s.note = "";
       if (fresh.length || s.queuedNote) s.queued = true; // a Send with nothing new queues nothing (no empty batch after this one)
+      this.#sentRev(s, payload, true);
       this.#changed(s);
       this.#voice(s, { sent: fresh });
       return s;
     }
-    const { diskSha, written, writtenSha, writeInfo, lastUpdate } = this.#takePage(s, payload);
+    // a batch still waiting for an agent is replaced: its comments go again (they are "sent"), and so does its note, first
+    const waiting = s.pending && !readOnlyKind(s.pending) ? s.pending.instructions?.overall_note || "" : "";
+    const note = joinNotes(waiting, s.note); // before anything is written
+    // the bytes that become the file are read whole before anything is written (one past a reader's cap is refused: CapError, nothing
+    // changes), and every anchor of the batch is built from them, by the anchor worker (sendAsync) or here
+    const newEdits = this.#editsToTake(s, payload.edits);
+    const { eligible, edits, vs, tasks } = this.#sendTasks(s, newEdits, payload.viewState, { ...plan, comments: s.comments });
+    // what is stored must fit its file once cut (src/retain.js SESSION_MAX): checked before the file is written or anything changes
+    if (!this.#fits(s, { comments: s.comments, edits: [...s.edits, ...newEdits] })) throw tooLarge("This Send");
+    let work = null;
+    const { diskSha, writtenSha, writeInfo, lastUpdate } = this.#takePage(s, payload, (b, sha) => {
+      work = this.#results(s.format, b, sha, tasks, payload.prepared, { check: true });
+      this.#readVerdict(work, s.format, sha, "refusing to write");
+    });
 
     // user edits since the last Send (document-derived text) accumulate until a batch is delivered
-    for (const e of Array.isArray(payload.edits) ? payload.edits.slice(0, 2000) : []) s.edits.push({ kind: e.kind, before: e.before, after: e.after, label: e.label, location: e.location });
+    s.edits.push(...newEdits);
+    // a comment whose anchor work did not finish goes out weaker (src/anchor-work.js weakDurable); a PPTX pin on a shape also remembers its slide
+    eligible.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : weakDurable(s.format, c.anchor)));
+    edits.forEach((e, i) => (e.durable = usable(work.at(eligible.length + i)) ? work.at(eligible.length + i) : weakDurable(s.format, editAnchor(e))));
+    const v = vs ? work.at(eligible.length + edits.length) : null;
+    s.view = !vs ? null : usable(v) ? v : { format: s.format, raw: vs };
+    if (work.outline) this.#outline = { key: s.key, sha: writtenSha, all: work.outline };
 
-    const units = readUnits(s.format, written);
-    const resolve = (anchor) => buildDurable(units, anchor);
-    const eligible = s.comments.filter((c) => c.status === "draft" || c.status === "sent");
-    for (const c of eligible) {
-      c.durable = resolve(c.anchor);
-      // a PPTX pin dropped on a shape also remembers its slide: if the shape is deleted the pin stays on the slide
-      if (units.format === "pptx" && c.kind === "pin" && c.durable?.shapeId != null) c.durable.pinFallback = buildDurable(units, { location: { slideIndex: c.durable.slideIndex, slideId: c.durable.slideId } });
-    }
-    for (const e of s.edits) e.durable = e.durable || resolve({ location: e.location, quote: e.after });
-    s.view = this.#resolveView(s, units, payload.viewState);
-
-    const batch = buildBatch({ file: s.file, format: s.format, baseSha: writtenSha, note: s.note, comments: eligible, edits: s.edits, style: styleNote(), guide: voiceGuide() });
+    const batch = buildBatch({ file: s.file, format: s.format, baseSha: writtenSha, note, comments: eligible, edits: s.edits, style: styleNote(), guide: voiceGuide() });
     const sent = eligible.filter((c) => c.status === "draft");
     for (const c of eligible) {
       c.status = "sent";
@@ -444,6 +1125,7 @@ export class Sessions extends EventEmitter {
     this.#deliverIfPolled(s);
     delete s.quickConfirm;
     delete s.skipLocalNote; // it held for this Send only (the decision for its batch is made)
+    this.#sentRev(s, payload, true);
     this.#changed(s);
     this.#voice(s, { last: lastUpdate, diskSha, writtenSha, sent });
     if (this.state(s) === "stranded" && !s.pollers.length) this.emit("stranded", s); // nobody took it: the server may start its background agent
@@ -453,8 +1135,8 @@ export class Sessions extends EventEmitter {
   /**
    * The page's bytes become the file, as at Send (and at a quick fix's Use): the disk read, the compare-and-swap against the version
    * the page loaded, the package check, the guarded replace, the "sent" snapshot, the new base and the person's own history update.
-   * `check(bytes)` (optional) sees the bytes that are about to be the file, after the package check and before anything is written, and
-   * may throw to refuse. Returns {disk, diskSha, written, writtenSha, writeInfo, lastUpdate}.
+   * `check(bytes, sha)` (optional) sees the bytes that are about to be the file and their sha256, after the package check and before
+   * anything is written, and may throw to refuse. Returns {disk, diskSha, written, writtenSha, writeInfo, lastUpdate}.
    */
   #takePage(s, payload, check = null) {
     const hasBytes = !!payload.bytes?.length;
@@ -466,25 +1148,33 @@ export class Sessions extends EventEmitter {
       throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
     }
     const diskSha = sha256(disk);
-    if (diskSha !== payload.baseSha) {
-      throw this.#outsideChange(s, { side: "user", bytes: payload.bytes, diskSha, baseSha: payload.baseSha });
+    // an HTML file's text edits were applied by its write check (#htmlSendWork) to the version the page loaded: no bytes come from the page
+    const htmlChecked = s.format === "html" ? payload.htmlChecked ?? null : null;
+    if (diskSha !== payload.baseSha || (htmlChecked && htmlChecked.from !== diskSha)) {
+      // an HTML page sent no bytes: nothing of its to keep as a copy (its edits stay in the page, which reloads and places them again)
+      throw this.#outsideChange(s, { side: "user", bytes: s.format === "html" ? null : payload.bytes, diskSha, baseSha: payload.baseSha });
     }
     let written = disk;
     let writeInfo = null;
     if (hasBytes) {
-      if (payload.bytes.length > MAX_BYTES) throw new HttpError(413, "document too large");
-      try {
-        validatePackage(payload.bytes, s.format);
-      } catch (err) {
-        throw new HttpError(422, `refusing to write: ${err.message}`, { code: "invalid_package" });
+      if (payload.bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
+      if (s.format === "html") {
+        if (htmlChecked?.to !== sha256(payload.bytes)) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
+      } else {
+        try {
+          validatePackage(payload.bytes, s.format);
+        } catch (err) {
+          throw new HttpError(422, `refusing to write: ${err.message}`, { code: "invalid_package" });
+        }
       }
     }
-    if (check) check(hasBytes ? payload.bytes : disk);
+    const writtenSha = hasBytes ? sha256(payload.bytes) : diskSha;
+    if (htmlChecked && hasBytes) readInCaps("html", writtenSha); // the write check read these bytes whole within the limits
+    if (check) check(hasBytes ? payload.bytes : disk, writtenSha);
     if (hasBytes) {
-      writeInfo = this.#replace(s, payload.bytes, { expectSha: diskSha, label: "before send", side: "user" });
+      writeInfo = this.#replace(s, payload.bytes, { expectSha: diskSha, label: "before send", side: "user", htmlChecked });
       written = payload.bytes;
     }
-    const writtenSha = sha256(written);
     s.snapshots.add(written, "sent");
     s.baseSha = writtenSha;
     const lastUpdate = s.history?.at(-1); // learning pairs an agent run with the person's edits right after it
@@ -508,16 +1198,21 @@ export class Sessions extends EventEmitter {
    * (DOCX paragraphs, formatting and moves: src/merge.js; XLSX cells: src/merge-xlsx.js; PPTX shape text: src/merge-pptx.js) is carried onto it as ops (same engine, expect, protected and package checks
    * as an agent's apply) and written as the user's own update. Refused while a batch is delivered (423): the page waits and asks
    * again. Returns {merged, unplaced, sha, same, mineSha, copy_name}.
-   * Ceiling: the engine runs in the server process (about 0.1 s on a 300-paragraph file); move it to a worker if large files stall polls.
+   * The reading of the three versions within the readers' caps, the plan and the engine's run happen in a worker thread with a time and
+   * memory limit (src/offload.js mergeOffThread): the server's thread stays free whatever the document. A merge that fails or runs out of
+   * time writes nothing: the person's version is saved as a copy next to the file and the page keeps their edits (503 merge_failed).
+   * One merge per session at a time (another is 423 locked; the page has only one in flight).
    */
   async mergeUserEdits(key, { baseSha, bytes, edits = [] }) {
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     if (s.delivered) throw new HttpError(423, s.delivered.local ? "a change is being made on this Mac" : "the agent is working", { code: "locked" });
-    const merger = MERGERS[s.format];
+    if (s.merging) throw new HttpError(423, "your edits are being merged already", { code: "locked" });
+    // an HTML view is read only during a run (PLAN-html D5): nothing is typed to merge, and its bytes never come from the page
+    if (s.format === "html") throw new HttpError(400, "an HTML file's edits are never merged: its view is read only while the agent works", { code: "not_for_html" });
     if (!/^[0-9a-f]{64}$/.test(baseSha)) throw new HttpError(400, "baseSha must be a sha256"); // it names a snapshot file
     if (!bytes?.length) throw new HttpError(400, "no document bytes");
-    if (bytes.length > MAX_BYTES) throw new HttpError(413, "document too large");
+    if (bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
     try {
       validatePackage(bytes, s.format);
     } catch (err) {
@@ -539,8 +1234,19 @@ export class Sessions extends EventEmitter {
     } catch {
       throw new HttpError(409, "the version this page started from is no longer stored", { code: "no_base" });
     }
-    const [mod, { runOps }] = await Promise.all([import(merger.module), import("./ops/run.js")]);
-    const r = await mod[merger.fn]({ base, mine: bytes, theirs: disk, name: path.basename(s.file), runOps, edits: editKinds(edits), agent: s.format === "xlsx" ? this.#writesBetween(s, baseSha, diskSha, disk) : null });
+    // the three versions are read whole within the readers' caps in the worker first (the page's version, a file swapped on disk and an
+    // old snapshot alike): past one, the merge is refused with the reason and nothing is written
+    let r;
+    s.merging = true;
+    try {
+      r = await mergeOffThread({ format: s.format, base, mine: bytes, theirs: disk, name: path.basename(s.file), edits: editKinds(edits), agent: s.format === "xlsx" ? this.#writesBetween(s, baseSha, diskSha, disk) : null });
+    } finally {
+      s.merging = false;
+    }
+    if (r.cap) throw new CapError(r.cap);
+    if (r.invalid) throw new HttpError(422, `refusing to merge: ${untrusted(r.invalid, 200)}`, { code: "invalid_package" });
+    if (!r.ok) throw this.#mergeFailed(s, bytes, r);
+    if (r.bytes) r.bytes = Buffer.from(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength); // a Uint8Array once it crossed threads
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     if (s.delivered) throw new HttpError(423, s.delivered.local ? "a change is being made on this Mac" : "the agent is working", { code: "locked" }); // a batch was delivered while the engine ran
     // The page shows the first HELD_SHOWN items and drops its own version when it reloads. When the list stands for more than it
@@ -568,6 +1274,24 @@ export class Sessions extends EventEmitter {
     // the second pass compares this version of the page with the result: the sheets kept their addresses where this pass merged by address
     if (Array.isArray(r.stable)) this.#logWrite(s, { from: sha256(bytes), to: sha, route: "merge", stable: r.stable });
     return { same: false, merged: r.merged, unplaced: r.unplaced.slice(0, 50), sha, mineSha: sha256(bytes), copy_name: copy?.name ?? null };
+  }
+
+  /**
+   * A merge that did not finish (out of time or memory, busy, crashed) or whose result the proof refused: nothing was written. The person's version is saved next to the
+   * file (except when Onionskin was only busy) and the answer says so in words the page shows inside its own sentence ("could not be
+   * merged into its version (...). Your edits are still in this page: download them before you reload.").
+   */
+  #mergeFailed(s, bytes, r) {
+    if (r.failed === "busy") return new HttpError(503, "Onionskin is merging other files right now; nothing was written, so try again in a moment", { code: "merge_busy" });
+    let copy = null;
+    try {
+      copy = writeSiblingCopy(s.file, bytes);
+      this.createdCopies.add(copy.path);
+    } catch {}
+    // refused: the proof of the merge (src/merge-proof.js) could not account for every edit of the person's in the result; the reason
+    // holds counts and kinds of edits, never their text
+    const why = r.failed === "timeout" || r.failed === "memory" ? r.why : r.refused ? `the merged file could not be checked to hold every one of your edits (${r.refused})` : "the merge stopped with an error";
+    return new HttpError(503, `${why}; nothing was written${copy ? `, and a copy of your version was saved as ${copy.name} next to the file` : ""}`, { code: "merge_failed", copy_name: copy?.name ?? null });
   }
 
   #logWrite(s, entry) {
@@ -610,7 +1334,9 @@ export class Sessions extends EventEmitter {
    * replacement (see replaceGuarded). `expectSha` is the hash the caller compared against; a file that is different now, or becomes
    * different just before the rename, is not overwritten (the newer bytes are snapshotted) and the caller gets the 409 conflict.
    */
-  #replace(s, bytes, { expectSha, label, side = null }) {
+  #replace(s, bytes, { expectSha, label, side = null, htmlChecked = null }) {
+    // R1, R12: an HTML file is written only with bytes its write check passed in a worker (agentWriteChecked); every other path refuses
+    if (s.format === "html" && htmlChecked?.to !== sha256(bytes)) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
     try {
       return replaceGuarded(s.file, bytes, {
         expectSha,
@@ -682,14 +1408,6 @@ export class Sessions extends EventEmitter {
     const s = this.get(key);
     const diskSha = sha256(readCapped(s.file));
     return { stale: !s.delivered && !!loadedSha && diskSha !== loadedSha, diskSha };
-  }
-
-  #resolveView(s, units, vs) {
-    if (!vs) return null;
-    if (units.format === "docx" && vs.format !== "docx") return { format: s.format, raw: vs };
-    if (units.format !== "docx") return viewDurable(units, vs) || { format: s.format, raw: vs };
-    const d = durableFromEngine(units.paragraphs, { blockPath: vs.blockPath }, { quote: vs.quote });
-    return { format: "docx", durable: d, offsetPx: Number(vs.offsetPx) || 0, zoom: vs.zoom ?? "fit", fraction: vs.fraction };
   }
 
   // ---- poll / delivery -------------------------------------------------------------------------------------
@@ -776,17 +1494,30 @@ export class Sessions extends EventEmitter {
    * written to <state>/agents/<key>/outline/outline-<batch id>.jsonl (0600, atomic, one unit per line), the only folder that agent may read,
    * and the batch names it. Older outline files of the session go at each such delivery, and with the folder on Close.
    * Any other holder, a review (it has `units`) and a voice request (it quotes only the sources the person ticked) get the batch as stored.
-   * A file that cannot be read gets no outline (the agent declines what it cannot find); an outline file that cannot be written leaves the
-   * inline part with `outline_more`. Ceiling: read and parsed on the main thread at each such delivery, as a review is; upgrade path as in unitsOf.
+   * A file that cannot be read gets no outline, and `outline_unavailable` says why (the agent declines what it cannot find); an outline file that cannot be written leaves the
+   * inline part with `outline_more`. The outline is built in the anchor worker at Send, at done and before a poll's delivery (outlineAhead),
+   * and found here by the file's hash. Ceiling: a delivery that finds none (a synchronous caller, or the file changed in between) reads and
+   * parses the file on this thread, as a review does; upgrade path as in unitsOf.
    */
   #withOutline(s, batch, holder) {
     if (!isAgentHolder(holder) || batch.instructions?.review || batch.instructions?.voice_request) return batch;
     let all;
     try {
       checkRegularOwned(s.file);
-      all = outlineOf(s.format, readCapped(s.file), OUTLINE_FILE_MAX);
-    } catch {
-      return batch;
+      const bytes = readCapped(s.file);
+      const sha = sha256(bytes);
+      // the same version's outline is built once (an agent's polls and a Send's delivery read the same file), on the memo's reading of it
+      if (this.#outline?.key === s.key && this.#outline.sha === sha) all = this.#outline.all;
+      // an HTML file is never parsed on this thread: its outline comes from the anchor worker (Send, done, outlineAhead) or not at all
+      else if (s.format === "html") return { ...batch, untrusted_document_evidence: { ...batch.untrusted_document_evidence, outline_unavailable: "Onionskin did not finish reading this page's outline in time. Use the anchors and their quotes; poll again for an outline." } };
+      else {
+        all = outlineOf(s.format, bytes, OUTLINE_FILE_MAX, unitsFor(s.format, bytes, sha));
+        this.#outline = { key: s.key, sha, all };
+      }
+    } catch (err) {
+      // the agent is told why it has no outline (a file changed past a reader's cap behind Onionskin, or gone), in the reader's plain words
+      const why = err instanceof CapError ? `Onionskin cannot read this file: ${err.message}.` : "Onionskin cannot read this file as it is now.";
+      return { ...batch, untrusted_document_evidence: { ...batch.untrusted_document_evidence, outline_unavailable: why } };
     }
     const inline = withOutline(batch, all, VOICE_BATCH_MAX_CHARS, { inlineMax: UNITS_MAX });
     const name = `outline-${batch.batch_id}.jsonl`;
@@ -848,7 +1579,7 @@ export class Sessions extends EventEmitter {
   #queuedToDrafts(s) {
     if (s.queued) {
       for (const c of s.comments) if (c.status === "queued") c.status = "draft";
-      s.note = [s.queuedNote, s.note].filter(Boolean).join("\n\n");
+      this.#giveNote(s, [s.queuedNote, s.note].filter(Boolean).join("\n\n"));
       s.queuedNote = "";
     }
     s.queued = false;
@@ -1000,10 +1731,21 @@ export class Sessions extends EventEmitter {
   }
 
   /**
+   * The delivered batch, for its lease holder only (`GET /cli/batch` with a claim): holder, batch id and token are all required and checked
+   * before anything of the batch is handed out, so `reply` and `apply` read no anchors, comments or file text for a delivery that is not theirs.
+   */
+  deliveredBatch(key, claim) {
+    const s = this.get(key);
+    if (!s.delivered) throw new HttpError(409, "no batch is delivered for this file, so the ticket is void", { code: "no_batch" });
+    this.#assertLease(s, { ...claim, strict: true });
+    return s.delivered.batch;
+  }
+
+  /**
    * `apply` through a live session: the single authority for the write. Accepted only while a batch is delivered (state working or
    * queued: both hold a live lease) and only for the lease holder; compare-and-swap on the disk hash; renews the lease.
    */
-  agentWrite(key, { baseSha, bytes, holder, token, batchId, label = "before agent write", route = "commit", ops = null, partial = false }) {
+  agentWrite(key, { baseSha, bytes, holder, token, batchId, label = "before agent write", route = "commit", ops = null, partial = false, htmlChecked = null }) {
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     const state = this.state(s);
@@ -1014,11 +1756,20 @@ export class Sessions extends EventEmitter {
     // `commit` does not know the hash its candidate was edited from: the base is the last hash this server wrote or served for the delivery
     if (baseSha == null) baseSha = s.delivered.knownSha ?? s.delivered.preSha;
     if (!bytes?.length) throw new HttpError(400, "no bytes");
-    if (bytes.length > MAX_BYTES) throw new HttpError(413, "document too large");
-    try {
-      validatePackage(bytes, s.format);
-    } catch (err) {
-      throw new HttpError(422, `refusing to write: ${err.message}`, { code: "invalid_package" });
+    if (bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
+    const newSha = sha256(bytes);
+    if (s.format === "html") {
+      // checked in a worker (agentWriteChecked) for exactly these bytes; the disk hash it was checked against is compared below
+      if (htmlChecked?.to !== newSha) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
+    } else {
+      try {
+        validatePackage(bytes, s.format);
+      } catch (err) {
+        throw new HttpError(422, `refusing to write: ${err.message}`, { code: "invalid_package" });
+      }
+      // read whole before anything is written, as a Send's bytes are: bytes past a reader's cap are refused with the reason (CapError, 422
+      // too_large), never written to leave the next outline, review and done without a reading. The reading is kept for them (unitsFor).
+      readWhole(s.format, bytes, newSha);
     }
     let disk;
     try {
@@ -1029,9 +1780,10 @@ export class Sessions extends EventEmitter {
     }
     const diskSha = sha256(disk);
     if (diskSha !== baseSha) throw this.#outsideChange(s, { side: "agent", bytes, diskSha, baseSha, message: "the file changed on disk since apply read it" });
+    // R12: the compare-and-swap again after the check's await: the version it checked against must still be the one on disk
+    if (s.format === "html" && htmlChecked.from !== diskSha) throw this.#outsideChange(s, { side: "agent", bytes, diskSha, baseSha: htmlChecked.from, message: "the file changed on disk while the write was being checked" });
     this.setStage(key, "writing"); // only once the checks passed: a refused write does not claim to be writing
-    const info = this.#replace(s, bytes, { expectSha: diskSha, label, side: "agent" });
-    const newSha = sha256(bytes);
+    const info = this.#replace(s, bytes, { expectSha: diskSha, label, side: "agent", htmlChecked });
     // what the merge may rely on later: the ops `apply` says it ran (checked against the bytes when a merge needs them), or that it was a commit
     const checked = route === "apply" && s.format === "xlsx" && Array.isArray(ops) && validateOps({ schema: "onionskin.ops/1", ops }).ok; // only the XLSX merge reads them
     this.#logWrite(s, checked ? { from: diskSha, to: newSha, route, ops, partial: partial === true, anchors: s.delivered.batch.untrusted_document_evidence?.anchors || [] } : { from: diskSha, to: newSha, route: route === "apply" ? "apply" : "commit", ops: null });
@@ -1041,6 +1793,41 @@ export class Sessions extends EventEmitter {
     s.lastWrite = info;
     this.#renew(s);
     return { ok: true, sha256: newSha, lease_expires_at: s.delivered.lease.expiresAt };
+  }
+
+  /**
+   * The agent's write (`/cli/agent-write`, `/cli/commit`) for every format. An HTML file's bytes first go through the write check
+   * (src/html-write.js checkedHtmlWrite: decoding, limits, a parse, the charset rule, the inventory of active content) in a worker; the
+   * bytes it returns (the charset declaration may be added) are then written by agentWrite, which checks the lease, the state and the
+   * disk hash again after that await (R12). Other formats: agentWrite as it is.
+   */
+  async agentWriteChecked(key, args, check = htmlWriteOffThread) {
+    const s = this.get(key);
+    if (s.format !== "html") return this.agentWrite(key, args);
+    // the cheap refusals first, so a write that cannot land costs no worker; agentWrite makes every one of them again after the await
+    if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
+    if (!s.delivered) throw new HttpError(409, `no batch is delivered to an agent (state: ${this.state(s)}); run poll and wait for the user's Send`, { code: "not_working", state: this.state(s) });
+    this.#assertLease(s, { holder: args.holder, token: args.token, batchId: args.batchId, strict: true });
+    if (!args.bytes?.length) throw new HttpError(400, "no bytes");
+    let disk;
+    try {
+      checkRegularOwned(s.file);
+      disk = readCapped(s.file);
+    } catch (err) {
+      throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
+    }
+    // the bytes checked are the ones whose hash agentWrite compares with the base and the disk after this await (from === disk === base)
+    const c = await check({ before: disk, after: args.bytes });
+    if (!c.ok) {
+      // a refused write is part of the run's result: the page lists it with the run (the R1 sentence for active content), nothing was written
+      if (c.code !== "check_failed" && s.delivered && !s.closed) {
+        const p = cleanProblem({ key: `write:${c.code}`, op: args.route === "apply" ? "apply" : "commit", status: "refused", code: c.code, reason: c.reason });
+        s.delivered.applyProblems = [...(s.delivered.applyProblems || []).filter((x) => x.key !== p.key), p].slice(0, 40);
+        this.#changed(s);
+      }
+      throw new HttpError(c.code === "check_failed" ? 503 : 422, c.reason, { code: c.code, ...(c.reasons ? { reasons: c.reasons } : {}) });
+    }
+    return this.agentWrite(key, { ...args, bytes: c.bytes, htmlChecked: { from: sha256(disk), to: sha256(c.bytes) } });
   }
 
   /**
@@ -1082,7 +1869,25 @@ export class Sessions extends EventEmitter {
     return { pre, post, format: s.format, postSha: sha256(post), batchId: s.delivered.batch.batch_id, deferSoffice: env("SOFFICE_SYNC", "") !== "1" };
   }
 
-  done(key, results, claim = {}, analysis = null) {
+  /**
+   * done() as the server calls it (src/server.js finishRun): the anchors of the comments queued during the run (moved onto the file the
+   * agent leaves), a review's cards and the outline for a waiting agent are worked out first in the anchor worker, then done() commits
+   * with them and reads none of it on this thread. Work that did not finish leaves those comments weaker, with a flag; never lost.
+   */
+  async doneAsync(key, results, claim = {}, analysis = null, opts = {}) {
+    return this.#serial(key, async () => {
+      const s = this.get(key);
+      const run = s.delivered;
+      const tasks = [];
+      if (run && s.queued) tasks.push(...s.comments.filter((c) => c.status === "queued").map(reanchorTask));
+      if (run?.batch.instructions?.review && s.review?.batchId === run.batch.batch_id && results && typeof results === "object") tasks.push(cardsTask(results, s.review, run));
+      const prepared = run && (tasks.length || this.#wantsOutline(s)) ? await this.#offThread(s.format, { source: { path: s.file }, tasks, outline: this.#wantsOutline(s) }) : null;
+      return this.done(key, results, claim, analysis, { ...opts, prepared });
+    });
+  }
+
+  /** `inline: false` (the server): never analyze on this thread; an analysis for other bytes (the file changed while it ran) is a stated failure. */
+  done(key, results, claim = {}, analysis = null, { inline = true, prepared = null } = {}) {
     const s = this.get(key);
     if (!s.delivered) throw new HttpError(409, "no batch is in progress for this file (taken back or already finished)", { code: "no_batch" });
     this.#assertLease(s, claim, { staleOnHolder: true });
@@ -1096,10 +1901,10 @@ export class Sessions extends EventEmitter {
       throw new HttpError(409, `cannot read the file: ${err.message}`);
     }
     const postSha = sha256(post);
-    if (readOnlyKind(run.batch) === "voice") return this.#doneVoice(s, results, run, post, postSha);
+    if (readOnlyKind(run.batch) === "voice") return this.#doneVoice(s, results, run, post, postSha, prepared);
     // a review that wrote nothing ends with cards. One whose file changed anyway (a direct save past review_only) is finished as a run below:
     // its write is flagged and can be reverted, and no card is kept
-    if (run.batch.instructions?.review && postSha === run.preSha) return this.#doneReview(s, results, run, post);
+    if (run.batch.instructions?.review && postSha === run.preSha) return this.#doneReview(s, results, run, post, prepared);
     s.snapshots.add(post, "after agent");
 
     // ---- plan: everything that can throw happens here, on locals; the session is not touched until the commit below ------
@@ -1113,7 +1918,14 @@ export class Sessions extends EventEmitter {
     let found;
     if (!pre) found = { flags: [{ code: "no_pre_snapshot", severity: "warn" }], checks: { node: "skipped", deep: { status: "skipped", reason: "no pre-agent snapshot" }, notice: "Checks skipped: the pre-agent version is no longer stored." }, changes: null };
     else if (analysis && analysis.postSha === postSha && analysis.batchId === run.batch.batch_id) found = analysis;
-    else found = analyze(pre, post, s.format);
+    else if (!inline) {
+      const why = "the file changed while it was being checked";
+      found = { flags: [{ code: "checks_failed", severity: "warn", detail: why }], checks: { node: "failed", deep: { status: "skipped", reason: why }, notice: `The package checks did not finish: ${why}. The file was not verified.` }, changes: null };
+    } else if (s.format === "html") {
+      // an HTML file is read in workers only: a caller without the worker's analysis gets it stated as not run, never as clean
+      const why = "the checks of an HTML file run in a worker";
+      found = { flags: [{ code: "checks_failed", severity: "warn", detail: why }], checks: { node: "failed", deep: { status: "skipped", reason: why }, notice: `The checks did not run: ${why}. The file was not verified.` }, changes: null };
+    } else found = analyze(pre, post, s.format);
     const flags = [...found.flags];
     const { checks, changes } = found;
     // the file must be what this server last wrote (apply/commit) or delivered; anything else changed it behind the lease (a direct save by
@@ -1154,7 +1966,8 @@ export class Sessions extends EventEmitter {
     // style.json changed by something else while this batch was out (an agent with a shell, say): already put back by src/style.js
     this.#guardFlags(run, flags);
     if (results.voice_draft !== undefined) flags.push({ code: "voice_draft_not_allowed", severity: "warn" }); // only a voice batch takes a draft; nothing is stored
-    const queuedPlan = this.#planQueued(s, post, postSha, flags);
+    const queuedPlan = this.#planQueued(s, post, postSha, flags, prepared);
+    if (prepared?.ok && prepared.sha === postSha && prepared.outline) this.#outline = { key: s.key, sha: postSha, all: prepared.outline };
     const cleanFlags = flags.map(cleanFlag);
     const { list: ignored, more: ignoredMore } = ignoredInstructions(results.document_instructions_ignored);
     const entry = {
@@ -1280,27 +2093,21 @@ export class Sessions extends EventEmitter {
   }
 
   /** Comments queued while the agent worked become the next pending batch, anchored on the file the agent leaves. Pure planning: touches no session state; re-anchoring problems are pushed onto `flags`. */
-  #planQueued(s, post, postSha, flags) {
+  // `prepared`: the anchor worker's answer for the same tasks (doneAsync); without it the anchors are moved on this thread.
+  #planQueued(s, post, postSha, flags, prepared = null) {
     let plan = null;
     if (s.queued) {
       const queued = s.comments.filter((c) => c.status === "queued");
       if (queued.length || s.queuedNote) {
-        let units = null;
-        try {
-          units = readUnits(s.format, post);
-        } catch (err) {
-          flags.push({ code: "queued_reanchor_failed", severity: "warn", detail: err.message });
-        }
+        const work = this.#results(s.format, post, postSha, queued.map(reanchorTask), prepared);
+        const read = work.read;
+        if (!read?.ok) flags.push({ code: "queued_reanchor_failed", severity: "warn", detail: read?.invalid || read?.cap || "the anchors could not be worked out in time" });
         const durables = new Map();
-        for (const c of queued) {
-          let d = null;
-          try {
-            if (units) d = reanchor(units, c);
-          } catch (err) {
-            flags.push({ code: "queued_reanchor_failed", severity: "warn", comment_id: c.id, detail: err.message });
-          }
-          durables.set(c.id, d);
-        }
+        queued.forEach((c, i) => {
+          const r = work.at(i);
+          if (read?.ok && !usable(r)) flags.push({ code: "queued_reanchor_failed", severity: "warn", comment_id: c.id, detail: r?.error ?? "the anchor could not be worked out in time" });
+          durables.set(c.id, read?.ok && usable(r) ? r : weakDurable(s.format, c.anchor));
+        });
         const batch = buildBatch({ file: s.file, format: s.format, baseSha: postSha, note: s.queuedNote, comments: queued.map((c) => ({ ...c, durable: durables.get(c.id) })), edits: [], style: styleNote(), guide: voiceGuide() });
         plan = { queued, durables, batch };
       }
@@ -1318,6 +2125,7 @@ export class Sessions extends EventEmitter {
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     if (!REVIEW_KINDS.includes(kind)) throw new HttpError(400, `kind must be one of ${REVIEW_KINDS.join(", ")}`, { code: "bad_kind" });
+    if (s.format === "html") throw new HttpError(409, "Review first is not available for HTML files in this version. Comment on the page and press Send.", { code: "not_for_html" }); // PLAN-html 2a: the page hides the button
     if (s.delivered || s.pending) throw new HttpError(409, s.delivered?.local ? "Wait for the change on this Mac to finish, then try again." : "Wait for the agent to finish, then try again.", { code: "busy" });
     let disk;
     try {
@@ -1334,7 +2142,7 @@ export class Sessions extends EventEmitter {
   }
 
   #reviewBatch(s, kind, bytes, baseSha) {
-    const { units, more, index } = unitsOf(s.format, bytes);
+    const { units, more, index } = unitsOf(s.format, bytes, unitsFor(s.format, bytes, baseSha));
     const batch = buildBatch({ file: s.file, format: s.format, baseSha, note: "", comments: [], edits: [], review: { kind, ask: REVIEW_ASKS[kind] }, units, unitsMore: more });
     s.review = { batchId: batch.batch_id, kind, units: units.map((u) => ({ id: u.id, protected: u.protected })), index };
     s.decidedBatch = batch.batch_id; // never the local runner's: only an agent reads the file
@@ -1342,13 +2150,19 @@ export class Sessions extends EventEmitter {
   }
 
   /** `done` of a review that wrote nothing: the suggestions become cards (checked against the file), an activity entry of kind "review", no history update. */
-  #doneReview(s, results, run, post) {
+  #doneReview(s, results, run, post, prepared = null) {
     const flags = [];
     const ix = s.review?.batchId === run.batch.batch_id ? s.review : null;
-    const { cards, dropped } = ix ? cardsFrom(results.suggestions, { bytes: post, format: s.format, units: ix.units, index: ix.index, reviewId: run.batch.batch_id }) : { cards: [], dropped: (Array.isArray(results.suggestions) ? results.suggestions : []).map((_, i) => ({ index: i, reason: "the review's outline is gone" })) };
+    const gone = (why) => ({ cards: [], dropped: (Array.isArray(results.suggestions) ? results.suggestions : []).map((_, i) => ({ index: i, reason: why })) });
+    let checked = gone("the review's outline is gone");
+    if (ix) {
+      const r = this.#results(s.format, post, run.preSha, [cardsTask(results, ix, run)], prepared).at(0);
+      checked = usable(r) && r ? r : gone("the suggestions could not be checked against the file in time");
+    }
+    const { cards, dropped } = checked;
     for (const d of dropped) flags.push({ code: "bad_suggestion", severity: "warn", ...(d.index != null ? { index: d.index } : {}), reason: d.reason });
     if (results.voice_draft !== undefined) flags.push({ code: "voice_draft_not_allowed", severity: "warn" });
-    const queuedPlan = this.#planQueued(s, post, run.preSha, flags);
+    const queuedPlan = this.#planQueued(s, post, run.preSha, flags, prepared);
     const cleanFlags = flags.map(cleanFlag);
     const { list: ignored, more: ignoredMore } = ignoredInstructions(results.document_instructions_ignored); // a review reads the whole file: its report counts most here
     const entry = {
@@ -1428,8 +2242,25 @@ export class Sessions extends EventEmitter {
    * and Revert, as for any local run. The text written is the stored suggestion, never text from the page. Every refusal happens before
    * anything is written. Other comments and the overall note stay for the next Send; typed edits ride with it too.
    */
-  useSuggestion(key, { suggestion: rec, commentId, comments, note, baseSha, bytes = null, edits = [] }) {
+  /**
+   * useSuggestion() as the server's route calls it (src/suggest.js): where the suggestion goes in the bytes about to be the file, and
+   * the one reply that writes it, are worked out in the anchor worker first. Work that did not finish writes nothing: the comment stays a
+   * draft and says it can go to the agent, as when the sentence is not found.
+   */
+  async useSuggestionAsync(key, args) {
     const s = this.get(key);
+    this.#useChecks(s, args); // refused before it waits its turn
+    return this.#serial(key, async () => {
+      const { id } = this.#useChecks(s, args);
+      const { c } = this.#usePlan(s, args, id); // nothing is stored before the commit, as a Send (sendAsync)
+      const bytes = args.bytes?.length && args.bytes.length <= MAX_BYTES ? args.bytes : null;
+      const prepared = await this.#offThread(s.format, { source: bytes ? { bytes } : { path: s.file }, tasks: [useTask(c.anchor, args.suggestion, id)] });
+      return this.useSuggestion(key, { ...args, prepared });
+    });
+  }
+
+  /** The refusals of a quick fix's Use that need nothing read (useSuggestion runs them first). Returns {id}. */
+  #useChecks(s, { suggestion: rec, commentId, comments }) {
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     if (s.delivered || s.pending) throw new HttpError(409, "The agent started working on this file, so nothing was written. Ask the agent instead, or try again when it is done.", { code: "busy" });
     const words = rec && Object.hasOwn(STAMP_WORDS, rec.task) && rec.task !== "translate" ? STAMP_WORDS[rec.task] : null;
@@ -1439,22 +2270,37 @@ export class Sessions extends EventEmitter {
     const old = s.comments.find((c) => c.id === id);
     const sameAnchor = (a) => a && typeof a === "object" && a.quote === rec.quote && JSON.stringify(a.location ?? null) === JSON.stringify(rec.location ?? null);
     if (!mine || userText(mine.text) !== words || !sameAnchor(mine.anchor) || (old && old.status !== "draft")) throw new HttpError(409, "This comment is not the suggestion's stamp.", { code: "not_this_comment" });
+    return { id };
+  }
 
-    this.setDraft(key, { comments, note: note ?? s.note });
+  /** What a Use stores before it commits (#sentPlan with its stamp), the stamp as planned, and every limit checked: nothing changed. */
+  #usePlan(s, { comments, note, edits = [], rev, tab, seen, noteSeen, bytes = null }, id) {
+    if (bytes?.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" }); // before anything is stored, as a Send
+    const saved = this.#sentPlan(s, { comments, note, rev, tab, seen, noteSeen }, id);
+    const c = saved.comments.find((x) => x.id === id);
+    if (c?.status !== "draft") throw new HttpError(409, "This comment is not the suggestion's stamp.", { code: "not_this_comment" });
+    if (!this.#fits(s, { comments: saved.comments, edits: [...s.edits, ...this.#editsToTake(s, edits)] })) throw tooLarge("This request");
+    return { saved, c };
+  }
+
+  useSuggestion(key, { suggestion: rec, commentId, comments, note, baseSha, bytes = null, edits = [], prepared = null, rev, tab, seen, noteSeen }) {
+    const s = this.get(key);
+    const { id } = this.#useChecks(s, { suggestion: rec, commentId, comments });
+    // the page's list and note are saved first (only the stamp goes out), after every limit is checked on them
+    this.#commitDraft(s, this.#usePlan(s, { comments, note, edits, rev, tab, seen, noteSeen, bytes }, id).saved, rev, tab, true);
     const c = s.comments.find((x) => x.id === id);
-    const anchor = { location: c.anchor.location, quote: c.anchor.quote, prefix: c.anchor.prefix, suffix: c.anchor.suffix };
     let plan = null;
-    // the place and the reply are worked out on the very bytes that are about to be the file; any refusal here writes nothing
-    const check = (b) => {
-      const units = readUnits(s.format, b);
-      const durable = buildDurable(units, anchor);
-      const place = placeOf(units, durable, rec.quote);
+    // the place and the reply are worked out on the very bytes that are about to be the file (by the anchor worker, or here); any
+    // refusal here writes nothing, and work that did not finish is "not here"
+    const check = (b, sha) => {
+      const r = this.#results(s.format, b, sha, [useTask(c.anchor, rec, id)], prepared).at(0);
+      const { durable, place, reply } = usable(r) ? r : { durable: null, place: { ok: false, code: "not_here" }, reply: null };
       if (!place.ok) throw new HttpError(409, place.code === "protected" ? "This part of the file is protected, so it cannot be changed here." : LOCAL_HINT, { code: place.code });
-      const reply = buildUseReply(rec, id, place.text);
-      const batch = buildBatch({ file: s.file, format: s.format, baseSha: sha256(b), note: "", comments: [{ ...c, durable }], edits: [] });
+      const batch = buildBatch({ file: s.file, format: s.format, baseSha: sha, note: "", comments: [{ ...c, durable }], edits: [] });
       if (!reply || batch.instructions.comments[0]?.reply_with !== "find_replace_or_text") throw new HttpError(409, LOCAL_HINT, { code: "not_here" });
       plan = { durable, reply, batch };
     };
+    if (!this.#fits(s, { comments: s.comments, edits: [...s.edits, ...this.#editsToTake(s, edits)] })) throw tooLarge("This request"); // before anything is written
     let taken;
     try {
       taken = this.#takePage(s, { baseSha, bytes }, check);
@@ -1463,15 +2309,16 @@ export class Sessions extends EventEmitter {
       if (["not_here", "not_eligible", "protected"].includes(err?.extra?.code)) {
         c.localHint = LOCAL_HINT;
         this.#changed(s);
-      }
+      } else this.emit("change", s, "draft"); // the drafts it stored
       throw err;
     }
-    for (const e of Array.isArray(edits) ? edits.slice(0, 2000) : []) s.edits.push({ kind: e.kind, before: e.before, after: e.after, label: e.label, location: e.location });
+    s.edits.push(...this.#editsToTake(s, edits));
     c.durable = plan.durable;
     c.status = "sent";
     c.batchId = plan.batch.batch_id;
     delete c.localHint;
     s.lastWrite = taken.writeInfo;
+    this.#sentRev(s, { rev, tab });
     try {
       this.startLocal(key, plan.batch, { reply: plan.reply, summary: USE_SUMMARY, model: true }); // saves, tells the page, starts the runner
     } catch (err) {
@@ -1530,13 +2377,13 @@ export class Sessions extends EventEmitter {
    * "voice" with a fixed summary, no history update and no analysis. A file that changed anyway (a direct save past voice_only) is
    * recorded as a withdrawn run would be: flagged, kept Revert-able.
    */
-  #doneVoice(s, results, run, post, postSha) {
+  #doneVoice(s, results, run, post, postSha, prepared = null) {
     const flags = [];
     for (const r of (Array.isArray(results.results) ? results.results : []).slice(0, 1000)) flags.push({ code: "unknown_result", severity: "warn", comment_id: String(r?.comment_id ?? "").slice(0, 64) });
     const check = cleanVoiceDraft(results.voice_draft); // size first, then hidden characters, links and markup, the layout, the caps
     if (check.code) flags.push({ code: "bad_voice_draft", severity: "warn", reason: check.code });
     this.#guardFlags(run, flags);
-    const queuedPlan = this.#planQueued(s, post, postSha, flags);
+    const queuedPlan = this.#planQueued(s, post, postSha, flags, prepared);
     const { list: ignored, more: ignoredMore } = ignoredInstructions(results.document_instructions_ignored);
     // ---- commit: the draft file first (a failed write keeps nothing and says so), then the session
     let kept = false;
@@ -1589,7 +2436,7 @@ export class Sessions extends EventEmitter {
     if (!batch) throw new HttpError(409, "nothing to take back");
     // the note travels back with the comments: the withdrawn batch's note, then a queued one, then whatever was typed since
     const notes = [batch.instructions?.overall_note, s.queuedNote, s.note].filter(Boolean);
-    s.note = [...new Set(notes)].join("\n\n");
+    this.#giveNote(s, [...new Set(notes)].join("\n\n"));
     s.queuedNote = "";
     let event = "state";
     if (s.delivered) {
@@ -1640,7 +2487,27 @@ export class Sessions extends EventEmitter {
     return true;
   }
 
-  revert(key, activityId) {
+  /** revert() as the server's route calls it: a waiting batch's anchors are moved onto the restored version in the anchor worker first. */
+  async revertAsync(key, activityId) {
+    return this.#serial(key, async () => {
+      const s = this.get(key);
+      const entry = s.activity.find((a) => a.id === activityId && a.kind === "agent");
+      let prepared = null;
+      if (entry && !entry.reverted && !s.delivered && s.pending && !readOnlyKind(s.pending) && !s.pending.instructions?.review && s.snapshots.has(entry.preSha)) {
+        const tasks = this.#revertComments(s, entry).map(reanchorTask);
+        if (tasks.length) prepared = await this.#offThread(s.format, { source: { path: s.snapshots.blob(entry.preSha), sha: entry.preSha }, tasks });
+      }
+      return this.revert(key, activityId, { prepared });
+    });
+  }
+
+  /** The comments of the waiting batch, as revert() moves them: the run's comments become drafts first, so only the others are left. */
+  #revertComments(s, entry) {
+    const ids = new Set(s.pending.instructions.comments.map((c) => c.id));
+    return s.comments.filter((c) => ids.has(c.id) && !(c.batchId === entry.batchId && ["done", "declined", "asked"].includes(c.status)));
+  }
+
+  revert(key, activityId, { prepared = null } = {}) {
     const s = this.get(key);
     if (s.delivered) throw new HttpError(423, s.delivered.local ? "a change is being made on this Mac" : "the agent is working", { code: "locked" });
     const entry = s.activity.find((a) => a.id === activityId && a.kind === "agent");
@@ -1652,7 +2519,15 @@ export class Sessions extends EventEmitter {
     if (sha256(disk) !== entry.postSha) throw new HttpError(409, mac ? "the file changed after the change was made; revert refused" : "the file changed after the agent finished; revert refused", { code: "changed_since" });
     if (!s.snapshots.has(entry.preSha)) throw new HttpError(410, mac ? "the version before this change is no longer stored" : "the pre-agent version is no longer stored");
     const pre = s.snapshots.read(entry.preSha);
-    this.#replace(s, pre, { expectSha: entry.postSha, label: "before revert" }); // a revert is a new version
+    // an HTML file: a revert restores the version before the run, by identity (the stored bytes must hash to the run's preSha), never
+    // through the write check: that version was the file before (opened by the person or written after its own check), and checking it
+    // against the run's result would refuse undoing a run that removed active content (the revert would "add" it back)
+    let htmlChecked = null;
+    if (s.format === "html") {
+      if (sha256(pre) !== entry.preSha) throw new HttpError(410, mac ? "the version before this change is no longer stored" : "the pre-agent version is no longer stored");
+      htmlChecked = { from: entry.postSha, to: entry.preSha };
+    }
+    this.#replace(s, pre, { expectSha: entry.postSha, label: "before revert", htmlChecked }); // a revert is a new version
     s.snapshots.add(pre, "reverted");
     s.baseSha = entry.preSha;
     addUpdate(s, { kind: "revert", before: entry.postSha, after: entry.preSha, local: mac }, this.now());
@@ -1670,7 +2545,7 @@ export class Sessions extends EventEmitter {
     }
     for (const g of s.suggestions || []) if (g.status === "accepted" && g.acceptedBatch === entry.batchId) g.status = "open"; // the text is back: it can be accepted again
     if (entry.by === "local" && entry.localNote && !s.note) {
-      s.note = entry.localNote; // the request comes back to the box, and the same words go to the agent next time
+      this.#giveNote(s, entry.localNote); // the request comes back to the box, and the same words go to the agent next time
       s.skipLocalNote = entry.localNote;
     }
     // a batch built against the reverted version is rebuilt against the restored bytes (a review: its outline is read again; a voice
@@ -1680,19 +2555,9 @@ export class Sessions extends EventEmitter {
     else if (s.pending) {
       const ids = new Set(s.pending.instructions.comments.map((c) => c.id));
       const cs = s.comments.filter((c) => ids.has(c.id));
-      let units = null;
-      try {
-        units = readUnits(s.format, pre);
-      } catch {
-        units = null;
-      }
-      for (const c of cs) {
-        try {
-          if (units) c.durable = reanchor(units, c);
-        } catch {
-          c.durable = null;
-        }
-      }
+      // moved onto the restored version by the anchor worker (revertAsync) or here; one whose work did not finish goes out weaker
+      const work = this.#results(s.format, pre, entry.preSha, cs.map(reanchorTask), prepared);
+      if (work.read?.ok) cs.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : work.at(i)?.error ? null : weakDurable(s.format, c.anchor)));
       s.pending = buildBatch({ file: s.file, format: s.format, baseSha: entry.preSha, note: s.pending.instructions.overall_note, comments: cs, edits: [], style: styleNote(), guide: voiceGuide() });
       for (const c of cs) c.batchId = s.pending.batch_id;
     }
@@ -1704,6 +2569,7 @@ export class Sessions extends EventEmitter {
   close(key) {
     const s = this.get(key);
     s.closed = true;
+    this.#views.delete(key); // the render of an HTML file (htmlView)
     this.editors.delete(key); // the closed tab may stay on screen with its event stream open: it must not hold the file against the tab that reopens it
     for (const p of s.pollers.splice(0)) p.resolve({ status: "closed" });
     fs.rmSync(path.join(stateDir(), "agents", s.key, "outline"), { recursive: true, force: true }); // the outline files of Onionskin's own agent
@@ -1731,6 +2597,37 @@ export class Sessions extends EventEmitter {
     }
     this.watch?.taken(s); // src/watch.js: this version is Onionskin's own from now on
     return out;
+  }
+
+  // ---- the view of an HTML file (GET /api/html-view) ------------------------------------------------------------------------------
+  // key -> {sha, full, plain}: the render of one version (promises, so two requests for it share one worker run); one version per file,
+  // dropped when the file changes or the session closes. Ceiling: one entry per open HTML file, each up to ~43 MB (the render copy at the
+  // limits): a person with many large pages open holds them all; an LRU over files would be the upgrade.
+  #views = new Map();
+  /**
+   * The page's view of an HTML file (PLAN-html 3.2, R12): the disk bytes are taken as /api/file takes them (loadForPage: an outside change
+   * is recorded, the watcher told), then the render copy of exactly those bytes is built in the render worker (src/offload.js
+   * renderOffThread), or the plain copy with `plain`. Resolves to {sha, plain, reason, stats, texts, editable, ident, bytes}; throws HttpError
+   * 422 with the encoding's sentence and code (and `copyable`) or a limit's, 503 when the worker was busy or did not finish.
+   */
+  async htmlView(key, { plain = false } = {}) {
+    const s = this.get(key);
+    if (s.format !== "html") throw new HttpError(400, "this file is not an HTML file", { code: "not_html" });
+    const { bytes, diskSha } = this.loadForPage(key);
+    let c = this.#views.get(key);
+    if (!c || c.sha !== diskSha) this.#views.set(key, (c = { sha: diskSha, full: null, plain: null }));
+    const k = plain ? "plain" : "full";
+    if (!c[k]) {
+      const p = renderOffThread({ bytes, fileDir: path.dirname(s.file), plain }).then((r) => {
+        if (r.ok) return { sha: diskSha, plain: r.plain, reason: r.reason, stats: r.stats, texts: r.texts, editable: r.editable, ident: r.ident, bytes: r.bytes };
+        if (c[k] === p) c[k] = null; // a failure is not kept: the next request tries again
+        if (r.failed) throw new HttpError(503, `Onionskin could not prepare this page: ${r.why}. Try again in a moment.`, { code: r.failed === "busy" ? "busy" : "render_failed" });
+        if (r.code === "not_utf8" || ["utf16", "invalid_utf8", "roundtrip"].includes(r.code)) throw encodingRefusal(s.file, { error: r.error, code: r.code, copyable: r.copyable });
+        throw new HttpError(422, `Onionskin cannot read this file: ${r.error}.`, { code: "too_large" });
+      });
+      c[k] = p;
+    }
+    return c[k];
   }
 
   /** The history list and one update (browser routes, read-only; see src/history.js). */
@@ -1847,25 +2744,58 @@ export class Sessions extends EventEmitter {
    */
   resolveAll(key) {
     const s = this.get(key);
+    // an HTML file is read in workers only: on this thread every anchor is "moved or removed" (the server's route resolves in the worker)
+    if (s.format === "html") return { baseSha: sha256(readCapped(s.file)), format: s.format, anchors: Object.fromEntries(this.#resolveTask(s).comments.map((c) => [c.id, { method: "none" }])), view: null };
     const bytes = readCapped(s.file);
-    const out = { baseSha: sha256(bytes), format: s.format, anchors: {}, view: null };
-    const units = readUnits(s.format, bytes);
-    for (const c of s.comments) {
-      if (!c.durable) continue;
-      let r = resolveDurableAny(units, c.durable);
-      if (r.method === "none" && units.format === "pptx" && c.durable.pinFallback) {
-        const f = resolveDurableAny(units, c.durable.pinFallback);
-        if (f.method !== "none") r = { ...f, tieLost: true };
-      }
-      if (units.format === "docx" && r.method !== "none") r.heading = headingBefore(units.paragraphs, r.ordinal);
-      out.anchors[c.id] = r;
+    const baseSha = sha256(bytes);
+    const r = anchorWork({ format: s.format, bytes, sha: baseSha, tasks: [this.#resolveTask(s)], budget: SCAN_BUDGET });
+    if (!r.read.ok) throw r.read.cap ? new CapError(r.read.cap) : new Error(r.read.invalid);
+    if (r.results[0]?.error) throw new Error(r.results[0].error);
+    return { baseSha, format: s.format, ...r.results[0] };
+  }
+
+  /**
+   * resolveAll() as the server's route calls it: resolved in the anchor worker against the file on disk. Work that did not finish
+   * answers as a spent budget does: every anchor "moved or removed" (the page keeps the comments in its list), the view unknown.
+   */
+  async resolveAllAsync(key) {
+    const s = this.get(key);
+    const task = this.#resolveTask(s);
+    if (s.format === "html") await this.#htmlDrafts(s, task);
+    const r = await anchorsOffThread({ format: s.format, source: { path: s.file }, tasks: [task] });
+    if (r.ok && r.r.read.cap) throw new CapError(r.r.read.cap);
+    if (r.ok && r.r.read.ok && usable(r.r.results[0])) return { baseSha: r.sha, format: s.format, ...r.r.results[0] };
+    return { baseSha: r.ok ? r.sha : sha256(readCapped(s.file)), format: s.format, anchors: Object.fromEntries(task.comments.map((c) => [c.id, { method: "none" }])), view: null };
+  }
+
+  /**
+   * HTML: a draft (no durable yet) whose page anchor was made on another version than the file on disk (an outside change, a revert, a
+   * save) would be drawn at a node id of that other version. It is made durable on its own version first (a stored snapshot) and resolved
+   * with the others; one whose version is no longer stored resolves by its quote. Drafts made on the file's version need nothing: the page
+   * draws them at their own place.
+   */
+  async #htmlDrafts(s, task) {
+    let cur;
+    try {
+      cur = sha256(readCapped(s.file));
+    } catch {
+      return;
     }
-    if (s.format === "pptx") out.slides = units.deck.slides.map((x) => ({ index: x.index, id: x.id }));
-    if (s.format === "docx") {
-      if (s.view?.durable) out.view = { ...resolveDurable(units.paragraphs, s.view.durable), offsetPx: s.view.offsetPx, zoom: s.view.zoom, fraction: s.view.fraction };
-    } else out.view = resolveView(units, s.view);
-    out.sheets = s.format === "xlsx" ? units.wb.sheets.map((x) => ({ index: x.index, name: x.name, sheetId: x.sheetId })) : undefined;
-    return out;
+    const other = s.comments.filter((c) => !c.durable && c.anchor?.location?.version && c.anchor.location.version !== cur);
+    const byVersion = new Map();
+    for (const c of other) (byVersion.get(c.anchor.location.version) || byVersion.set(c.anchor.location.version, []).get(c.anchor.location.version)).push(c);
+    for (const [v, list] of byVersion) {
+      const r = s.snapshots.has(v) ? await this.#offThread("html", { source: { path: s.snapshots.blob(v), sha: v }, tasks: list.map(buildTask) }) : null;
+      for (const c of list) {
+        const d = r?.ok && r.read?.ok ? r.map.get(taskKey(buildTask(c))) : undefined;
+        const durable = usable(d) && d ? d : weakDurable("html", c.anchor);
+        if (durable) task.comments.push({ id: c.id, durable });
+      }
+    }
+  }
+
+  #resolveTask(s) {
+    return { op: "resolveAll", comments: s.comments.filter((c) => c.durable).map((c) => ({ id: c.id, durable: c.durable })), view: s.view };
   }
 }
 
@@ -1906,7 +2836,7 @@ function exportInWorker(job) {
     };
     const timer = setTimeout(() => finish({ timeout: true }), EXPORT_TIMEOUT_MS());
     try {
-      worker = new Worker(new URL("./redline-worker.js", import.meta.url), { workerData: job });
+      worker = startWorker("redline-worker.js", { workerData: job });
     } catch (err) {
       return finish({ check_failed: String(err?.message || err) });
     }

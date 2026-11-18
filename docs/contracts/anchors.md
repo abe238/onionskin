@@ -51,10 +51,10 @@ At Send the browser also sends `getViewState()`. The server turns `{blockPath, q
 
 Read from the written bytes by parsing `xl/workbook.xml` (sheets in order with `sheetId`, name and part, defined names), the sheet parts and the shared strings; no engine involved. Cell text is what the formula bar shows and what `apply` checks `expect` against: the formula with a leading `=` when the cell has one, else the stored value (numbers as JS prints them). A shared-formula child with no formula text of its own falls back to its cached value.
 
-Durable anchor `{format:"xlsx", sheetId, sheetName, sheetIndex, range, cell, r0,c0,r1,c1, text, textHash, rangeHash, ctx, names}`:
+Durable anchor `{format:"xlsx", sheetId, sheetName, sheetIndex, range, cell, r0,c0,r1,c1, text, values, textHash, rangeHash, ctx, names}`:
 
 - `range`: `B2`, `B2:D9`, whole rows `3:5`, columns `C:D`, or `""` (the sheet); the last three have `cell:false` and are position only.
-- `text` / `rangeHash`: typed text of the whole range (cells joined by TAB, rows by LF) and its hash (sha256, 16 hex, NFC, no whitespace folding: the hash `apply` computes for an XLSX `expect.text_hash`). `textHash`: hash of the top-left cell, the identity.
+- `text` / `rangeHash`: typed text of the range (cells joined by TAB, rows by LF; kept to what the batch can show: each cell cut at 1,000 characters, 4,000 in all) and the hash of the whole text (sha256, 16 hex, NFC, no whitespace folding: the hash `apply` computes for an XLSX `expect.text_hash`). `values`: the top-left 20 x 10 cells, each cut at 1,000 characters (the batch's `values`). `textHash`: hash of the top-left cell, the identity. Both hashes are made within the request's budget (src/text.js scanBudget, as resolving is); one it cannot pay for is null, and the anchor goes out without it (the batch's `locator.text_hash` is null and the comment's `reply_with` is `ops`). Such an anchor is resolved by its context, or by its address when it has none.
 - `ctx` (server side): `rowHeader` (the leftmost non-empty cell left of the range), `colHeader` (the topmost non-empty cell of its column), `left/right/up/down` neighbor texts, `rowCells` (hashes of the row's other cells, at most 64).
 - `names`: defined names that pointed at exactly this range.
 
@@ -68,7 +68,7 @@ Re-resolution (`resolveXlsx`), first hit wins, reported as `method`:
 6. `name`: a defined name that pointed at it. A name that moved is trusted (the writer updated it); one that still points at the old address is stale unless the cell checks out, because openpyxl does not shift names.
 7. `none`: moved or removed. A deleted row, a deleted sheet and a row that no longer matches all end here; nothing is attached by bare position.
 
-Result `{method, sheetId, sheetName, sheetIndex, range, changed, moved, text, r0,c0,r1,c1}`. Ranges resolve by their top-left cell and keep their size. Tables are not parsed: a table's header row serves as the column header context. Ceiling: a workbook with more than 1.5 million non-empty cells in a sheet is read truncated.
+Result `{method, sheetId, sheetName, sheetIndex, range, changed, moved, text, r0,c0,r1,c1}`. Ranges resolve by their top-left cell and keep their size. Tables are not parsed: a table's header row serves as the column header context. A file past one of the readers' caps (docs/GUIDE.md, "Size limits": for example more than 1,000,000 cells in a workbook, 50,000 paragraphs in a Word document or 50,000 shapes in a deck) is refused with that reason when it is opened or sent; it is never read in part.
 
 The view: the top-left cell and the selection are stored as cell anchors; after a reload `resolveView` returns `{sheetIndex, sheetName, topLeft, selection}` where the cells are the re-resolved ones (the same logical cell, one row down after a row was inserted above), falling back to the stored addresses.
 
@@ -86,6 +86,18 @@ Re-resolution (`resolvePptx`):
 Result `{method, slideId, slideIndex, shapeId, shapeName, start, end, changed, quoteLost, text}`; `changed` says the shape text differs, `quoteLost` that the quoted words are gone (the whole shape is then drawn). Pins: `{xFrac, yFrac}` are fractions of the slide, `sxFrac/syFrac` of the shape the pin was dropped on. A pin dropped on a shape keeps a slide-only fallback anchor, so deleting the shape leaves the pin on its slide (`tieLost`).
 
 View: the slide id of the slide in view and the zoom; `resolveView` returns the slide's current index.
+
+## HTML (`src/html.js`; `.html` and `.htm` files)
+
+Read in a worker only (the parser, `vendor/parse5`, is loaded by `src/html-parser.js`, which only worker entries import). One parse with source locations and scripting on. Located nodes (elements, text, comments, the doctype; never an implied `html`, `head`, `body` or `tbody`) are numbered in source order; that number is a node's id for one version (`nodes[id]`), and the page names nodes by it. The visible text (`flat`) leaves out raw text (script, style, and the other raw-text elements, in any namespace for script and style) and template content, folds whitespace runs to one space and puts a space at block edges; each element has its range in it.
+
+Page anchor `{location: {nodeId, start?, end?}, quote, prefix, suffix, cut?, hitKind?}`: `nodeId` is a located node (a text node anchors to its element; an implied element to its nearest located ancestor), `start`/`end` the quote in the element's visible text (a hint; the quote is searched for when it is not there).
+
+Durable anchor `{format:"html", nodeId, path, tag, elementId, kind, textHash, text, quote, prefix, suffix, start, end, heading, flatAt, weak?}`: `path` is `["html:0", "body:0", "p:3", ...]` (tag and index among same-tag siblings, tag names that do not match `[a-z0-9-]{1,32}` replaced by `t-` and a hash); `elementId` the `id` attribute when it matches `[a-z0-9-]{1,32}` and is unique in the file; `textHash` the hash of the element's own text (its direct text children; an edit inside a nested element leaves it); `text` 2,000 characters of its visible text; `flatAt` where it starts in the visible text. A spent budget gives a weak anchor (`weak: true`, the path and the page's context, no hash).
+
+Re-resolution (`resolveHtml`): the unique id; else the same path with the same own-text hash (weak: the same path and tag); else the quote (or the start of the element's text) searched near its old place in the visible text, then everywhere, the occurrence whose context matches best and then the nearest; all within the budget. Result `{method: id | path | quote | none, nodeId, path (/html[1]/body[1]/p[4]), tag, elementId, start, end, changed, quoteLost, text, heading}`.
+
+Batch locator `{path, element_id, text_hash, start, end}` (docs/contracts/batch.schema.json). `reply_with` is `find_replace_or_text` for an element that holds text (the shorthand `find`/`replace` becomes `replace_text`, `text` becomes `set_text`: src/reply.js) and `ops` for an image or a container; `decline_or_ops` when the anchor was not resolved or is protected. An op target names the element by exactly one of `element_id` (when unique) or `path`; the outline's `target` is that one form, ready to copy.
 
 ## Pins
 

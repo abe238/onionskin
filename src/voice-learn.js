@@ -4,7 +4,6 @@
 // What reaches the store from a Send: the five booleans per edit pair and the untrusted examples (from the worker, over three stored
 // versions), and the trait ids that fixed English phrases in the person's own comments point at. Never a comment's text, a file name or a
 // path. Everything here fails quietly: learning never stops a Send, and a step that fails learns nothing.
-import { Worker } from "node:worker_threads";
 import { buildVoiceBatch, printedSize } from "./batch.js";
 import { env } from "./constants.js";
 import { checkRegularOwned, readDoc, sha256 } from "./fsutil.js";
@@ -17,6 +16,7 @@ import { parseGuide } from "./voice-guide.js";
 import { budget, pickRequests, pickRewrites, voiceBatchMax, voiceShares } from "./voice-samples.js";
 import { VoiceError, appendRecords, discardDraft, forget, readDraft, readEvidence, readGuide, setAnswer, setLearning, writeGuide } from "./voice-store.js";
 import { commentHits, suggestions } from "./voice.js";
+import { startWorker } from "./offload.js";
 
 const WORKER_TIMEOUT_MS = () => Number(env("VOICE_TIMEOUT_MS", 60_000));
 const TRAIT_IDS = TRAITS.map((t) => t.id);
@@ -81,7 +81,7 @@ function analyze(versions) {
       resolve(r);
     };
     try {
-      worker = new Worker(new URL("./voice-worker.js", import.meta.url), { workerData: versions });
+      worker = startWorker("voice-worker.js", { workerData: versions });
     } catch {
       return finish(null);
     }
@@ -236,7 +236,7 @@ function sampleInWorker(job) {
       resolve(r);
     };
     try {
-      worker = new Worker(new URL("./voice-sample-worker.js", import.meta.url), { workerData: job });
+      worker = startWorker("voice-sample-worker.js", { workerData: job });
     } catch {
       return finish({ error: "unreadable" });
     }
@@ -270,6 +270,7 @@ export async function buildVoiceRequest(sessions, key, body) {
   if (s.closed) throw httpError(409, "session closed", "closed");
   if (s.pending || s.delivered) throw httpError(409, "Wait for the agent to finish, then try again.", "busy");
   if (body.open_file && s.format === "xlsx") throw new VoiceError("Excel files are not used as writing samples.");
+  if (body.open_file && s.format === "html") throw new VoiceError("HTML pages are not used as writing samples."); // PLAN-html D9
   const examples = body.edits ? readEvidence().examples : [];
   if (!body.open_file && !files.length && !body.texts.length && !examples.length) throw new VoiceError(NO_SAMPLE);
   const saved = readGuide();

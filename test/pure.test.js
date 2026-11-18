@@ -55,7 +55,7 @@ test("xml: entities, CDATA, quotes with > inside, DTD refused, depth limit", () 
   walkXml('<a x="1>2"><b>t&amp;<![CDATA[<raw>]]></b><c/></a>', { onOpen: (n, at) => seen.push(["o", n, at.x]), onClose: (n) => seen.push(["c", n]), onText: (t) => seen.push(["t", t]) });
   assert.deepEqual(seen, [["o", "a", "1>2"], ["o", "b", undefined], ["t", "t&"], ["t", "<raw>"], ["c", "b"], ["o", "c", undefined], ["c", "c"], ["c", "a"]]);
   assert.throws(() => walkXml('<!DOCTYPE x [<!ENTITY a "b">]><x/>', {}), /DTD/);
-  assert.throws(() => walkXml("<a>".repeat(300), {}), /too deep/);
+  assert.throws(() => walkXml("<a>".repeat(300), {}), /nests XML more than 256 levels deep/);
 });
 
 // ---- zip and package validation ---------------------------------------------------------------------------------
@@ -74,7 +74,7 @@ test("zip/package: type validation, macro refusal, bad input", () => {
   assert.equal(z.readText("b.bin"), "stored");
   // an inflate bomb is cut off by the cap rather than allocated
   const bomb = openZip(buildZip({ "big.xml": "0".repeat(2_000_000) }));
-  assert.throws(() => bomb.read("big.xml", 1000), /cannot inflate/);
+  assert.throws(() => bomb.read("big.xml", 1000), /^Error: a part of this file \("big\.xml"\) is larger than 1,000 bytes unpacked, more than Onionskin can read\. Split it/);
 });
 
 test("package checks: part removed, relationship target missing, element counts", () => {
@@ -365,4 +365,58 @@ test("docx: table cells carry a 1-based order among tables", () => {
   const ps = parseDocxParagraphs(xml);
   assert.deepEqual(ps.map((p) => p.tableNo), [null, null, 1, null, 2]);
   assert.equal(ps[4].path[0], 4, "body_path still counts body items");
+});
+
+test("placing a repeated quote by its prefix and suffix reads only the text near it, and picks what reading the whole text picked", () => {
+  // the rule before the outside review normalized the whole text on each side of every occurrence; it is the oracle here
+  const norm = (s) => String(s ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
+  const occ = (text, q) => {
+    const out = [];
+    for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + q.length)) out.push(i);
+    return out;
+  };
+  const oracle = (text, q, { prefix = "", suffix = "", nth = null }) => {
+    const o = occ(text, q);
+    if (!o.length) return -1;
+    const g = o.filter((at) => (!prefix || norm(text.slice(0, at)).endsWith(prefix)) && (!suffix || norm(text.slice(at + q.length)).startsWith(suffix)));
+    if (g.length === 1) return g[0];
+    if (nth != null && nth < o.length && g.includes(o[nth])) return o[nth];
+    if (g.length) return g[0];
+    return nth != null && nth < o.length ? o[nth] : o[0];
+  };
+  // runs of spaces of several kinds (U+00A0, U+2003 and U+3000 are white space too), combining marks that compose with the letter
+  // before them (e and U+0301 read as one letter), the precomposed letter, and long runs of spaces that make a window hold fewer letters than it reads
+  const ALPHA = ["a", "a", "b", "e", " ", " ", "  ", "\u00a0", "\u2003", "\u3000", "\u0301", "\u0301\u0301", "\u00e9", "ab", "e\u0301", " ".repeat(25), "\u3000".repeat(18)];
+  let seed = 42;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+  let checked = 0;
+  const check = (raw, q, ctx) => {
+    const ps = parseDocxParagraphs(bodyDoc(`<w:p><w:r><w:t xml:space="preserve">${raw}</w:t></w:r></w:p>`));
+    const text = ps[0].text;
+    const d = { format: "docx", paraId: null, path: ps[0].path, paraText: norm(text), quote: q, ...ctx, prevHash: null, nextHash: null, dupCount: 1 };
+    assert.equal(resolveDurable(ps, d).start ?? -1, oracle(text, q, ctx), JSON.stringify({ text, q, ...ctx }));
+    checked++;
+    return oracle(text, q, ctx);
+  };
+  // where a window first holds fewer letters than the prefix (a run of spaces), and where it starts on a combining mark
+  assert.equal(check(`abWXY${" ".repeat(47)}a`, "a", { prefix: "XY" }), 52);
+  assert.equal(check(`abe\u0301${" ".repeat(12)}Za`, "a", { prefix: "\u00e9 Z" }), 17);
+  assert.equal(check(`a${" ".repeat(47)}XYWab`, "a", { suffix: "XY", nth: 1 }), 0);
+  assert.equal(check(`abZ${" ".repeat(12)}e\u0301a`, "b", { suffix: "Z \u00e9" }), 1);
+  for (let k = 0; k < 3000; k++) {
+    const raw = Array.from({ length: 5 + rnd(120) }, () => ALPHA[rnd(ALPHA.length)]).join("");
+    const ps = parseDocxParagraphs(bodyDoc(`<w:p><w:r><w:t xml:space="preserve">${raw}</w:t></w:r></w:p>`));
+    if (!ps.length || !ps[0].text) continue;
+    const text = ps[0].text;
+    const from = rnd(text.length);
+    const q = text.slice(from, from + 1 + rnd(3));
+    if (!norm(q)) continue;
+    const o = occ(text, q);
+    const at = o[rnd(o.length)];
+    // the true surroundings of one occurrence (as a capture stores them), or a few random letters
+    const pre = rnd(3) ? norm(text.slice(0, at)).slice(-(1 + rnd(12))) : ALPHA[rnd(ALPHA.length)] + ALPHA[rnd(ALPHA.length)];
+    const suf = rnd(3) ? norm(text.slice(at + q.length)).slice(0, 1 + rnd(12)) : ALPHA[rnd(ALPHA.length)];
+    check(raw, q, { prefix: rnd(4) ? pre : "", suffix: rnd(4) ? suf : "", nth: rnd(2) ? rnd(o.length + 1) : null });
+  }
+  assert.ok(checked > 600, `${checked} cases`);
 });

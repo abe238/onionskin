@@ -78,7 +78,7 @@ describe("the page, with a stand-in for the server half", () => {
       for (const want of ["Reading the instructions", "Waiting for you to press Send", "Got your batch", "Writing the changes", "Making the changes", "Done. The page shows what changed"]) assert.ok(lines.includes(want), `"${want}" in the list:\n${lines}`);
       assert.ok(!/Paragraph|tidy/.test(lines), "no document text in the list");
       assert.match(await text(page, "agent-transcript"), /saved on this Mac, private to you, and removed when you close this session/);
-      assert.match(await text(page, "agent-terminal-hint"), /with the same limits. The background agent stops while it is open/);
+      assert.match(await text(page, "agent-terminal-hint"), /with the same limits, where it keeps listening for your Send\. Claude Code may first ask whether you trust the folder: choose Yes\. The background agent stops while it is open/);
       await page.locator(q("agent-terminal")).click();
       assert.deepEqual(side.actions.map((a) => a.action), ["start", "show", "terminal"]);
       assert.deepEqual(side.actions[1], { action: "show", on: true });
@@ -188,7 +188,7 @@ describe("the page, with a stand-in for the server half", () => {
       side.setAgent({ state: "starting", busy: true });
       await page.waitForFunction(() => /^Getting the agent ready\.\.\. Another document's agent is busy\.$/.test(document.querySelector('[data-testid="banner-agent-starting"]')?.textContent || ""), null, { timeout: 5000 });
       side.setAgent({ state: "handover" });
-      assert.match(await page.locator(q("banner-agent-handover")).textContent(), /The agent is open in Terminal\. It keeps working from there\./);
+      assert.match(await page.locator(q("banner-agent-handover")).textContent(), /The agent is open in Terminal\. If Claude Code asks whether you trust the folder, choose Yes: it is Onionskin's own folder for this file\. The agent then keeps working from there\./);
       assert.equal(await page.locator(q("agent-terminal")).count(), 0);
       side.setAgent({ state: "external" });
       await page.locator(q("agent-panel")).waitFor({ state: "detached" });

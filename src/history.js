@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { Worker } from "node:worker_threads";
-import { env } from "./constants.js";
+import { env, unknownFormat } from "./constants.js";
 import { readUnits } from "./anchors.js";
 import { diffText } from "./diff.js";
 import { exactHash, normText, similarity } from "./text.js";
@@ -10,6 +9,9 @@ import { fmtNote } from "./fmt.js";
 import { sub, writeStateFile } from "./paths.js";
 import { untrusted } from "./sanitize.js";
 import { a1, a1Range, ch, sheetRows } from "./xlsx.js";
+import { startWorker } from "./offload.js";
+import { elementPath, ownHash, ownText, pathString, safeTag } from "./html.js";
+import { inventory, inventoryDelta } from "./html-active.js";
 
 // Change history: the last updates to the document, built from the version snapshots the session already keeps. Read-only: nothing here
 // writes the document. One update = one round (the user's own edits saved by one Send, one agent run, one revert, one outside change
@@ -147,38 +149,81 @@ const docxLocator = (p) => (p ? { format: "docx", body_path: p.path ?? null, par
 export const docxFmt = (p) => ({ props: p.fmt, style: p.style, styleName: p.styleName, align: p.align });
 
 /**
- * Match paragraphs the way the durable anchors resolve: same text in order (LCS on the text hash), the same text moved elsewhere,
- * the same w14:paraId with edited text, then the best similar unmatched paragraph (>= 0.3 alone in its gap, >= 0.5 within a gap,
- * >= 0.6 anywhere), all under a work budget. Returns {mapA, mapB, moved}.
+ * Paragraph identity between two versions of a document, the one rule every pairing of DOCX paragraphs follows (History, both sides
+ * of the merge, redline, voice). A paragraph id (w14:paraId) that is unique in its version is the paragraph's identity: a text match
+ * may never pair it with a paragraph other than the one carrying that id on the other side, and no paragraph is paired with one that
+ * carries the id of another paragraph. Text and order decide where ids are absent or duplicated, and where an id is found in one
+ * version only (it says nothing about the other: a re-save that gave every paragraph a new id still reads as unchanged). `strict` (the
+ * agent's side of the merge): a paragraph with an id of its own that the other version, which has ids, does not have at all was
+ * removed or rebuilt, and is paired with nothing.
+ * Returns {may, keyA, keyB}: `may(i, j)` says whether A[i] and B[j] may be the same paragraph; `keyA` and `keyB` are LCS keys (the
+ * text hash, then "#" and the id when that id is unique in both versions) so that order matching links no two paragraphs that
+ * different ids tell apart.
  */
-export function matchParagraphs(A, B) {
-  const { mapA, mapB } = lcsPairs(A.map((p) => p.hash), B.map((p) => p.hash));
-  const lcsMapB = Int32Array.from(mapB);
-  const moved = new Set();
-  const link = (i, j) => ((mapA[i] = j), (mapB[j] = i));
-  const long = (p) => normText(p.text).length >= 20; // short or empty texts repeat: a "move" of one would be a coincidence
-  const queue = new Map();
-  A.forEach((p, i) => mapA[i] < 0 && long(p) && (queue.get(p.hash) || queue.set(p.hash, []).get(p.hash)).push(i));
-  B.forEach((p, j) => {
-    const q = mapB[j] < 0 && queue.get(p.hash);
-    if (q?.length) (link(q.shift(), j), moved.add(j));
-  });
-  const idCount = (L) => {
+export function paraIdentity(A, B, { strict = false } = {}) {
+  const tally = (L) => {
     const m = new Map();
     for (const p of L) if (p.paraId) m.set(p.paraId, (m.get(p.paraId) || 0) + 1);
     return m;
   };
-  const idsA = idCount(A);
-  const idsB = idCount(B);
-  const byId = new Map();
-  A.forEach((p, i) => mapA[i] < 0 && p.paraId && idsA.get(p.paraId) === 1 && byId.set(p.paraId, i));
+  const inA = tally(A);
+  const inB = tally(B);
+  const may = (i, j) => {
+    const a = A[i].paraId || null;
+    const b = B[j].paraId || null;
+    if (a === b) return true; // the same id, or neither has one
+    const ownA = a && inA.get(a) === 1;
+    const ownB = b && inB.get(b) === 1;
+    if (ownA && (inB.has(a) || (strict && inB.size))) return false; // A[i] is the paragraph with its id there; strict: or it is gone
+    if (ownB && inA.has(b)) return false; // the same from B's side
+    if ((b && inA.get(b) === 1) || (a && inB.get(a) === 1)) return false; // it carries the id of another paragraph
+    return true; // ids absent, duplicated, or found on one side only (a re-save that renumbered every id): text and order decide
+  };
+  const sure = (id, own, other) => (id && own.get(id) === 1 && other.get(id) === 1 ? id : "");
+  return {
+    may,
+    keyA: A.map((p) => `${p.hash}#${sure(p.paraId, inA, inB)}`),
+    keyB: B.map((p) => `${p.hash}#${sure(p.paraId, inB, inA)}`),
+  };
+}
+
+/**
+ * Match paragraphs the way the durable anchors resolve, under the identity rule of paraIdentity: same text in order (LCS on the text
+ * hash, ids told apart), the same unique id (moved when the text is the same), the same text moved elsewhere, then the best similar
+ * unmatched paragraph (>= 0.3 alone in its gap, >= 0.5 within a gap, >= 0.6 anywhere), all under a work budget. No step pairs two
+ * paragraphs the ids tell apart. Returns {mapA, mapB, moved}.
+ */
+export function matchParagraphs(A, B, { strict = false } = {}) {
+  const { may, keyA, keyB } = paraIdentity(A, B, { strict });
+  const { mapA, mapB } = lcsPairs(keyA, keyB);
+  // keys equal by text with no shared id can still be two different identities (ids unique on both sides, present on one only)
+  for (let i = 0; i < A.length; i++) if (mapA[i] >= 0 && !may(i, mapA[i])) ((mapB[mapA[i]] = -1), (mapA[i] = -1));
+  const lcsMapB = Int32Array.from(mapB);
+  const moved = new Set();
+  const link = (i, j) => ((mapA[i] = j), (mapB[j] = i));
+  // the same unique id on both sides: the same paragraph, wherever it is; out of the order matched above with the same text, moved
+  const idOf = (k) => k.slice(k.indexOf("#") + 1); // "" when the id does not decide
+  const idAt = new Map();
+  keyA.forEach((k, i) => mapA[i] < 0 && idOf(k) && idAt.set(idOf(k), i));
+  keyB.forEach((k, j) => {
+    const i = mapB[j] < 0 && idOf(k) ? idAt.get(idOf(k)) : undefined;
+    if (i === undefined) return;
+    link(i, j);
+    if (A[i].hash === B[j].hash) moved.add(j);
+  });
+  const long = (p) => normText(p.text).length >= 20; // short or empty texts repeat: a "move" of one would be a coincidence
+  const queue = new Map();
+  A.forEach((p, i) => mapA[i] < 0 && long(p) && (queue.get(p.hash) || queue.set(p.hash, []).get(p.hash)).push(i));
+  // Ceiling: candidates the ids rule out are skipped within a budget for the whole pass (many copies of one long text, each with an id
+  // of its own the other version does not have, would make the search quadratic); past it, the remaining candidates are not tried.
+  let tries = 100_000;
   B.forEach((p, j) => {
-    if (mapB[j] >= 0 || !p.paraId || idsB.get(p.paraId) !== 1) return;
-    const i = byId.get(p.paraId);
-    if (i != null && mapA[i] < 0) link(i, j);
+    const q = mapB[j] < 0 && queue.get(p.hash);
+    const k = q ? q.findIndex((i) => tries-- > 0 && may(i, j)) : -1;
+    if (k >= 0) (link(q.splice(k, 1)[0], j), moved.add(j));
   });
   let budget = 20_000; // similarity calls in all
-  const sim = (i, j) => (budget-- > 0 ? similarity(A[i].text.slice(0, 600), B[j].text.slice(0, 600)) : 0);
+  const sim = (i, j) => (may(i, j) && budget-- > 0 ? similarity(A[i].text.slice(0, 600), B[j].text.slice(0, 600)) : 0);
   // gap pass: unmatched paragraphs between the same two matched neighbors
   const prevA = new Int32Array(B.length);
   const nextA = new Int32Array(B.length);
@@ -191,6 +236,7 @@ export function matchParagraphs(A, B) {
   let gapPrev = -2;
   let floor = -1;
   for (let j = 0; j < B.length; j++) {
+    if (budget <= 0) break; // no similarity left to link with: listing the candidates of every paragraph of a long gap was quadratic
     if (mapB[j] >= 0) continue;
     if (prevA[j] !== gapPrev) (gapPrev = prevA[j], (floor = prevA[j]));
     const cand = [];
@@ -332,9 +378,11 @@ function compareSheet(sheet, rowsA, rowsB, out, wbA, wbB) {
 
 function compareXlsx(wbA, wbB, out) {
   const claimed = new Set();
+  const namesB = new Map(); // sheet name -> how many sheets of B have it, counted once (MAX_SHEETS bounds the scans by name)
+  for (const y of wbB.sheets) namesB.set(y.name, (namesB.get(y.name) || 0) + 1);
   const sheetLabel = (s) => `Sheet "${clean(s.name, 60)}"`;
   for (const sb of wbB.sheets) {
-    const sa = wbA.sheets.find((x) => x.name === sb.name && !claimed.has(x)) || wbA.sheets.find((x) => x.sheetId === sb.sheetId && !claimed.has(x) && !wbB.sheets.some((y) => y !== sb && y.name === x.name));
+    const sa = wbA.sheets.find((x) => x.name === sb.name && !claimed.has(x)) || wbA.sheets.find((x) => x.sheetId === sb.sheetId && !claimed.has(x) && !(namesB.get(x.name) > (x.name === sb.name ? 1 : 0)));
     if (!sa) {
       out.add("added", () => place({ format: "xlsx", label: sheetLabel(sb), locator: xlsxLocator(sb, "", null), change: "added", note: "sheet added" }));
       continue;
@@ -384,13 +432,22 @@ function compareShapes(sa, sb, out) {
     if (old) (used.add(old), pair(old, sh));
     else unmatchedB.push(sh);
   }
-  const leftA = sa.shapes.filter((x) => !used.has(x));
-  const byName = (L, x) => L.filter((y) => y.name === x.name && y.kind === x.kind);
+  // by name and kind among the shapes left unpaired, grouped once (a scan of every shape per shape was quadratic on a slide of many shapes)
+  const nk = (x) => `${x.kind}\u0000${x.name}`;
+  const groupsA = new Map();
+  for (const x of sa.shapes) if (!used.has(x)) (groupsA.get(nk(x)) || groupsA.set(nk(x), new Set()).get(nk(x))).add(x);
+  const countB = new Map();
+  for (const x of unmatchedB) countB.set(nk(x), (countB.get(nk(x)) || 0) + 1);
   for (const sh of unmatchedB) {
-    const cand = sh.name ? byName(leftA, sh) : [];
-    if (cand.length === 1 && byName(unmatchedB, sh).length === 1) (leftA.splice(leftA.indexOf(cand[0]), 1), pair(cand[0], sh));
-    else out.add("added", () => place({ format: "pptx", label: shapeLabel(sb, sh), locator: shapeLocator(sb, sh), change: "added", text: sh.text ? clean(sh.text, TEXT_CAP) : null, note: sh.text ? null : `${KIND_NOTE[sh.kind] || "an object"} was added` }));
+    const cand = sh.name ? groupsA.get(nk(sh)) : null;
+    if (cand?.size === 1 && countB.get(nk(sh)) === 1) {
+      const [old] = cand;
+      cand.delete(old);
+      used.add(old);
+      pair(old, sh);
+    } else out.add("added", () => place({ format: "pptx", label: shapeLabel(sb, sh), locator: shapeLocator(sb, sh), change: "added", text: sh.text ? clean(sh.text, TEXT_CAP) : null, note: sh.text ? null : `${KIND_NOTE[sh.kind] || "an object"} was added` }));
   }
+  const leftA = sa.shapes.filter((x) => !used.has(x));
   for (const sh of leftA) out.add("removed", () => place({ format: "pptx", label: shapeLabel(sa, sh), locator: null, change: "removed", text: sh.text ? clean(sh.text, TEXT_CAP) : null, note: sh.text ? null : `${KIND_NOTE[sh.kind] || "an object"} was removed` }));
   function pair(old, sh) {
     if (old.hash === sh.hash) {
@@ -402,6 +459,51 @@ function compareShapes(sa, sb, out) {
   }
 }
 
+// ---- HTML -------------------------------------------------------------------------------------------------------------
+// A text-level diff by element (PLAN-html 2a): the units of each version (elements that hold text directly, and images and other leaves,
+// src/html.js) matched by tag and own text in order; a pair left between two matches with the same tag is a change of its text, the rest
+// added or removed. Link and image targets that appeared or went away are listed too, as plain text (R1): an agent may change a link.
+
+const htmlUnitText = (u) => (u.kind === "leaf" ? `${u.tag} ${u.node.attrs.find((a) => a.name === "alt")?.value ?? ""}`.trim() : ownText(u.node));
+const htmlLabel = (u) => untrusted(`${safeTag(u.tag)}${u.htmlId ? ` #${u.htmlId}` : ""}`, 100);
+const htmlLocator = (read, u) => ({ format: "html", node_id: u.nodeId, path: pathString(elementPath(u.node)), element_id: u.htmlId ?? null, text_hash: ownHash(u.node) });
+
+function compareHtml(RA, RB, out) {
+  const key = (u) => `${u.tag}\u0000${exactHash(htmlUnitText(u))}`;
+  const A = RA.units;
+  const B = RB.units;
+  const { mapA, mapB } = lcsPairs(A.map(key), B.map(key));
+  // walk the gaps between matched pairs: same-tag units across a gap pair up in order (a changed text), the rest are added or removed
+  let i = 0;
+  let j = 0;
+  const flushGap = (iEnd, jEnd) => {
+    const gapA = [];
+    for (let x = i; x < iEnd; x++) if (mapA[x] < 0) gapA.push(A[x]);
+    const used = new Set();
+    for (let y = j; y < jEnd; y++) {
+      if (mapB[y] >= 0) continue;
+      const ub = B[y];
+      const ua = gapA.find((u) => !used.has(u) && u.tag === ub.tag);
+      if (ua) {
+        used.add(ua);
+        out.add("changed", () => place({ format: "html", label: htmlLabel(ub), locator: htmlLocator(RB, ub), ...textChange(htmlUnitText(ua), htmlUnitText(ub)) }));
+      } else out.add("added", () => place({ format: "html", label: htmlLabel(ub), locator: htmlLocator(RB, ub), change: "added", text: clean(normText(htmlUnitText(ub)), TEXT_CAP) || null, note: ub.kind === "leaf" ? `${safeTag(ub.tag)} added` : null }));
+    }
+    for (const ua of gapA) if (!used.has(ua)) out.add("removed", () => place({ format: "html", label: htmlLabel(ua), locator: null, change: "removed", text: clean(normText(htmlUnitText(ua)), TEXT_CAP) || null, note: ua.kind === "leaf" ? `${safeTag(ua.tag)} removed` : null }));
+  };
+  for (let y = 0; y <= B.length; y++) {
+    if (y < B.length && mapB[y] < 0) continue;
+    const x = y < B.length ? mapB[y] : A.length;
+    flushGap(x, y);
+    i = x + 1;
+    j = y + 1;
+  }
+  const d = inventoryDelta(inventory(RA.doc), inventory(RB.doc)).links;
+  const what = (e) => (e.kind === "link" ? "Link" : "Image or style");
+  for (const e of d.added) out.add("changed", () => place({ format: "html", label: untrusted(`${what(e)} target`, 60), locator: null, change: "link", note: clean(`now points to ${e.url}`, 300) }));
+  for (const e of d.removed) out.add("changed", () => place({ format: "html", label: untrusted(`${what(e)} target`, 60), locator: null, change: "link", note: clean(`no longer points to ${e.url}`, 300) }));
+}
+
 /** Compare two versions of one format: {counts: {changed, added, removed}, places: [...] | null, more}. Pure; runs in the worker. */
 export function compareBytes(format, before, after, { places = false } = {}) {
   const out = new Out(places);
@@ -409,7 +511,9 @@ export function compareBytes(format, before, after, { places = false } = {}) {
   const B = parse(format, after);
   if (format === "docx") compareDocx(A.paragraphs, B.paragraphs, out);
   else if (format === "xlsx") compareXlsx(A.wb, B.wb, out);
-  else compareDeck(A.deck, B.deck, out);
+  else if (format === "pptx") compareDeck(A.deck, B.deck, out);
+  else if (format === "html") compareHtml(A.read, B.read, out);
+  else unknownFormat(format, "compareBytes");
   return { counts: out.counts, places: out.places, more: out.places ? out.total - out.places.length : 0 };
 }
 
@@ -450,7 +554,7 @@ function runInWorker(jobs) {
     const failAll = (why) => finish(jobs.map(() => ({ ok: false, error: why })));
     const timer = setTimeout(() => failAll("timed out"), WORKER_TIMEOUT_MS());
     try {
-      worker = new Worker(new URL("./history-worker.js", import.meta.url), { workerData: { jobs } });
+      worker = startWorker("history-worker.js", { workerData: { jobs } });
     } catch (err) {
       return failAll(String(err?.message || err));
     }

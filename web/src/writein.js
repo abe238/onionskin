@@ -27,6 +27,7 @@
 // Not proven here: that these raw offsets are the engine's rectsFor offsets ("the paragraph text as shown"). With the hash equal and
 // no inline object they count the same characters, as read from the contract, not measured in a browser. The caller's hitTest check
 // confirms the rectangle lies in this paragraph; it cannot see a shifted range inside it.
+import { nfc } from "../../src/nfc.js"; // pure, no imports: the server hashes and sanitizes with the same normalization
 
 export const WRITEIN = { wipeMs: 500, wasMs: 900, tintMs: 1500, lateMs: 1500, maxPlaces: 40, maxShown: 12, wasChars: 60, contextWords: 6 };
 
@@ -42,7 +43,7 @@ const isStr = (v) => typeof v === "string";
 // test/writein.test.js checks that a paragraph this accepts reads the same through the real untrusted().
 const STRIP = new RegExp("[\\u0000-\\u001F\\u007F-\\u009F\\u061C\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]", "g");
 const WS = new RegExp("[\\t\\n\\r\\u2028\\u2029]+", "g");
-const serverText = (raw) => raw.replace(WS, " ").replace(STRIP, "").normalize("NFC").replace(/ {2,}/g, " ").trim();
+const serverText = (raw) => nfc(raw.replace(WS, " ").replace(STRIP, "")).replace(/ {2,}/g, " ").trim();
 /**
  * The page text survives the server's sanitizer unchanged: nothing stripped, replaced or recomposed on the way. This does not compare
  * with the server's text (only locateChanges' hash check does); it rules out characters that sanitizing would move offsets for.
@@ -246,7 +247,7 @@ export function findOnce(text, needle) {
 export function locateChanges(paraText, changes, textHash) {
   try {
     if (!isStr(textHash) || !HASH.test(textHash) || !survivesSanitizer(paraText) || !Array.isArray(changes) || !changes.length) return null;
-    const norm = paraText.normalize("NFC").replace(/\s+/g, " ").trim(); // src/text.js normText
+    const norm = nfc(paraText).replace(/\s+/g, " ").trim(); // src/text.js normText
     if (norm.length >= DIFF_CAP || sha256hex(norm).slice(0, 16) !== textHash) return null; // UTF-16 length >= code points: never under-refuses
     const out = [];
     let prevEnd = -1;

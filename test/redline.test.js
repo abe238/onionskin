@@ -189,12 +189,24 @@ describe("hostile documents", () => {
     assert.equal(serialize(parse(xml)), xml, "the copy reparses");
   });
   test("a BEFORE paraId reused by another paragraph in AFTER: the restored paragraph has none, no id is doubled", () => {
-    const b = docx([P(base[0], { id: "11111111" }), P("This paragraph will be removed.", { id: "22222222" }), P(base[2], { id: "33333333" })]);
+    // the id is in BEFORE twice, so text decides which paragraph AFTER's is; the removed one is restored without it
+    const b = docx([P(base[0], { id: "11111111" }), P("This paragraph will be removed.", { id: "22222222" }), P(base[2], { id: "22222222" })]);
     const a = docx([P(base[0], { id: "11111111" }), P(base[2], { id: "22222222" })]);
     const r = roundTrip(b, a);
     const ids = [...docOf(r.bytes).matchAll(/w14:paraId="([^"]+)"/g)].map((m) => m[1]);
     assert.equal(new Set(ids).size, ids.length, "no duplicate paraId");
     assert.deepEqual(ids.sort(), ["11111111", "22222222"]);
+  });
+  test("an id unique in both versions is the paragraph (src/history.js paraIdentity): AFTER's paragraph 2 is BEFORE's paragraph 2 rewritten", () => {
+    // AFTER gives BEFORE's third text the id of BEFORE's second paragraph: by the ids, paragraph 2 was rewritten and paragraph 3 removed
+    const tail = "Fourth paragraph closes the file.";
+    const b = docx([P(base[0], { id: "11111111" }), P("This paragraph will be removed.", { id: "22222222" }), P(base[2], { id: "33333333" }), P(tail, { id: "44444444" })]);
+    const a = docx([P(base[0], { id: "11111111" }), P(base[2], { id: "22222222" }), P(tail, { id: "44444444" })]);
+    const r = roundTrip(b, a);
+    const ids = [...docOf(r.bytes).matchAll(/w14:paraId="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(new Set(ids).size, ids.length, "no duplicate paraId");
+    // the same input with the removed paragraph last is refused: restoring a paragraph at the end of the body is a ceiling of the redline
+    assert.deepEqual(build(docx([P(base[0], { id: "11111111" }), P("This paragraph will be removed.", { id: "22222222" }), P(base[2], { id: "33333333" })]), docx([P(base[0], { id: "11111111" }), P(base[2], { id: "22222222" })])), { refused: ["at_end"] });
   });
   test("a removed paragraph with a link that was re-pointed in AFTER is refused", () => {
     const link = `<w:p><w:hyperlink r:id="rId5" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:r><w:t>the link text</w:t></w:r></w:hyperlink></w:p>`;

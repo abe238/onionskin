@@ -1,3 +1,4 @@
+import { EDITS_OVERFLOW } from "./constants.js";
 import { untrusted } from "./sanitize.js";
 import { exactHash } from "./text.js";
 import { a1, ch, parseWorkbook } from "./xlsx.js";
@@ -26,6 +27,7 @@ import { a1, ch, parseWorkbook } from "./xlsx.js";
 // all repeat across the shifted columns) is caught only by `placing`.
 
 const CAP = 2000;
+const turn = () => new Promise((resolve) => setImmediate(resolve));
 const MAX_OPS = 2000;
 const cut = (t) => (t.length > CAP ? `${t.slice(0, CAP)}...` : t);
 const key = (r, c) => r * 16384 + c;
@@ -37,10 +39,21 @@ const same = (a, b) => (!a || !b ? !a && !b : (a.shared && b.shared) || (a.text 
 // Cell text cannot prove that a row was inserted: it can only show that the differences are also what a shift would leave behind.
 // A line (row or column) is compared by its cells; a formula counts without its cell references, which a shift rewrites.
 const REF = /\$?[A-Za-z]{1,3}\$?\d{1,7}/g;
-const cellSig = (cell) => (cell.shared ? "shared" : cell.k === "formula" ? `f${exactHash(cell.text.replace(REF, "@"))}` : ch(cell));
+// A short text stands for itself ("=" never starts a hash): hashing every cell of a large sheet was a sixth of its plan. Not one with
+// "|", which joins a line's cells in its signature: such a text could spell out other cells (test/merge-xlsx.test.js).
+const cellSig = (cell) => (cell.shared ? "shared" : cell.k === "formula" ? `f${exactHash(cell.text.replace(REF, "@"))}` : cell.text.length <= 16 && !cell.text.includes("|") ? `=${cell.text.normalize("NFC")}` : ch(cell));
 
-/** The rows (or columns) of a sheet: index -> {sig, cells: Map(position in the line -> cell signature)} */
+/**
+ * The rows (or columns) of a sheet: index -> {sig, cells: Map(position in the line -> cell signature)}. Read once per sheet reading and
+ * axis: the plan asks for the base sheet's lines up to three times (the person's side, the agent's side, `placing`), and a sheet of
+ * 1,000,000 cells took 11 s to plan in an outside review, most of it building the same lines again. Callers never change them.
+ */
+const LINES = new WeakMap();
 function lines(sd, rows) {
+  const kept = LINES.get(sd) || LINES.set(sd, [null, null]).get(sd);
+  return (kept[rows ? 0 : 1] ??= readLines(sd, rows));
+}
+function readLines(sd, rows) {
   const out = new Map();
   for (const cell of sd.cells.values()) {
     const [i, j] = rows ? [cell.r, cell.c] : [cell.c, cell.r];
@@ -77,12 +90,15 @@ function linesMoved(A, B) {
   const inB = where(B);
   const held = new Map(); // "position:cell signature" -> the changed lines of A that hold it
   for (const q of changed) for (const [j, h] of A.get(q)?.cells || []) (held.get(`${j}:${h}`) || held.set(`${j}:${h}`, []).get(`${j}:${h}`)).push(q);
+  // a changed line i never reads in A as it reads in B, so it is never among the lines of A that read like B's line i (nor the other way
+  // round): those lines are counted per reading once, instead of searched for each changed line (quadratic over many lines that read alike)
+  const changedIn = new Map(); // signature -> changed lines of A that read so
+  for (const q of changed) if (A.has(q)) changedIn.set(A.get(q).sig, (changedIn.get(A.get(q).sig) || 0) + 1);
   for (const i of changed) {
     const a = A.get(i);
     const b = B.get(i);
-    const from = b ? (inA.get(b.sig) || []).filter((q) => q !== i) : [];
-    if (a ? from.some((q) => changed.has(q)) : from.length) return true;
-    if (a && !b && (inB.get(a.sig) || []).some((q) => q !== i)) return true;
+    if (b && (a ? changedIn.get(b.sig) > 0 : inA.has(b.sig))) return true;
+    if (a && !b && inB.has(a.sig)) return true;
     if (!b) continue;
     const votes = new Map();
     for (const [j, h] of b.cells) {
@@ -124,9 +140,21 @@ function axis(A, B) {
   };
   const endA = end(A);
   const endB = end(B);
+  // a cell value at a position in its line, as one number (a string key per cell made the index most of a large sheet's plan)
+  const values = new Map();
+  const key = (j, h) => {
+    let v = values.get(h);
+    if (v === undefined) values.set(h, (v = values.size));
+    return v * 2 ** 21 + j; // a line has fewer than 2^21 positions (1,048,576 rows)
+  };
   const index = (M) => {
     const m = new Map();
-    for (const [i, line] of M) for (const [j, h] of line.cells) (m.get(`${j}:${h}`) || m.set(`${j}:${h}`, []).get(`${j}:${h}`)).push(i);
+    for (const [i, line] of M) for (const [j, h] of line.cells) {
+      const k = key(j, h);
+      const list = m.get(k);
+      if (list) list.push(i);
+      else m.set(k, [i]);
+    }
     return m;
   };
   const count = (M) => {
@@ -137,18 +165,22 @@ function axis(A, B) {
   let ix, sigs, steady;
   let work = 0;
   const rare = (key) => (ix.A.get(key)?.length || 0) <= RARE && (ix.B.get(key)?.length || 0) <= RARE;
+  const weights = new Map();
   const weight = (line) => {
-    if (line.w == null) {
-      line.w = 0;
-      for (const [j, h] of line.cells) if (rare(`${j}:${h}`)) line.w++;
+    let w = weights.get(line); // kept here, not on the line: lines are shared by every reader of the sheet (lines())
+    if (w == null) {
+      w = 0;
+      for (const [j, h] of line.cells) if (rare(key(j, h))) w++;
+      weights.set(line, w);
     }
-    return line.w;
+    return w;
   };
   /** how much of `line` reads as line i of M (`own`) and as the line of M it is most like apart from i (`other`): the share of the rare cells of the larger of the two */
   const shares = (i, line, M, inM) => {
     const votes = new Map();
     for (const [j, h] of line.cells) {
-      const list = rare(`${j}:${h}`) && inM.get(`${j}:${h}`);
+      const k = key(j, h);
+      const list = rare(k) && inM.get(k);
       if (!list) continue;
       work += list.length;
       for (const q of list) votes.set(q, (votes.get(q) || 0) + 1);
@@ -281,7 +313,9 @@ export function planXlsxMerge(base, mine, theirs, edits = [], agent = UNKNOWN) {
   const items = [];
   const unplaced = [];
   let copy = false;
-  const whole = (label, why, text = "") => (unplaced.push({ label, text: cut(text), why }), (copy = true));
+  // `of` names what an entry stands for, for the proof of the merge (src/merge-proof.js): "S" and a sheet key, "c" and a sheet key, "!"
+  // and a cell key, or "sheets" (the list of sheets)
+  const whole = (label, why, text = "", of = []) => (unplaced.push({ label, text: cut(text), why, of }), (copy = true));
   const inMine = new Map(mine.sheets.map((s) => [sheetKey(s), s]));
   const inTheirs = new Map(theirs.sheets.map((s) => [sheetKey(s), s]));
   const inBase = new Set(base.sheets.map(sheetKey));
@@ -328,21 +362,30 @@ export function planXlsxMerge(base, mine, theirs, edits = [], agent = UNKNOWN) {
   for (const s of mine.sheets) {
     if (inBase.has(sheetKey(s))) continue;
     sheetsChanged = true;
-    whole(`Sheet ${named(s)}`, `You added or renamed the sheet ${named(s)}. Sheet changes are not carried over.`);
+    whole(`Sheet ${named(s)}`, `You added or renamed the sheet ${named(s)}. Sheet changes are not carried over.`, "", [`S${sheetKey(s)}`]);
   }
   for (const b of base.sheets) {
     const m = inMine.get(sheetKey(b));
     if (!m) {
       sheetsChanged = true;
-      unplaced.push({ label: `Sheet ${named(b)}`, text: "", why: `You removed or renamed the sheet ${named(b)}. Sheet changes are not carried over.` });
+      unplaced.push({ label: `Sheet ${named(b)}`, text: "", why: `You removed or renamed the sheet ${named(b)}. Sheet changes are not carried over.`, of: [`S${sheetKey(b)}`] });
       continue;
     }
     const label = (r, c) => `${untrusted(b.name, 60)}!${a1(r, c)}`;
+    const box = [`S${sheetKey(b)}`];
+    const cellRef = (k) => [`c${sheetKey(b)}!${k}`];
     const sdB = base.sheetCells(b);
     const sdM = mine.sheetCells(m);
     const changed = [];
     for (const k of new Set([...sdB.cells.keys(), ...sdM.cells.keys()])) if (!same(sdB.cells.get(k), sdM.cells.get(k))) changed.push(k);
     changed.sort((x, y) => x - y);
+    // a number format changed on a cell whose value did not, which the page did not name: said too, never carried
+    if (!said.format.has(b.name) && !said.format.has(null)) {
+      for (const [k, cell] of sdB.cells) {
+        const now = sdM.cells.get(k);
+        if (now && same(cell, now) && base.numberFormat(cell.s) !== mine.numberFormat(now.s)) unplaced.push({ label: label(Math.floor(k / 16384), k % 16384), text: "", why: `You changed the number format of ${label(Math.floor(k / 16384), k % 16384)}. Formatting is not carried over.`, of: cellRef(k) });
+      }
+    }
     const mineMoved = movedMine(b);
     if (!changed.length && !mineMoved) continue;
     const values = () => {
@@ -354,9 +397,9 @@ export function planXlsxMerge(base, mine, theirs, edits = [], agent = UNKNOWN) {
       return out;
     };
     const t = inTheirs.get(sheetKey(b));
-    if (mineMoved) whole(`Sheet ${named(b)}`, `You added, removed or moved rows or columns on the sheet ${named(b)}. That is not carried over. These cells differ in your version.`, values());
-    else if (!byAddress(b)) whole(`Sheet ${named(b)}`, theirWhy[theirSide(b)](b), values());
-    else if (items.length + changed.length > MAX_OPS) whole(`Sheet ${named(b)}`, `You changed more than ${MAX_OPS} cells while the agent worked. The cells on the sheet ${named(b)} were not carried over. These are yours.`, values());
+    if (mineMoved) whole(`Sheet ${named(b)}`, `You added, removed or moved rows or columns on the sheet ${named(b)}. That is not carried over. These cells differ in your version.`, values(), box);
+    else if (!byAddress(b)) whole(`Sheet ${named(b)}`, theirWhy[theirSide(b)](b), values(), box);
+    else if (items.length + changed.length > MAX_OPS) whole(`Sheet ${named(b)}`, `You changed more than ${MAX_OPS} cells while the agent worked. The cells on the sheet ${named(b)} were not carried over. These are yours.`, values(), box);
     else {
       const sdT = theirs.sheetCells(t);
       for (const k of changed) {
@@ -367,30 +410,33 @@ export function planXlsxMerge(base, mine, theirs, edits = [], agent = UNKNOWN) {
         const now = sdT.cells.get(k);
         if (same(now, want)) continue; // the agent wrote the same value
         if (!same(now, was)) {
-          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed ${label(r, c)} too. Its value is in the sheet; this is yours.` : `You emptied ${label(r, c)}, but the agent changed it, so it was kept.` });
+          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed ${label(r, c)} too. Its value is in the sheet; this is yours.` : `You emptied ${label(r, c)}, but the agent changed it, so it was kept.`, of: cellRef(k) });
           continue;
         }
         if (theirSide(b) === "stable" && agentRows(b).has(r)) {
-          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed other cells in the same row as ${label(r, c)}, so that row may hold other content now. Your value was not carried over. This is yours.` : `You emptied ${label(r, c)}, but the agent changed other cells in the same row, so it was kept.` });
+          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed other cells in the same row as ${label(r, c)}, so that row may hold other content now. Your value was not carried over. This is yours.` : `You emptied ${label(r, c)}, but the agent changed other cells in the same row, so it was kept.`, of: cellRef(k) });
           continue;
         }
         if (theirSide(b) === "stable" && !place(b).cell(r, c)) {
-          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed so much around ${label(r, c)} that it may not be the same cell any more, so your value was not carried over. This is yours.` : `You emptied ${label(r, c)}, but the agent changed so much around it that it may not be the same cell any more, so it was kept.` });
+          unplaced.push({ label: label(r, c), text: cut(want?.text ?? ""), why: want ? `The agent changed so much around ${label(r, c)} that it may not be the same cell any more, so your value was not carried over. This is yours.` : `You emptied ${label(r, c)}, but the agent changed so much around it that it may not be the same cell any more, so it was kept.`, of: cellRef(k) });
           continue;
         }
         if (want?.k === "formula" && !formulasFit()) {
-          unplaced.push({ label: label(r, c), text: cut(want.text), why: `Rows or columns may have moved while the agent worked, so your formula for ${label(r, c)} may point at other cells now. It was not carried over. This is yours.` });
+          unplaced.push({ label: label(r, c), text: cut(want.text), why: `Rows or columns may have moved while the agent worked, so your formula for ${label(r, c)} may point at other cells now. It was not carried over. This is yours.`, of: cellRef(k) });
           continue;
         }
-        items.push({ label: label(r, c), text: cut(want?.text ?? ""), sheet: sheetKey(b), k, want, op: { op: "set_cells", target: { sheet: b.name, range: a1(r, c) }, expect: { text_hash: exactHash(was?.text ?? "") }, values: want ? want.text : null } });
+        items.push({ label: label(r, c), of: cellRef(k), text: cut(want?.text ?? ""), sheet: sheetKey(b), k, want, op: { op: "set_cells", target: { sheet: b.name, range: a1(r, c) }, expect: { text_hash: exactHash(was?.text ?? "") }, values: want ? want.text : null } });
       }
     }
   }
   const order = (wb) => wb.sheets.map(sheetKey).filter((x) => inBase.has(x) && inMine.has(x)).join("\n");
-  if (!sheetsChanged && (said.book || order(base) !== order(mine))) unplaced.push({ label: "Sheets", text: "", why: "You moved, hid or changed sheets. Sheet changes are not carried over." });
+  // sheets moved are said even when sheets were also added or removed (those lines name only the sheets added or removed: a move next to
+  // them was dropped without a word, found by test/merge-xlsx-property.test.js)
+  if (order(base) !== order(mine) || (said.book && !sheetsChanged)) unplaced.push({ label: "Sheets", text: "", why: "You moved, hid or changed sheets. Sheet changes are not carried over.", of: ["sheets"] });
   const where = (sheet) => (sheet == null ? "" : ` on the sheet "${untrusted(sheet, 60)}"`);
-  for (const sheet of said.format) unplaced.push({ label: "Formatting", text: "", why: `You changed formatting${where(sheet)}. Formatting is not carried over.` });
-  for (const sheet of said.layout) unplaced.push({ label: "Layout", text: "", why: `You changed row or column sizes, hidden rows or columns, or the frozen panes${where(sheet)}. That is not carried over.` });
+  const sheetRef = (sheet) => mine.sheets.filter((s) => sheet == null || s.name === sheet).map((s) => `S${sheetKey(s)}`);
+  for (const sheet of said.format) unplaced.push({ label: "Formatting", text: "", why: `You changed formatting${where(sheet)}. Formatting is not carried over.`, of: sheetRef(sheet) });
+  for (const sheet of said.layout) unplaced.push({ label: "Layout", text: "", why: `You changed row or column sizes, hidden rows or columns, or the frozen panes${where(sheet)}. That is not carried over.`, of: sheetRef(sheet) });
   const stable = base.sheets.filter((b) => inMine.has(sheetKey(b)) && !movedMine(b) && byAddress(b)).map((b) => b.name);
   return { items, unplaced, copy, stable };
 }
@@ -426,11 +472,18 @@ function verify(theirs, out, applied) {
  * that did not land as the user had it is taken out and the rest is run again from the agent's bytes (once), so it is never written.
  */
 export async function mergeXlsx({ base, mine, theirs, name, runOps, edits = [], agent = null }) {
+  // which sheets had rows or columns moved comes from the page's list of edits as well as from the bytes: a list cut short cannot say
+  // that none were, so nothing is carried by address on its word (the merge returns no file; src/merge-worker.js)
+  if ((edits || []).some((e) => e?.kind === EDITS_OVERFLOW)) return { refuse: "more edits were made than Onionskin can follow; it cannot tell whether rows or columns moved" };
   const T = parseWorkbook(theirs);
-  const plan = planXlsxMerge(parseWorkbook(base), parseWorkbook(mine), T, edits, await agentChanges(agent, { runOps, name }));
+  const facts = await agentChanges(agent, { runOps, name });
+  await turn(); // between the readings and the plan (the sheets are read as the plan needs them)
+  const read = { base: parseWorkbook(base), mine: parseWorkbook(mine), theirs: T }; // also for the proof of the merge (src/merge-worker.js)
+  const plan = planXlsxMerge(read.base, read.mine, T, edits, facts);
+  await turn();
   const unplaced = [...plan.unplaced];
-  const fail = (it, why) => unplaced.push({ label: it.label, text: it.text, why });
-  const end = (bytes, merged) => ({ bytes, merged, unplaced, copy: plan.copy, stable: plan.stable });
+  const fail = (it, why) => unplaced.push({ label: it.label, text: it.text, why, of: it.of });
+  const end = (bytes, merged) => ({ bytes, merged, unplaced, copy: plan.copy, stable: plan.stable, read });
   let items = plan.items;
   for (let pass = 0; pass < 2 && items.length; pass++) {
     const { results, bytes, blocked } = await runOps({ bytes: theirs, format: "xlsx", name, ops: items.map((x) => x.op), partial: true });
@@ -439,10 +492,12 @@ export async function mergeXlsx({ base, mine, theirs, name, runOps, edits = [], 
       return end(null, 0);
     }
     const applied = items.filter((_, n) => results[n]?.status === "applied");
+    await turn();
     const { foreign, bad } = verify(T, parseWorkbook(bytes), applied);
     if (foreign) break;
+    const isApplied = new Set(applied); // includes() per item was quadratic
     for (const it of items) {
-      if (!applied.includes(it)) fail(it, `Your value for ${it.label} could not be placed on the agent's version.`);
+      if (!isApplied.has(it)) fail(it, `Your value for ${it.label} could not be placed on the agent's version.`);
       else if (bad.has(it)) fail(it, `Your value for ${it.label} did not land as typed, so the agent's version was kept there.`);
     }
     if (!bad.size) return end(bytes, applied.length);

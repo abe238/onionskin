@@ -1,4 +1,5 @@
 import zlib from "node:zlib";
+import { gated } from "./stop-gate.js";
 
 const MAX_ENTRIES = 20000;
 const MAX_ENTRY_BYTES = 512 * 1024 * 1024;
@@ -7,6 +8,8 @@ const MAX_XML_BYTES = 64 * 1024 * 1024;
 export const MAX_TOTAL_EXPANSION = 256 * 1024 * 1024;
 
 export class ZipError extends Error {}
+const MB = (n) => (n >= 1024 * 1024 ? `${Math.round(n / 1024 / 1024)} MB` : `${n.toLocaleString("en-US")} bytes`);
+const SPLIT = "Split it into smaller files, or save it again in Word, Excel or PowerPoint, and open that";
 
 /** Reads the central directory of a ZIP held in memory. No ZIP64 (files over 4 GB are refused). */
 export function openZip(buf, { budget = MAX_TOTAL_EXPANSION } = {}) {
@@ -24,7 +27,7 @@ export function openZip(buf, { budget = MAX_TOTAL_EXPANSION } = {}) {
   const cdSize = buf.readUInt32LE(eocd + 12);
   const cdOffset = buf.readUInt32LE(eocd + 16);
   if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) throw new ZipError("ZIP64 is not supported");
-  if (count > MAX_ENTRIES) throw new ZipError("too many ZIP entries");
+  if (count > MAX_ENTRIES) throw new ZipError(`this file has more than ${MAX_ENTRIES.toLocaleString("en-US")} parts, more than Onionskin can read. ${SPLIT}`);
   if (cdOffset + cdSize > buf.length) throw new ZipError("ZIP central directory out of range");
   const entries = new Map();
   let p = cdOffset;
@@ -42,14 +45,14 @@ export function openZip(buf, { budget = MAX_TOTAL_EXPANSION } = {}) {
     const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
     if (name.startsWith("/") || name.split("/").includes("..") || name.includes("\\") || name.includes("\0")) throw new ZipError(`unsafe ZIP entry name: ${JSON.stringify(name)}`);
     if (entries.has(name)) throw new ZipError(`duplicate ZIP entry: ${JSON.stringify(name)}`);
-    if (size > MAX_ENTRY_BYTES) throw new ZipError(`ZIP entry too large: ${JSON.stringify(name)}`);
+    if (size > MAX_ENTRY_BYTES) throw new ZipError(`a part of this file (${JSON.stringify(name)}) is larger than ${MB(MAX_ENTRY_BYTES)} unpacked, more than Onionskin can read. ${SPLIT}`);
     entries.set(name, { name, flags, method, crc, compSize, size, localOffset, cdOffset: p }); // cdOffset: where this entry's central record starts (zip-write.js copies it)
     p += 46 + nameLen + extraLen + commentLen;
   }
   let used = 0;
   const spend = (name, n) => {
     used += n;
-    if (used > budget) throw new ZipError(`ZIP expansion budget exceeded while reading ${JSON.stringify(name)} (more than ${Math.round(budget / 1024 / 1024)} MB in total)`);
+    if (used > budget) throw new ZipError(`this file unpacks to more than ${MB(budget)} in the parts Onionskin reads (at ${JSON.stringify(name)}), more than Onionskin can read. ${SPLIT}`);
   };
   /** The entry's bytes as stored in the archive (still compressed); null when there is no such entry. Spends no budget: nothing is inflated. */
   function raw(name) {
@@ -68,15 +71,16 @@ export function openZip(buf, { budget = MAX_TOTAL_EXPANSION } = {}) {
     const data = raw(name);
     if (e.method === 0) {
       // a stored entry is bounded by the same per-entry cap as an inflated one
-      if (data.length > cap) throw new ZipError(`ZIP entry ${JSON.stringify(name)} is larger than the ${Math.round(cap / 1024 / 1024)} MB limit for a part that is read`);
+      if (data.length > cap) throw new ZipError(`a part of this file (${JSON.stringify(name)}) is larger than ${MB(cap)} unpacked, more than Onionskin can read. ${SPLIT}`);
       spend(name, data.length);
       return Buffer.from(data);
     }
     if (e.method === 8) {
       let out;
       try {
-        out = zlib.inflateRawSync(data, { maxOutputLength: cap });
+        out = gated(() => zlib.inflateRawSync(data, { maxOutputLength: cap })); // never stopped inside zlib (src/stop-gate.js)
       } catch (err) {
+        if (err?.code === "ERR_BUFFER_TOO_LARGE") throw new ZipError(`a part of this file (${JSON.stringify(name)}) is larger than ${MB(cap)} unpacked, more than Onionskin can read. ${SPLIT}`);
         throw new ZipError(`cannot inflate ${JSON.stringify(name)}: ${err.message}`);
       }
       spend(name, out.length);

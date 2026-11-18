@@ -1,8 +1,11 @@
-import { parentPort, workerData } from "node:worker_threads";
+import "./html-parser.js"; // an HTML file is read again at `done` (src/package.js htmlChecks): the parser lives in worker threads only
 import { analyze } from "./analyze.js";
 
-try {
-  parentPort.postMessage({ ok: true, ...analyze(Buffer.from(workerData.pre), Buffer.from(workerData.post), workerData.format, { deferSoffice: !!workerData.deferSoffice }) });
-} catch (err) {
-  parentPort.postMessage({ ok: false, error: String(err?.message || err) });
+/** The `done` analysis (src/offload.js analyzeOffThread), run by src/worker-host.js. One message back: {ok, flags, checks, changes} or {ok: false, error}. */
+export function work(data) {
+  try {
+    return { ok: true, ...analyze(Buffer.from(data.pre), Buffer.from(data.post), data.format, { deferSoffice: !!data.deferSoffice }) };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
 }

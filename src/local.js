@@ -13,6 +13,10 @@
 // Upgrade path: run applyCommand in a worker with the same in-process port.
 
 import { quickPlanner } from "./quick-plan.js";
+import { NOT_YOUR_FILE, agentMayUse, isAgentHolder } from "./agent-detect.js";
+import { HttpError, readChecked } from "./session.js";
+import { runOpsOffThread } from "./offload.js";
+import { LIMITS } from "./agent-runner.js";
 
 export const LOCAL_HOLDER = "onionskin-local";
 
@@ -37,6 +41,41 @@ export function leaseOf(body) {
   return { holder: str(body.holder), token: str(body.lease_token), batchId: str(body.batch_id), strict: true };
 }
 
+/**
+ * The binding of an agent Onionskin started to its one file, checked before a /cli/* route looks the file up: another file, open or not,
+ * gets the same 403 `not_your_file`, so the refusal says nothing about it. Every other holder passes (its lease is checked where it acts).
+ */
+export function checkBinding(file, holder) {
+  if (!agentMayUse(holder, file)) throw new HttpError(403, NOT_YOUR_FILE, { code: "not_your_file" });
+}
+
+/** The session a CLI call names, after the holder's binding is checked. */
+export function sessionFor(sessions, file, holder) {
+  checkBinding(file, holder);
+  return sessions.byFile(String(file || ""));
+}
+
+/**
+ * `GET /cli/batch`: the delivered batch. With a claim (any of holder-with-token, batch_id, lease_token), and always for an agent Onionskin
+ * started, only for the lease holder (Sessions.deliveredBatch), checked before anything of it is returned. A call with no claim and no
+ * agent holder (a person's own tools, `apply --dry-run` without a ticket) gets it as before: such a caller can read the file and the state
+ * folder anyway; the restricted agent can only run the CLI, which always sends its holder.
+ */
+export function cliBatch(sessions, s, { holder, token, batchId }) {
+  if (token || batchId || isAgentHolder(holder)) return { state: sessions.state(s), batch: sessions.deliveredBatch(s.key, { holder, token, batchId }) };
+  return { state: sessions.state(s), batch: s.delivered?.batch || null };
+}
+
+/** `GET /cli/batch-file`: the file of the delivery named by a full ticket (batch id and token) for this holder, or null. Never a file for a wrong token. */
+export function batchFile(sessions, { holder, token, batchId }) {
+  if (!batchId || !token) return null;
+  const s = [...sessions.map.values()].find((x) => x.delivered?.batch.batch_id === batchId && x.delivered.lease.token === token);
+  return s && agentMayUse(holder, s.file) ? s.file : null;
+}
+
+/** The claim of a GET route's query (holder, lease_token, batch_id). */
+export const claimOfQuery = (q) => leaseOf({ holder: q.get("holder"), lease_token: q.get("lease_token"), batch_id: q.get("batch_id") });
+
 /** `GET /cli/status`: what `apply`, `commit` and `done` read about a file's session. One function for the socket and the in-process port. */
 export function cliStatus(sessions, s) {
   const v = sessions.view(s);
@@ -45,6 +84,29 @@ export function cliStatus(sessions, s) {
     lease_expires_at: v.leaseExpiresAt, comments: { draft: s.comments.filter((c) => c.status === "draft").length, total: s.comments.length },
     unsent_edits: s.edits.length, activity: s.activity.length,
   };
+}
+
+// A tab gone this long no longer holds the update back: the same 20 minutes after which the background agent of a file with no tab stops
+// (src/agent-runner.js LIMITS.idleMs). A forgotten session does not block updates forever.
+export const TAB_RECENT_MS = LIMITS.idleMs;
+
+/**
+ * `GET /cli/open-work`: the sum of cliStatus over every session (what `onionskin update` would cut off). Counts only, never file names.
+ * `open_sessions`: sessions not closed with a tab open now (`tabs(key)`) or seen less than TAB_RECENT_MS ago (`seen(key)`, a time). The
+ * page keeps typed edits to itself until Send, so `unsent_edits` cannot see them: an open tab is the only sign of them.
+ */
+export function openWork(sessions, { tabs = () => 0, seen = () => null, now = Date.now() } = {}) {
+  const w = { sessions: 0, open_sessions: 0, unsent_edits: 0, draft_comments: 0, batches: 0 };
+  for (const s of sessions.map.values()) {
+    const st = cliStatus(sessions, s);
+    w.sessions++;
+    const t = seen(s.key);
+    if (!s.closed && (tabs(s.key) > 0 || (Number.isFinite(t) && now - t < TAB_RECENT_MS))) w.open_sessions++;
+    w.unsent_edits += st.unsent_edits;
+    w.draft_comments += st.comments.draft;
+    if (st.pending_batch || st.delivered_batch) w.batches++;
+  }
+  return w;
 }
 
 /** The person reverted a local run of these words: they go to the agent. True when any comment of the batch, or its whole note, is marked. */
@@ -60,9 +122,9 @@ export function skipsLocal(s, batch) {
  * An HttpError becomes {status, text} exactly as the socket's fail() writes it, so `apply` takes the same refusal paths.
  */
 function inProcessPort(sessions, key) {
-  const answer = (fn) => {
+  const answer = async (fn) => {
     try {
-      return { status: 200, text: JSON.stringify(fn()) };
+      return { status: 200, text: JSON.stringify(await fn()) };
     } catch (err) {
       if (Number.isInteger(err?.status)) return { status: err.status, text: JSON.stringify({ error: err.message, ...(err.extra || {}) }) };
       return { status: 500, text: JSON.stringify({ error: "internal error" }) };
@@ -76,16 +138,18 @@ function inProcessPort(sessions, key) {
   return {
     healthy: async () => true,
     json: (t) => JSON.parse(t),
+    checkBytes: (bytes, format) => readChecked(format, bytes), // apply reads the file again: within the readers' caps before the engine
+    runOps: runOpsOffThread, // and the engine's work happens in a worker thread with a time limit, never on the server's thread
     async req({ method, path: p }, body = {}) {
       const u = new URL(p, "http://x");
       const route = `${method} ${u.pathname}`;
       if (route === "GET /cli/status") return answer(() => cliStatus(sessions, mine(u.searchParams.get("file"))));
-      if (route === "GET /cli/batch") return answer(() => { const s = mine(u.searchParams.get("file")); return { state: sessions.state(s), batch: s.delivered?.batch || null }; });
+      if (route === "GET /cli/batch") return answer(() => cliBatch(sessions, mine(u.searchParams.get("file")), claimOfQuery(u.searchParams)));
       if (route === "POST /cli/agent-write") {
         return answer(() => {
           const s = mine(body.file);
           const bytes = typeof body.bytes_b64 === "string" ? Buffer.from(body.bytes_b64, "base64") : null;
-          return sessions.agentWrite(s.key, { baseSha: String(body.base_sha256 || ""), bytes, route: "apply", ops: Array.isArray(body.ops) ? body.ops : null, partial: body.partial === true, ...leaseOf(body) });
+          return sessions.agentWriteChecked(s.key, { baseSha: String(body.base_sha256 || ""), bytes, route: "apply", ops: Array.isArray(body.ops) ? body.ops : null, partial: body.partial === true, ...leaseOf(body) });
         });
       }
       if (route === "POST /cli/apply-report") {

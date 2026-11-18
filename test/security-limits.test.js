@@ -19,6 +19,7 @@ process.env.ONIONSKIN_PYTHON = slowPy;
 const { openZip, ZipError, MAX_TOTAL_EXPANSION } = await import("../src/zip.js");
 const { validatePackage, nodeChecks } = await import("../src/package.js");
 const { Sessions, HttpError } = await import("../src/session.js");
+const { MAX_PARAGRAPHS } = await import("../src/docx.js");
 const { startServer } = await import("../src/server.js");
 const { socketPath, ensureStateDir } = await import("../src/paths.js");
 ensureStateDir();
@@ -79,7 +80,7 @@ test("finding 6: a cumulative expansion budget per archive stops thousands of in
   const t0 = Date.now();
   assert.throws(() => {
     for (const n of z.names) z.read(n);
-  }, /expansion budget exceeded/);
+  }, /^Error: this file unpacks to more than 256 MB in the parts Onionskin reads \(at "r\d+\/_rels\/\.rels"\), more than Onionskin can read\. Split it/);
   assert.ok(Date.now() - t0 < 10_000, `stopped promptly (${Date.now() - t0} ms)`);
   assert.ok(MAX_TOTAL_EXPANSION <= 256 * 1024 * 1024);
 });
@@ -94,7 +95,7 @@ test("finding 6: thousands of small relationship parts are refused by the checks
   const t0 = Date.now();
   const flags = nodeChecks(base, hostile, "docx");
   assert.ok(Date.now() - t0 < 5000);
-  assert.ok(flags.some((f) => f.code === "invalid_package" && f.severity === "error" && /too many relationship parts/.test(f.detail)), JSON.stringify(flags));
+  assert.ok(flags.some((f) => f.code === "invalid_package" && f.severity === "error" && /this file has more than 5,000 relationship parts, more than Onionskin can read\. /.test(f.detail)), JSON.stringify(flags));
 });
 
 test("finding 6: an oversized input is refused by size before it is read", () => {
@@ -126,9 +127,9 @@ const viaSocket = (method, p, body) =>
     r.end();
   });
 
-test("finding 6: while `done` runs a large check (a 20 MB main part, a slow deeper checker) the server still answers status within 500 ms", async () => {
+test("finding 6: while `done` runs a large check (a main part just under the paragraph cap, a slow deeper checker) the server still answers status within 500 ms", async () => {
   const paraXml = '<w:p><w:r><w:t>Filler paragraph with some words in it to make the main part large enough.</w:t></w:r></w:p>';
-  const body = paraXml.repeat(Math.ceil((20 * 1024 * 1024) / paraXml.length));
+  const body = paraXml.repeat(MAX_PARAGRAPHS - 1); // about 5 MB (a 20 MB part of these is past the cap now)
   const file = path.join(root, "large.docx");
   fs.writeFileSync(file, docxBytes([], {}, body));
   const real = fs.realpathSync(file);

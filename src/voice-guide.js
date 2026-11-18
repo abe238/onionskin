@@ -7,6 +7,7 @@
 // A draft is agent text: untrusted until the person approves it word for word. The check makes sure that what reaches the page is plain
 // text in the fixed layout, with nothing hidden, no link and no markup, so that every word the person approves is a word they could see.
 // Ceiling: it cannot make a persuasive sentence harmless. That is what the person's review is for.
+import { nfc } from "./nfc.js";
 
 /** The twelve sections, in order. `title` is the exact `## ` heading; `max` the cap of its body, in characters (code points). */
 export const SECTIONS = [
@@ -101,7 +102,7 @@ function splitSections(lines, { all }) {
   let titleSeen = false;
   for (const line of lines) {
     const t = line.trimEnd();
-    if (/^\s*#/u.test(t.normalize("NFKC"))) { // a fullwidth number sign looks like # on the page
+    if (/^\s*#/u.test(nfc(t, "NFKC"))) { // a fullwidth number sign looks like # on the page
       if (!cur && !titleSeen && t === DRAFT_TITLE) {
         titleSeen = true;
         continue;
@@ -138,9 +139,9 @@ export function cleanVoiceDraft(value) {
   if (typeof value !== "string") return refuse("bad_structure", "the draft must be text");
   // size first: a huge body is refused before any regex or normalization runs over it
   if (Buffer.byteLength(value, "utf8") > DRAFT_MAX_BYTES) return refuse("too_long", `the draft is over ${DRAFT_MAX_BYTES} bytes`);
-  const text = value.replace(/\r\n?/gu, "\n").normalize("NFC").replace(VS, "");
+  const text = nfc(value.replace(/\r\n?/gu, "\n")).replace(VS, "");
   if (HIDDEN.test(text)) return refuse("hidden_characters", "the draft holds a hidden or control character (tabs included)");
-  const nfkc = text.normalize("NFKC");
+  const nfkc = nfc(text, "NFKC");
   if (MARKUP.some((re) => re.test(nfkc)) || domainPath(nfkc)) return refuse("link_or_markup", "the draft holds a link, an address, @, HTML or Markdown markup, or a code fence");
   const lines = text.split("\n");
   // padding: a run of blank lines could push a planted line far below the part of a box the person reads first

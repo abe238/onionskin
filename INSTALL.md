@@ -12,9 +12,13 @@ Run `onionskin doctor` (or `~/.local/bin/onionskin doctor` if the command is not
 
 ## Start
 
-Say to your agent: **open report.docx in Onionskin**. Or type `onionskin report.docx` in a terminal.
+Say to your agent: **open report.docx in Onionskin**. Or type `onionskin report.docx` in a terminal. Onionskin opens `.docx`, `.xlsx`, `.pptx`, `.html` and `.htm` files.
 
 Your file opens in the browser. Edit, comment, drop a pin, then press **Send to Agent**. The changes appear in the document.
+
+## Update
+
+Run `onionskin update` (or `~/.local/bin/onionskin update`). It downloads the latest release, checks it and installs it. While a file is open in a browser tab (or was in the last 20 minutes) it stops and says so: press Close session in the file's page (or close its tab and wait 20 minutes), or run `onionskin update --force`. Your snapshots are kept. `onionskin update --check` only says whether there is a newer one.
 
 ## Uninstall
 

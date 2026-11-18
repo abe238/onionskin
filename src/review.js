@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
-import { readUnits } from "./anchors.js";
+import { readUnits, unitsFor } from "./anchors.js";
 import { findAll } from "./ops/runs.js";
 import { untrusted } from "./sanitize.js";
 import { exactHash, normText } from "./text.js";
-import { a1, a1Range } from "./xlsx.js";
+import { parseA1 } from "./ops/common.js";
+import { a1, a1Range, cellAt, mergeAt } from "./xlsx.js";
+import { unknownFormat } from "./constants.js";
+import { htmlRawUnits } from "./html.js";
 
 // Idea 21: the agent reviews first. The person taps one of three fixed requests; the batch carries that fixed sentence in
 // `instructions.review` and a read-only outline of the file (`untrusted_document_evidence.units[]`, built here by code). The agent answers
@@ -50,11 +53,12 @@ const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
  * {units: [{id, label, text, protected}] (at most UNITS_MAX, for the batch), more, index: {id -> where the unit is and its text hash}} (the
  * index stays on the server). A unit an edit cannot address (a DOCX paragraph with no body path, a PPTX shape whose id is shared on its
  * slide) is marked protected: suggestions on it are refused.
- * Ceiling: every paragraph, shape or cell is read and sorted on the server's main thread before the cut to UNITS_MAX, so a very large
- * workbook pauses other requests while a review is built. Upgrade path: stop reading at UNITS_MAX + a count, or build in a worker.
+ * `reading` (optional) is readUnits of `bytes` that the caller already has (src/anchors.js unitsFor).
+ * Ceiling: every paragraph, shape or cell is read and sorted on the server's main thread before the cut to UNITS_MAX; the readers' caps
+ * (src/docx.js, src/xlsx.js, src/pptx.js) bound that to a few hundred milliseconds. Upgrade path: build in a worker.
  */
-export function unitsOf(format, bytes) {
-  const raw = rawUnits(format, bytes);
+export function unitsOf(format, bytes, reading = null) {
+  const raw = rawUnits(format, bytes, reading);
   const units = [];
   const index = {};
   raw.slice(0, UNITS_MAX).forEach((x, i) => {
@@ -67,9 +71,9 @@ export function unitsOf(format, bytes) {
 }
 
 /** Every unit of the file in document order: {label, text (the full text, not cleaned), protected, at (where it is and its text hash)}. */
-function rawUnits(format, bytes) {
+function rawUnits(format, bytes, reading = null) {
   const raw = [];
-  const u = readUnits(format, bytes);
+  const u = reading || readUnits(format, bytes);
   if (format === "docx") {
     for (const p of u.paragraphs) {
       if (!normText(p.text)) continue;
@@ -93,11 +97,13 @@ function rawUnits(format, bytes) {
       const sd = u.wb.sheetCells(sheet);
       for (const c of cells) {
         const text = c.k === "formula" && c.cached ? `${c.text} (shows ${c.cached})` : c.text;
-        const m = sd.merges.find((q) => q.r0 === c.r && q.c0 === c.c);
+        const m = mergeAt(sd, c.r, c.c);
         raw.push({ label: `${sheet.name}!${a1(c.r, c.c)}`, text, protected: false, ...(m ? { merged: a1Range(m) } : {}), at: { sheet: sheet.name, range: a1(c.r, c.c), text_hash: exactHash(c.text) } });
       }
     }
-  } else throw new Error(`unknown format ${format}`);
+  } else if (format === "html") {
+    for (const x of htmlRawUnits(u.read)) raw.push(x); // src/html.js: elements that hold text and leaf elements, tag names and ids per R7
+  } else unknownFormat(format, "rawUnits");
   return raw;
 }
 
@@ -112,8 +118,8 @@ function rawUnits(format, bytes) {
  * Every entry, as JSON, stays under OUTLINE_LINE_MAX characters (its text is cut further when quotes or backslashes double in JSON), so
  * the outline file, one entry per line, can be paged with Claude Code's Read tool (which cuts lines at 2,000 characters).
  */
-export function outlineOf(format, bytes, max = UNITS_MAX) {
-  const raw = rawUnits(format, bytes);
+export function outlineOf(format, bytes, max = UNITS_MAX, reading = null) {
+  const raw = rawUnits(format, bytes, reading);
   const outline = raw.slice(0, max).map((x, i) => {
     const target = x.protected ? null : targetOf(x.at, format);
     const entry = (n) => {
@@ -183,9 +189,11 @@ function textNow(units, at) {
     const sh = units.deck.slides.find((s) => String(s.id) === at.slide_id)?.shapes.filter((x) => x.id === at.shape_id);
     return sh?.length === 1 && sh[0].hash === at.text_hash ? sh[0].text : null;
   }
+  if (units.format !== "xlsx") return unknownFormat(units.format, "textNow");
   const sheet = units.wb.sheets.find((s) => s.name === at.sheet);
   if (!sheet) return null;
-  const c = [...units.wb.sheetCells(sheet).cells.values()].find((x) => a1(x.r, x.c) === at.range);
+  const q = parseA1(String(at.range || ""));
+  const c = q && q.r0 === q.r1 && q.c0 === q.c1 ? cellAt(units.wb.sheetCells(sheet), q.r0, q.c0) : null;
   return c && exactHash(c.text) === at.text_hash ? c.text : null;
 }
 
@@ -227,34 +235,40 @@ export function cardFor(item, units, index, { reviewId, format }) {
 function placeOf(at, format) {
   if (format === "docx") return { format, ordinal: at.ordinal, para_id: at.para_id, body_path: at.body_path };
   if (format === "pptx") return { format, slide_id: at.slide_id, slide_index: at.slide_index, shape_id: at.shape_id };
-  return { format, sheet: at.sheet, range: at.range };
+  if (format === "xlsx") return { format, sheet: at.sheet, range: at.range };
+  return unknownFormat(format, "review placeOf");
 }
 
 /** The op Accept runs: one find-and-replace in one paragraph or shape, with the unit's text hash as `expect`. */
 export function opFor(at, format, id, { find, replace }) {
   if (format === "docx") return { op: "replace_text", id, target: targetOf(at, format), expect: { text_hash: at.text_hash }, find, replace };
   if (format === "pptx") return { op: "replace_text_in_shape", id, target: targetOf(at, format), expect: { text_hash: at.text_hash }, find, replace };
-  return null;
+  if (format === "xlsx") return null; // a spreadsheet takes notes only (cleanSuggestion)
+  return unknownFormat(format, "opFor");
 }
 
 /** The explicit op target of a unit (ops.schema.json docx_target, pptx_target, xlsx_range_target). */
 function targetOf(at, format) {
   if (format === "docx") return at.para_id ? { para_id: at.para_id, body_path: at.body_path, text_hash: at.text_hash } : { body_path: at.body_path, text_hash: at.text_hash };
   if (format === "pptx") return { slide_id: at.slide_id, shape_id: at.shape_id };
-  return { sheet: at.sheet, range: at.range };
+  if (format === "xlsx") return { sheet: at.sheet, range: at.range };
+  // HTML: exactly one form, as the op schema takes it (src/ops/schema.js): the element's id when it is unique (it survives elements
+  // added before it), else its path; the path is in the outline's `at` either way
+  if (format === "html") return at.element_id ? { element_id: at.element_id } : { path: at.path };
+  return unknownFormat(format, "targetOf");
 }
 
 /**
  * The agent's suggestions -> {cards, dropped: [{index, reason}]}. More than SUGGESTIONS_MAX stores none (refused, never the first 20).
  * `bytes` is the file now; `units` the batch's outline; `index` the server's record.
  */
-export function cardsFrom(list, { bytes, format, units, index, reviewId }) {
+export function cardsFrom(list, { bytes, sha = null, format, units, index, reviewId }) {
   if (list === undefined || list === null) return { cards: [], dropped: [] };
   if (!Array.isArray(list)) return { cards: [], dropped: [{ index: null, reason: "suggestions must be a list" }] };
   if (list.length > SUGGESTIONS_MAX) return { cards: [], dropped: list.map((_, i) => ({ index: i, reason: `more than ${SUGGESTIONS_MAX} suggestions` })) };
   let now;
   try {
-    now = readUnits(format, bytes);
+    now = sha ? unitsFor(format, bytes, sha) : readUnits(format, bytes); // `sha`: the bytes' own hash, to reuse the last reading of them
   } catch {
     return { cards: [], dropped: list.map((_, i) => ({ index: i, reason: "the file could not be read" })) };
   }

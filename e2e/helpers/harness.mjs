@@ -21,6 +21,7 @@ export function makeWorld(extraEnv = {}) {
   if (!havePython()) throw new Error(`the E2E fixtures need the repo virtualenv (${python} is missing). Create it: ${VENV_HINT}`);
   execFileSync(python, [path.join(repo, "scripts", "make-fixtures.py"), docs]);
   const spawned = []; // CLI children of this world, ended at cleanup
+  const running = new Set(); // world.cli() children still running: a poll among them would start the server again after `stop`
   const world = {
     root, state, docs, env,
     doc: (name) => path.join(docs, name),
@@ -38,10 +39,12 @@ export function makeWorld(extraEnv = {}) {
       const run = (a) =>
         new Promise((resolve) => {
           const c = spawn(process.execPath, [cliPath, ...a], { env, stdio: ["ignore", "pipe", "pipe"] });
+          c.args = a;
+          running.add(c);
           let stdout = "", stderr = "";
           c.stdout.on("data", (d) => (stdout += d));
           c.stderr.on("data", (d) => (stderr += d));
-          c.on("close", (code) => resolve({ code, stdout, stderr }));
+          c.on("close", (code) => (running.delete(c), resolve({ code, stdout, stderr })));
         });
       const writes = ["done", "commit"].includes(args[0]) || (args[0] === "apply" && !args.includes("--dry-run") && !args.includes("--standalone"));
       if (ticket && writes && !args.includes("--lease")) {
@@ -70,15 +73,75 @@ export function makeWorld(extraEnv = {}) {
       const url = r.stdout.split("\n").find((l) => l.startsWith("http://"));
       return url;
     },
+    /**
+     * Ends the world. A poll that is still waiting would see the server go and start it again in a state dir that is about to be removed:
+     * the CLI children are ended first. Then `stop`, then every server still holding a socket inside this world is stopped (a restart on
+     * a new pid, a stop that did not reach it), and the test fails, naming the pid: a server that outlived its world went unnoticed after
+     * full runs before, with its folder already deleted.
+     */
     async cleanup() {
-      // a poll that is still waiting would see the server go and start it again in a state dir that is about to be removed: end them first
-      for (const c of spawned) if (c.exitCode === null) c.kill("SIGKILL");
-      await world.cli(["stop"]).catch(() => {});
+      const live = [...running].filter((c) => c.exitCode === null);
+      // named on stderr (the test runner shows it under the test file): a CLI still running at cleanup is how a server came back after `stop`
+      if (live.length) console.error(`cleanup of ${root}: ended CLI commands still running: ${live.map((c) => c.args.slice(0, 2).join(" ")).join("; ")}`);
+      for (const c of [...spawned, ...live]) if (c.exitCode === null) c.kill("SIGKILL");
+      // `stop` at most 15 s: a socket that answers nothing would hold it forever, and then nothing below would run
+      const stop = world.cli(["stop"]).catch(() => {});
+      await Promise.race([stop, new Promise((r) => setTimeout(r, 15_000).unref())]);
+      for (const c of running) if (c.exitCode === null) c.kill("SIGKILL");
+      const left = await stopServersIn(root);
       fs.rmSync(root, { recursive: true, force: true });
+      if (left.length) throw new Error(`a server outlived the test's cleanup (pid ${left.join(", ")}, state in ${root}); it was stopped now`);
     },
   };
   return world;
 }
+
+/** pid -> socket paths of the processes holding a unix socket inside `dir` (lsof; the real and the /private spelling of a temp path). */
+function socketsIn(dir) {
+  const roots = [...new Set([dir, fs.existsSync(dir) ? fs.realpathSync(dir) : dir])].map((d) => `${d}${path.sep}`);
+  let out = "";
+  try {
+    out = execFileSync("/usr/sbin/lsof", ["-U", "-Fpn"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch (err) {
+    out = String(err.stdout || ""); // lsof exits 1 when some process could not be read
+  }
+  const found = new Map();
+  let pid = null;
+  for (const line of out.split("\n")) {
+    if (line[0] === "p") pid = Number(line.slice(1));
+    else if (line[0] === "n" && pid !== process.pid && roots.some((r) => line.slice(1).startsWith(r))) found.set(pid, line.slice(1));
+  }
+  return found;
+}
+
+/**
+ * Stops every process that still holds a socket inside `dir` once a server stopping on its own had time to (6 s). A process is found by
+ * the socket it holds (lsof), never by a pid in a record alone, so nothing outside the world is stopped. Returns the pids it stopped.
+ */
+export async function stopServersIn(dir) {
+  let found = socketsIn(dir);
+  for (let waited = 0; found.size && waited < 6000; waited += 200) {
+    await new Promise((r) => setTimeout(r, 200));
+    found = socketsIn(dir);
+  }
+  const pids = [...found.keys()];
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  }
+  for (let waited = 0; waited < 3000 && pids.some((pid) => alive(pid)); waited += 100) await new Promise((r) => setTimeout(r, 100));
+  for (const pid of pids) if (alive(pid)) process.kill(pid, "SIGKILL");
+  return pids;
+}
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /**
  * A folder holding the stand-in Apple helper (fake-apple-helper.cjs) and its onionskin-fm.json, for ONIONSKIN_APPLE_HELPER_DIR. `mode` is "ok" or the

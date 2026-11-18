@@ -17,7 +17,9 @@ const WORD_LIMIT = 2000;
 export const HARD_CAP_TOKENS = 60_000;
 const MAX_D = 2000;
 const CJK = "\\p{Script=Han}|\\p{Script=Hiragana}|\\p{Script=Katakana}";
-const TOKEN = new RegExp(`(?:${CJK})|(?:(?!${CJK})[\\p{L}\\p{N}\\p{M}])+(?:['’](?:(?!${CJK})[\\p{L}\\p{N}\\p{M}])+)*|\\s+|[^\\s]`, "gu");
+// a word is at most 4,096 characters a token (a longer one is several): an unbounded repeat over a run of 7.9 million combining marks
+// overflowed the regex stack ("Maximum call stack size exceeded")
+const TOKEN = new RegExp(`(?:${CJK})|(?:(?!${CJK})[\\p{L}\\p{N}\\p{M}]){1,4096}(?:['’](?:(?!${CJK})[\\p{L}\\p{N}\\p{M}]){1,4096})*|\\s+|[^\\s]`, "gu");
 const IS_WORD = new RegExp(`^(?:${CJK}|[\\p{L}\\p{N}\\p{M}])`, "u");
 const IS_CJK = new RegExp(`^(?:${CJK})$`, "u");
 const SENTENCE = /[^.!?。！？\n]*(?:[.!?。！？]+|\n|$)\s*/gu;

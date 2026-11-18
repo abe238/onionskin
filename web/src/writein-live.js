@@ -17,11 +17,12 @@
 //
 // Untrusted text: the old words come from History (sanitized on the server) and are only ever rendered by React as text, cut to
 // WRITEIN.wasChars. The overlay root carries data-writein (what the newest refresh did, a short code) for tests; it is never shown.
+import { nfc } from "../../src/nfc.js";
 import { api } from "./lib.js";
 import { WRITEIN, locateChanges, planWriteIn, sha256hex } from "./writein.js";
 
 const normTxt = (t) => String(t || "").replace(/\s+/g, " ").trim();
-const hashOf = (t) => sha256hex(String(t || "").normalize("NFC").replace(/\s+/g, " ").trim()).slice(0, 16); // as locateChanges (src/text.js textHash)
+const hashOf = (t) => sha256hex(nfc(t || "").replace(/\s+/g, " ").trim()).slice(0, 16); // as locateChanges (src/text.js textHash)
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const scroller = () => document.querySelector('[data-testid="docwrap"] .de-scroll') || document.querySelector(".de-scroll");
 const TOL = 2; // px: a rectangle may stick out of its paragraph's box by this much (rounding) and still count as inside

@@ -14,8 +14,8 @@ Input JSON comes from `--json '<json>'`, or `--file <path>`, or stdin when neith
 
 | reply | meaning |
 |---|---|
-| `{"comment":"c1","find":"a","replace":"b","note":"..."}` | DOCX: `replace_text` inside the anchored paragraph. PPTX: `replace_text_in_shape` inside the anchored shape. Optional `occurrence`, `all`, `match_case` as in those ops |
-| `{"comment":"c1","text":"new","note":"..."}` | DOCX: `replace_text` with `text` (the whole paragraph; refused as `paragraph_has_objects` when it holds images or other objects). PPTX: `set_shape_text`, `\n` splits paragraphs |
+| `{"comment":"c1","find":"a","replace":"b","note":"..."}` | DOCX: `replace_text` inside the anchored paragraph. PPTX: `replace_text_in_shape` inside the anchored shape. HTML: `replace_text` inside the anchored element. Optional `occurrence`, `all`, `match_case` as in those ops |
+| `{"comment":"c1","text":"new","note":"..."}` | DOCX: `replace_text` with `text` (the whole paragraph; refused as `paragraph_has_objects` when it holds images or other objects). PPTX: `set_shape_text`, `\n` splits paragraphs. HTML: `set_text` (refused as `spans_markup` when the element holds other elements) |
 | `{"comment":"c1","set":"value","note":"..."}` | XLSX: `set_cells` on the anchored cell or range (scalar, or rows of cells for a range) |
 | `{"comment":"c1","ops":[ ... ],"note":"..."}` | anything else: full ops, untouched (you give their `target` and `expect`) |
 | `{"comment":"c1","decline":true,"note":"why"}` | no edit; reported to the user as declined |
@@ -54,6 +54,7 @@ onionskin apply path/to/file.docx --ops ops.json --lease <ticket> --summary
 Every op has `op` (its name), usually `target` (where) and `expect` (what you saw there), and an optional `id` (a free label echoed in the report; put the batch comment id here). `expect` is checked against the file as it is BEFORE any op of the file runs:
 
 - DOCX and PPTX text targets: `expect.quote` must be contained in the target's text, or `expect.text_hash` must equal the hash of the whole text (the anchor's `locator.text_hash`).
+- HTML elements: `expect.quote` must be contained in the element's visible text, or `expect.text_hash` must equal the hash of its own text (the text directly inside it, the anchor's `locator.text_hash` and the outline's `expect.text_hash`).
 - XLSX targets: `expect.quote` must EQUAL the text of the region (cells joined by TAB, rows by LF, each cell as typed: the formula if it has one), or `expect.text_hash` must equal its hash.
 - An EMPTY target (an empty XLSX cell, an empty PPTX shape) has `expect: {"quote": ""}`; its `text_hash` is null. For an XLSX region the quote is the empty cells joined by TAB and rows by LF: empty `A10:D10` is `"\t\t\t"`.
 - `expect.absent: true` (`add_sheet`) means the sheet name must not exist yet.
@@ -247,7 +248,50 @@ Worked example (the overall note says "duplicate slide 2 and title the copy Next
 }
 ```
 
+## HTML ops
+
+Target is an element: `{"anchor_id": "a3"}`, or the `path` (`{"path": "/html[1]/body[1]/p[3]"}`) or unique `element_id` (`{"element_id": "intro"}`) that the anchor's `locator` or the outline's `target` gives. Exactly one of them; copy an outline `target` as is. Every op is a splice of the file's source: the bytes outside the place it changes stay exactly as they were, and the result is parsed again before anything is written, to prove that nothing else moved (`proof_failed` otherwise). All ops of one file are checked against the file as delivered, so two ops may not change the same place (`overlapping_edit`): give one op per place, or one `replace_element`.
+
+What you may write is text, structure and formatting: headings, paragraphs, lists, tables, `b`, `i`, `em`, `strong`, `code`, `span` and the like, `class`, `id`, `title`, `lang` and `style` (no `url()` other than a relative path or a `data:` image), images with a relative `src` or a `data:` image, and links to `http`, `https`, `mailto`, `tel`, a relative path or a `#fragment`. Code that runs in a browser cannot be added or changed: a `script` element, an event handler such as `onclick`, a frame, a form or its controls, a stylesheet `link`, a remote image, a `data-` attribute, a `javascript:` or other URL. A `script` or `style` element cannot be a target at all (`active_content`, with a reason of its own), and its contents are never in the batch. When a page loads a script, text with `{{`, `{%`, `<%` or `${` is refused too. Such a write is refused whole, with `code: "active_content"`, the reason codes in `reasons`, and the one sentence `The agent tried to add code that runs in a browser, so nothing was written.` Decline that comment with a note, say so in the `summary`, and do not try another spelling of the same thing. A changed link target is allowed and listed in the page's History.
+
+Text with characters outside plain ASCII in a page that does not say it is UTF-8: the write also adds `<meta charset="utf-8">` as the first child of `head`. When the page has no place for it near its top, the write is refused with `charset_needs_head`: write those characters as references (`&eacute;`) or decline.
+
+### replace_text
+`find` + `replace` inside the element (its text and the text of elements inside it); optional `occurrence`, `all`, `match_case`. Each match must lie inside one text: a match across an element's edge ("costs <b>fell</b>") is refused as `spans_markup`; use `replace_element`. A space in `find` matches any run of whitespace or line breaks in the source. With `text` instead of `find`, it is `set_text`.
+
+### set_text
+`text`: the whole text of an element that holds one text and nothing else (or nothing). An element with other elements inside is `spans_markup`. Example: `{"op": "set_text", "target": {"element_id": "intro"}, "expect": {"quote": "Costs"}, "text": "Costs fell by 40%."}`
+
+### set_attribute
+`name` and `value`. An existing attribute keeps its place and its quotes; a new one goes after the last. Example: `{"op": "set_attribute", "target": {"element_id": "pic"}, "expect": {"quote": ""}, "name": "alt", "value": "An onion"}`
+
+### remove_attribute
+`name`. Removing an attribute that its start tag holds twice is refused (`not_addressable`). Example: `{"op": "remove_attribute", "target": {"element_id": "intro"}, "expect": {"quote": "Costs"}, "name": "title"}`
+
+### insert_html
+`where`: `before`, `after`, `first_child` or `last_child` of the target, and `html`. The markup is parsed in that place and must read back the same (`not_well_formed`) and stay there (`proof_failed`: a `<p>` put into `<head>`, or a row put straight into a table whose `<tbody>` is not written in the source). `last_child` needs the element's end tag in the source. Example: `{"op": "insert_html", "target": {"element_id": "steps"}, "expect": {"quote": "One"}, "where": "last_child", "html": "<li>Two</li>"}`
+
+### replace_element
+Replaces the element with `html` (its tags and everything inside), parsed in its place as for `insert_html`. The element must be cut out of the source exactly (`not_addressable` for an element the parser builds from more than its own tags). Example: `{"op": "replace_element", "target": {"element_id": "two"}, "expect": {"quote": "Costs"}, "html": "<p id=\"two\">Costs <b>rose</b> again.</p>"}`
+
+### delete_element
+Removes the element with everything inside it, under the same rule. Example: `{"op": "delete_element", "target": {"element_id": "old-note"}, "expect": {"quote": "Draft"}}`
+
+Other codes: `not_addressable` (an element the parser implied, such as a `<tbody>` not in the source, or text that cannot be edited at its exact place: target the nearest written ancestor), `too_large` and `not_utf8` (the page cannot be read).
+
+Worked example (comment c1 on a paragraph asks to fix a figure and add a link after it):
+
+```json
+{
+  "schema": "onionskin.ops/1",
+  "ops": [
+    { "op": "replace_text", "id": "c1", "target": { "anchor_id": "a1" }, "expect": { "text_hash": "3c0e5a91d2b47f68" }, "find": "24%", "replace": "40%" },
+    { "op": "insert_html", "id": "c1", "target": { "anchor_id": "a1" }, "expect": { "text_hash": "3c0e5a91d2b47f68" }, "where": "after", "html": "<p>Source: <a href=\"https://example.com/report\">the full report</a>.</p>" }
+  ]
+}
+```
+
 ## Document-wide ops (all formats)
 
 ### replace_all_text
-`find` + `replace` for every occurrence in the document (DOCX paragraphs including table cells, XLSX cells as typed, PPTX shapes). Optional `match_case`. `expect` is `{"count": N}`, the number of matches including protected ones; a different count fails closed. Protected units with a match are skipped and reported in `detail.skipped_protected`.
+`find` + `replace` for every occurrence in the document (DOCX paragraphs including table cells, XLSX cells as typed, PPTX shapes, HTML text: never a script or style body or an attribute value, and never a match across an element's edge, whose number a count that misses reports as `spans_markup`). Optional `match_case`. `expect` is `{"count": N}`, the number of matches including protected ones; a different count fails closed. Protected units with a match are skipped and reported in `detail.skipped_protected`.

@@ -7,12 +7,15 @@ import { PRODUCT, SERVER_PROTOCOL, env } from "./constants.js";
 import { sha256 } from "./fsutil.js";
 import { ensureStateDir, serverRecordPath, socketPath, stateDir, writeStateFile } from "./paths.js";
 import { setupCheckerStatus, startLateSoffice, startSetupChecker } from "./checker.js";
-import { analyzeOffThread } from "./offload.js";
+import { analyzeOffThread, warmAnchors } from "./offload.js";
+import { REQUEST_MAX, requestSize } from "./retain.js";
 import { warm, warmNewest } from "./history.js";
 import { stopRewriter } from "./rewriter.js";
-import { HttpError, Sessions } from "./session.js";
+import { HttpError, Sessions, tooLarge } from "./session.js";
+import { encodeHtmlView } from "./html-envelope.js";
+import { CapError } from "./xml.js";
 import { quickPreview } from "./quick-plan.js";
-import { cliStatus, leaseOf, localRunner } from "./local.js"; // leaseOf: the delivery an agent acts on (batch, holder, token), all three required
+import { batchFile, checkBinding, claimOfQuery, cliBatch, cliStatus, leaseOf, localRunner, openWork, sessionFor } from "./local.js"; // leaseOf: the delivery an agent acts on (batch, holder, token), all three required
 import { readStamps, writeStamps } from "./stamps.js";
 import { setupRewriterStatus, startSetupRewriter, suggest, suggestStatus, useSuggestion, warmSuggest } from "./suggest.js";
 import { readStyle, writeStyle } from "./style.js";
@@ -32,6 +35,7 @@ function secure(res) {
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-DNS-Prefetch-Control", "off"); // PLAN-html R3, R21: no DNS prefetch for anything the page or an HTML view names
 }
 function sendJson(res, status, body) {
   secure(res);
@@ -44,23 +48,32 @@ function sendText(res, status, text) {
   res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(text);
 }
-function readBody(req, max = MAX_BODY) {
+// A body past `max` is refused with a JSON answer the page can show (413, code too_large_request), not a cut connection (the page read
+// that as a failure to retry forever): the rest of it is read and dropped, up to MAX_BODY more, so the browser gets the answer; past
+// that the connection is closed.
+function readBody(req, max = MAX_BODY, refusal = null) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let n = 0;
+    let over = false;
     req.on("data", (c) => {
       n += c.length;
+      if (over) {
+        if (n > max + MAX_BODY) req.destroy();
+        return;
+      }
       if (n > max) {
-        reject(new HttpError(413, "body too large"));
-        req.destroy();
+        over = true;
+        chunks.length = 0;
+        reject(refusal || new HttpError(413, "body too large", { code: "too_large_request" }));
       } else chunks.push(c);
     });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
-async function readJson(req, max = MAX_BODY) {
-  const raw = await readBody(req, max);
+async function readJson(req, max = MAX_BODY, refusal = null) {
+  const raw = await readBody(req, max, refusal);
   try {
     return raw.length ? JSON.parse(raw.toString("utf8")) : {};
   } catch {
@@ -70,6 +83,8 @@ async function readJson(req, max = MAX_BODY) {
 function fail(res, err) {
   if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message, ...err.extra });
   if (err instanceof SettingsError) return sendJson(res, err.status, { error: err.message });
+  // a document past a reader's cap (src/xml.js): plain words a person can act on, whatever route read it
+  if (err instanceof CapError) return sendJson(res, 422, { error: `Onionskin cannot read this file: ${err.message}.`, code: "too_large" });
   console.error("internal error:", err.stack || err);
   return sendJson(res, 500, { error: "internal error" });
 }
@@ -158,6 +173,10 @@ export async function startServer({ port = 0 } = {}) {
   ensureStateDir();
   const sessions = new Sessions();
   const sse = new Map(); // key -> Set<res>
+  // key -> when a page of that session last spoke (its event stream opened or ended, any other request): `onionskin update` holds
+  // off while a tab is open or was open lately (src/local.js openWork), since edits typed in a tab live only in that tab until Send
+  const tabSeen = new Map();
+  const tabsOf = (key) => sse.get(key)?.size || 0;
   // LibreOffice checks running after `done` returned (session key -> Set<{cancel}>). Cancelled when the session closes or the server stops.
   const late = new Map();
   function startLate(key, inputs, analysis) {
@@ -188,7 +207,7 @@ export async function startServer({ port = 0 } = {}) {
     let analysis, done;
     try {
       analysis = inputs ? await analyzeOffThread(inputs) : null; // the server keeps answering while the checks run
-      done = sessions.done(s.key, results, claim, analysis);
+      done = await sessions.doneAsync(s.key, results, claim, analysis, { inline: false }); // the checks and the anchors never run on this thread
     } catch (err) {
       if (delivery && s.delivered === delivery && stageBefore) sessions.setStage(s.key, stageBefore); // done did not finish and this delivery is still the current one
       throw err;
@@ -203,7 +222,7 @@ export async function startServer({ port = 0 } = {}) {
   sessions.local = local;
   sessions.on("local", (s, ticket) => setImmediate(() => local.run(s.key, ticket)));
   // the background agent (src/agent-runner.js): started for a file opened from a person's terminal, or for a Send nobody took
-  const agent = agentRunner(sessions, { tabs: (key) => sse.get(key)?.size || 0 });
+  const agent = agentRunner(sessions, { tabs: tabsOf });
   sessions.agent = agent;
   // a faster outside-edit notice (src/watch.js); the page's /api/stale poll stays the backstop
   const watcher = docWatcher(sessions);
@@ -248,7 +267,8 @@ export async function startServer({ port = 0 } = {}) {
       const bad = auth.check(req, { mutating, queryToken: isEvents ? url.searchParams.get("t") || "" : "" });
       if (bad) return sendJson(res, isBootstrap && bad.code === "token_required" ? 401 : bad.status, { error: bad.error, ...(bad.code ? { code: bad.code, reopen: `${PRODUCT.bin} open <file>` } : {}) });
       const key = url.searchParams.get("s") || "";
-      if (isBootstrap) return sendJson(res, 200, { session: sessions.view(sessions.get(key)), product: PRODUCT.name, settings: readSettings(), suggest: suggestStatus() });
+      // a page that loads (or reloads) while a Send of this file is in flight starts from what it committed (Sessions.settled)
+      if (isBootstrap) return sendJson(res, 200, { session: (await sessions.settled(key), sessions.view(sessions.get(key))), product: PRODUCT.name, settings: readSettings(), suggest: suggestStatus() });
       // per-machine settings and the background image: not tied to a session, so any tab (a read-only one too) may use them
       if (p === "/api/settings" || p.startsWith("/api/background")) return await settingsRoute(req, res, p);
       // own stamps are per machine too: a list of {label, words} the person typed, any tab may use it
@@ -273,12 +293,23 @@ export async function startServer({ port = 0 } = {}) {
       const tab = String(req.headers["x-onionskin-tab"] || url.searchParams.get("tab") || "").slice(0, 64);
       if (isEvents) return events(req, res, key, tab);
       const s = sessions.get(key);
+      tabSeen.set(key, Date.now());
       if (req.method === "GET" && p === "/api/file") {
         const { bytes, diskSha } = sessions.loadForPage(key); // records an outside change the user is taking (history)
         warm(s);
         secure(res);
         res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Sha256": diskSha });
         return res.end(bytes);
+      }
+      if (req.method === "GET" && p === "/api/html-view") {
+        // an HTML file's render copy and what the page needs with it, in one binary body (src/html-envelope.js); never text/html (R12)
+        const v = await sessions.htmlView(key, { plain: url.searchParams.get("plain") === "1" });
+        warm(s);
+        const [prefix, copy] = encodeHtmlView({ version: v.sha, plain: v.plain, reason: v.reason, stats: v.stats, texts: v.texts, editable: v.editable, ident: v.ident, copy: v.bytes });
+        secure(res);
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": prefix.length + copy.length, "X-Sha256": v.sha });
+        res.write(prefix);
+        return res.end(copy);
       }
       if (req.method === "GET" && p === "/api/stale") return sendJson(res, 200, sessions.staleCheck(key, url.searchParams.get("sha") || ""));
       if (req.method === "GET" && p === "/api/history") return sendJson(res, 200, await sessions.history(key));
@@ -293,9 +324,14 @@ export async function startServer({ port = 0 } = {}) {
       }
       // starts the writing helper of quick fixes if it is cold (src/suggest.js); carries no text, changes nothing
       if (p === "/api/suggest/warm") return sendJson(res, 200, (await readJson(req, 1024), warmSuggest()));
-      const body = await readJson(req, p === "/api/export-tracked" || p === "/api/agent" ? 1024 : p === "/api/suggest" ? 8 * 1024 : MAX_BODY); // the export and the agent's buttons take ids only
+      // the export and the agent's buttons take ids only; a draft carries no document, so it is held to the cap of a request's own data
+      const body = await readJson(req, p === "/api/export-tracked" || p === "/api/agent" ? 1024 : p === "/api/suggest" ? 8 * 1024 : p === "/api/draft" || p === "/api/handover" ? REQUEST_MAX : MAX_BODY, p === "/api/draft" || p === "/api/handover" ? tooLarge("This draft") : null);
+      // a Send or a quick fix's Use carries the document too: their comments, note, typed edits and view state are held to the same cap
+      if ((p === "/api/send" || p === "/api/suggest/use") && requestSize([body.comments, body.note, body.edits, body.viewState, body.htmlEdits]) > REQUEST_MAX) throw tooLarge(p === "/api/send" ? "This Send" : "This request");
       if (p === "/api/claim" && !/^[\w-]{6,64}$/.test(tab)) return sendJson(res, 400, { error: "a tab id is required" });
       if (p === "/api/claim") return sendJson(res, 200, { ok: sessions.claimEditor(key, tab, { takeover: body.takeover === true }), session: sessions.view(s) });
+      // the tab that just lost editing hands over its unsaved words (Sessions.handOver checks that it is that tab), in the file's turn
+      if (p === "/api/handover") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(key, () => sessions.handOver(key, tab, { comments: body.comments, note: body.note, base: body.base, baseSeq: body.baseSeq, noteRev: body.noteRev })), sessions.view(s)) });
       if (p !== "/api/resolve") sessions.requireEditor(key, tab);
       // the background agent's buttons: a fixed action, and for `use` a CLI name, for `show` a switch. No path or text is accepted.
       if (p === "/api/agent") {
@@ -308,18 +344,20 @@ export async function startServer({ port = 0 } = {}) {
         await agent.action(key, { action: body.action, cli: body.cli, on: body.on, takeBack: body.takeBack === true });
         return sendJson(res, 200, { ok: true, session: sessions.view(s) });
       }
-      if (p === "/api/draft") return sendJson(res, 200, { ok: true, session: (sessions.setDraft(key, body), sessions.view(s)) });
+      // a draft save, an answer and Take back run in this file's turn: one that arrives while a Send is in flight waits for it (Sessions.inTurn)
+      if (p === "/api/draft") return sendJson(res, 200, { ok: true, session: (await sessions.setDraftAsync(key, { comments: body.comments, note: body.note, rev: body.rev, noteRev: body.noteRev, seen: body.seen, noteSeen: body.noteSeen, tab }), sessions.view(s)) });
       // a tap on a question card: an index (or null for "Something else"), never option text; checked against what the server stored
-      if (p === "/api/answer") return sendJson(res, 200, { ok: true, session: (sessions.answer(key, { id: String(body.id || ""), choice: body.choice }), sessions.view(s)) });
+      if (p === "/api/answer") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(key, () => sessions.answer(key, { id: String(body.id || ""), choice: body.choice })), sessions.view(s)) });
       // review first (src/review.js): a button's kind, then taps on its cards (ids and an integer, never text)
       if (p === "/api/review") return sendJson(res, 200, { ok: true, session: (sessions.requestReview(key, body.kind), sessions.view(s)) });
       if (p === "/api/suggestion") return sendJson(res, 200, { ok: true, session: (sessions.answerSuggestions(key, { ids: body.ids, choice: body.choice }), sessions.view(s)) });
       // quick fixes (src/suggest.js): asking writes nothing; Use names the stored suggestion by id and writes it on this Mac
       if (p === "/api/suggest") return sendJson(res, 200, await suggest(sessions, key, body));
-      if (p === "/api/suggest/use") return sendJson(res, 200, { ok: true, session: (useSuggestion(sessions, key, body), sessions.view(s)) });
+      if (p === "/api/suggest/use") return sendJson(res, 200, { ok: true, session: (await useSuggestion(sessions, key, { ...body, tab }), sessions.view(s)) });
       if (p === "/api/send") {
         const bytes = typeof body.bytesB64 === "string" ? Buffer.from(body.bytesB64, "base64") : null;
-        sessions.send(key, { baseSha: String(body.baseSha || ""), bytes, comments: body.comments, note: body.note, edits: body.edits, viewState: body.viewState, quick: body.quick });
+        // an HTML file's text edits (PLAN-html R9) come as {nodeId, versionSha, baseTextHash, newText}, never as bytes
+        await sessions.sendAsync(key, { baseSha: String(body.baseSha || ""), bytes, comments: body.comments, note: body.note, edits: body.edits, htmlEdits: body.htmlEdits, viewState: body.viewState, quick: body.quick, rev: body.rev, noteRev: body.noteRev, seen: body.seen, noteSeen: body.noteSeen, sends: body.sends, tab });
         warm(s);
         return sendJson(res, 200, { ok: true, session: sessions.view(s) });
       }
@@ -329,9 +367,9 @@ export async function startServer({ port = 0 } = {}) {
         warm(s);
         return sendJson(res, 200, { ok: true, ...r, session: sessions.view(s) });
       }
-      if (p === "/api/takeback") return sendJson(res, 200, { ok: true, session: (sessions.takeBack(key), sessions.view(s)) });
-      if (p === "/api/revert") return sendJson(res, 200, { ok: true, session: (sessions.revert(key, String(body.id || "")), warm(s), sessions.view(s)) });
-      if (p === "/api/resolve") return sendJson(res, 200, sessions.resolveAll(key));
+      if (p === "/api/takeback") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(key, () => sessions.takeBack(key)), sessions.view(s)) });
+      if (p === "/api/revert") return sendJson(res, 200, { ok: true, session: (await sessions.revertAsync(key, String(body.id || "")), warm(s), sessions.view(s)) });
+      if (p === "/api/resolve") return sendJson(res, 200, await sessions.resolveAllAsync(key));
       if (p === "/api/export-tracked") return sendJson(res, 200, await sessions.exportTracked(key, String(body.id || "").slice(0, 64)));
       if (p === "/api/show-copy") return sendJson(res, 200, sessions.showCopy(String(body.path || "")));
       if (p === "/api/dismiss-conflict") return sendJson(res, 200, { ok: true, session: (sessions.dismissConflict(key), sessions.view(s)) });
@@ -396,7 +434,8 @@ export async function startServer({ port = 0 } = {}) {
     res.write(`event: state\ndata: ${JSON.stringify(sessions.view(s))}\n\n`);
     if (!sse.has(key)) sse.set(key, new Set());
     sse.get(key).add(res);
-    req.on("close", () => sse.get(key)?.delete(res));
+    tabSeen.set(key, Date.now());
+    req.on("close", () => (sse.get(key)?.delete(res), tabSeen.set(key, Date.now())));
   }
   sessions.on("change", (s, event) => {
     const set = sse.get(s.key);
@@ -417,44 +456,46 @@ export async function startServer({ port = 0 } = {}) {
       if (p === "/health") return sendJson(res, 200, { ok: true, pid: process.pid, protocol: SERVER_PROTOCOL, sessions: sessions.map.size });
       if (req.method === "POST" && p === "/cli/open") {
         const { file, agent: wants } = await readJson(req);
-        const s = sessions.open(String(file || ""), { agent: wants === "background" ? "background" : undefined });
+        const s = await sessions.openAsync(String(file || ""), { agent: wants === "background" ? "background" : undefined });
         if (wants === "background") agent.ensure(s.key); // a person opened it from a terminal: the background agent works on it
         const nonce = auth.newNonce();
         return sendJson(res, 200, { key: s.key, url: `${auth.origin}/?s=${s.key}&n=${nonce}`, state: sessions.state(s), name: path.basename(s.file) });
       }
       if (req.method === "GET" && p === "/cli/status") {
-        return sendJson(res, 200, cliStatus(sessions, sessions.byFile(url.searchParams.get("file") || "")));
+        return sendJson(res, 200, cliStatus(sessions, sessionFor(sessions, url.searchParams.get("file") || "", url.searchParams.get("holder"))));
+      }
+      if (req.method === "GET" && p === "/cli/open-work") {
+        // what `onionskin update` would cut off by restarting the server: counts only, no file names
+        return sendJson(res, 200, openWork(sessions, { tabs: tabsOf, seen: (key) => tabSeen.get(key) ?? null }));
       }
       if (req.method === "GET" && p === "/cli/batch-file") {
-        // which file a delivered batch belongs to (for `reply --lease <ticket>` without a file); the lease token is still checked at the write
-        const id = url.searchParams.get("batch_id") || "";
-        const s = id ? [...sessions.map.values()].find((x) => x.delivered?.batch.batch_id === id) : null;
-        return sendJson(res, 200, { file: s ? s.file : null });
+        // which file a delivered batch belongs to (for `reply --lease <ticket>` without a file): only for the whole ticket (batch id and token)
+        return sendJson(res, 200, { file: batchFile(sessions, claimOfQuery(url.searchParams)) });
       }
       if (req.method === "GET" && p === "/cli/batch") {
-        // the batch delivered to the agent (anchors for `apply`); null when none is in progress
-        const s = sessions.byFile(url.searchParams.get("file") || "");
-        return sendJson(res, 200, { state: sessions.state(s), batch: s.delivered?.batch || null });
+        // the batch delivered to the agent (anchors for `apply`); with a claim, only for the lease holder (src/local.js cliBatch)
+        const claim = claimOfQuery(url.searchParams);
+        return sendJson(res, 200, cliBatch(sessions, sessionFor(sessions, url.searchParams.get("file") || "", claim.holder), claim));
       }
       if (req.method === "POST" && p === "/cli/agent-write") {
         const body = await readJson(req);
-        const s = sessions.byFile(String(body.file || ""));
+        const s = sessionFor(sessions, String(body.file || ""), body.holder);
         const bytes = typeof body.bytes_b64 === "string" ? Buffer.from(body.bytes_b64, "base64") : null;
         // `ops` is what apply ran to make these bytes: kept for a later merge, which checks it against the bytes before relying on it
-        return sendJson(res, 200, sessions.agentWrite(s.key, { baseSha: String(body.base_sha256 || ""), bytes, route: "apply", ops: Array.isArray(body.ops) ? body.ops : null, partial: body.partial === true, ...leaseOf(body) }));
+        return sendJson(res, 200, await sessions.agentWriteChecked(s.key, { baseSha: String(body.base_sha256 || ""), bytes, route: "apply", ops: Array.isArray(body.ops) ? body.ops : null, partial: body.partial === true, ...leaseOf(body) }));
       }
       if (req.method === "POST" && p === "/cli/commit") {
         // candidate bytes made elsewhere (a copy edited with python-docx and so on): same lease check, compare-and-swap, snapshot and atomic replace as apply.
         // Without base_sha256 the base is the hash this server last wrote or delivered for the batch.
         const body = await readJson(req);
-        const s = sessions.byFile(String(body.file || ""));
+        const s = sessionFor(sessions, String(body.file || ""), body.holder);
         const bytes = typeof body.bytes_b64 === "string" ? Buffer.from(body.bytes_b64, "base64") : null;
         const baseSha = typeof body.base_sha256 === "string" && body.base_sha256 ? body.base_sha256 : null;
-        return sendJson(res, 200, sessions.agentWrite(s.key, { baseSha, bytes, label: "before agent commit", ...leaseOf(body) }));
+        return sendJson(res, 200, await sessions.agentWriteChecked(s.key, { baseSha, bytes, label: "before agent commit", ...leaseOf(body) }));
       }
       if (req.method === "POST" && p === "/cli/apply-report") {
         const body = await readJson(req);
-        const s = sessions.byFile(String(body.file || ""));
+        const s = sessionFor(sessions, String(body.file || ""), body.holder);
         return sendJson(res, 200, sessions.noteApply(s.key, {
           ...leaseOf(body), run: typeof body.run === "string" ? body.run : "",
           problems: Array.isArray(body.problems) ? body.problems : [], applied: Array.isArray(body.applied) ? body.applied.filter((k) => typeof k === "string") : [],
@@ -462,12 +503,14 @@ export async function startServer({ port = 0 } = {}) {
       }
       if (req.method === "GET" && p === "/cli/poll") {
         const f = url.searchParams.get("file") || "";
+        checkBinding(f, url.searchParams.get("holder")); // before the file is looked up or opened
         let s;
         try {
           s = sessions.byFile(f);
         } catch {
-          s = sessions.open(f); // a poller may start before (or after a server restart without) `open`
+          s = await sessions.openAsync(f); // a poller may start before (or after a server restart without) `open`
         }
+        await sessions.outlineAhead(s.key, url.searchParams.get("holder") || "agent"); // the outline a delivery carries, built off this thread
         const handle = sessions.poll(s.key, { ack: url.searchParams.get("ack") === "1", holder: url.searchParams.get("holder") || "agent", full: url.searchParams.get("full") === "1", compact: url.searchParams.get("compact") === "1" });
         res.on("close", () => handle.cancel());
         const out = await handle.promise;
@@ -476,7 +519,7 @@ export async function startServer({ port = 0 } = {}) {
       }
       if (req.method === "POST" && p === "/cli/done") {
         const body = await readJson(req);
-        const s = sessions.byFile(String(body.file || ""));
+        const s = sessionFor(sessions, String(body.file || ""), body.holder);
         return sendJson(res, 200, await finishRun(s.key, body.results, leaseOf(body)));
       }
       if (req.method === "POST" && p === "/cli/stop") {
@@ -539,6 +582,7 @@ export async function startServer({ port = 0 } = {}) {
     await new Promise((resolve, reject) => (unix.once("error", reject), unix.listen(sock, resolve)));
     fs.chmodSync(sock, 0o600);
     writeStateFile(serverRecordPath(), JSON.stringify({ pid: process.pid, port: tcpPort, protocol: SERVER_PROTOCOL }));
+    warmAnchors(); // the anchor worker starts now, so the first Send does not wait for it
   });
 
   const idleMs = Number(env("IDLE_MS", 2 * 60 * 60 * 1000));

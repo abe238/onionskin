@@ -1,6 +1,6 @@
 import { attrOf, local, readRels } from "./xlsx.js";
-import { walkXml } from "./xml.js";
-import { normText, similarity, textHash } from "./text.js";
+import { readBudget, tooMany, walkXml } from "./xml.js";
+import { affords, hitsOf, normPaid, normText, searchCost, similarity, spend, textHash, weigh, weightOf } from "./text.js";
 import { openZip } from "./zip.js";
 import { summarizeRuns } from "./fmt.js";
 import { untrusted } from "./sanitize.js";
@@ -13,6 +13,15 @@ const EMPTY = textHash("");
 const CTX = 40;
 const KEEP = 2000;
 
+// What one reading of a deck may hold, counted over all its slides. The server reads a deck on its own thread at Send, at each delivery to
+// an agent and at the end of a run, so these bound how long that keeps it from answering (outside review: three slides of 2.85 million runs
+// each held it 7.2 s). Each shape costs a few hundred bytes once read. A real deck of 200 slides has a few thousand shapes and well under
+// 200,000 elements.
+export const MAX_SHAPES = 50_000;
+export const MAX_DECK_ELEMENTS = 500_000;
+export const MAX_DECK_ATTRIBUTES = 1_000_000;
+export const MAX_DECK_TEXT = 8_000_000;
+const deckBudget = () => readBudget({ elements: MAX_DECK_ELEMENTS, attrs: MAX_DECK_ATTRIBUTES, text: MAX_DECK_TEXT, what: "deck", split: "smaller decks" });
 const SHAPE_TAGS = new Set(["sp", "pic", "graphicFrame", "grpSp", "cxnSp"]);
 const KIND = { sp: "shape", pic: "image", graphicFrame: "table", grpSp: "group", cxnSp: "line" };
 
@@ -21,23 +30,34 @@ export function parseDeck(bytes) {
   const zip = openZip(bytes);
   const px = zip.readText("ppt/presentation.xml");
   if (px == null) throw new Error("ppt/presentation.xml missing");
-  const rels = readRels(zip, "ppt/presentation.xml");
+  const budget = deckBudget(); // the presentation, its relationships and every slide of one reading share it
+  const rels = readRels(zip, "ppt/presentation.xml", budget);
   const slides = [];
   walkXml(px, {
     onOpen(n, a) {
       if (local(n) === "sldId") slides.push({ id: a.id ?? null, index: slides.length, part: rels.get(attrOf(a, "id")) || null });
     },
-  });
+  }, budget);
+  // read once; a reading that failed (past a cap) fails the same way every time it is asked again, never "already read"
   let loaded = false;
+  let failed = null;
   const load = () => {
+    if (failed) throw failed;
     if (loaded) return;
-    loaded = true;
-    for (const s of slides) Object.assign(s, readSlide(zip, s.part));
+    try {
+      const count = { shapes: 0, budget };
+      const read = slides.map((s) => readSlide(zip, s.part, count));
+      slides.forEach((s, i) => Object.assign(s, read[i]));
+      loaded = true;
+    } catch (err) {
+      failed = err;
+      throw err;
+    }
   };
   return { slides, ensure: load };
 }
 
-function readSlide(zip, part) {
+function readSlide(zip, part, count = { shapes: 0, budget: deckBudget() }) {
   const out = { shapes: [], title: "", titleHash: EMPTY };
   const xml = part ? zip.readText(part) : null;
   if (xml == null) return out;
@@ -50,6 +70,7 @@ function readSlide(zip, part) {
     onOpen(n, a) {
       const l = local(n);
       at.push(l);
+      if (SHAPE_TAGS.has(l) && ++count.shapes > MAX_SHAPES) throw tooMany(count.budget, MAX_SHAPES, "shapes");
       if (SHAPE_TAGS.has(l)) stack.push({ tag: l, id: null, name: "", paras: [], isTitle: false, runs: [], run: null });
       else if (!stack.length) return;
       const top = stack[stack.length - 1];
@@ -94,7 +115,7 @@ function readSlide(zip, part) {
         if (sh.isTitle && !out.title) out.title = text;
       }
     },
-  });
+  }, count.budget);
   out.titleHash = textHash(out.title);
   return out;
 }
@@ -113,38 +134,75 @@ export function listShapes(deck, slideId = null) {
 
 const slideById = (deck, id) => deck.slides.find((s) => s.id === String(id)) || null;
 
+// The budget (src/text.js scanBudget): resolving an anchor reads slides, the shapes of a slide and a shape's text, once per anchor. Each
+// such read is spent before it runs, and an anchor whose spend fails resolves as "moved or removed" (the slide or shape alone when
+// it is all that is known). Index-free scans here are over the slides of a deck or the shapes of a slide, both bounded by MAX_* at parse.
+const slideCost = (deck) => deck.slides.length * 4 + 1;
+const shapeCost = (slide) => slide.shapes.length * 8 + 1;
+
 /**
  * Engine location {slideIndex, slideId?, shapeId?, shapeName?, cell?} (+ the text the browser saw) -> durable anchor, from the written
  * bytes. `ctx` = {quote, prefix, suffix, text}. Returns null when the slide does not exist.
  */
 export function pptxDurable(deck, loc, ctx = {}) {
   deck.ensure();
-  const slide = (loc.slideId != null && slideById(deck, loc.slideId)) || deck.slides[loc.slideIndex];
+  const slide = (loc.slideId != null && spend(slideCost(deck)) && slideById(deck, loc.slideId)) || deck.slides[loc.slideIndex];
   if (!slide) return null;
-  const base = { format: "pptx", ...(loc.protected ? { protected: true } : {}), slideId: slide.id, slidePart: slide.part, slideIndex: slide.index, slideTitle: normText(slide.title).slice(0, 120), titleHash: slide.titleHash, shapeId: null, shapeName: "", ordinal: 0, kind: "slide", text: "", textHash: null, quote: "", prefix: "", suffix: "", start: null, end: null, cell: loc.cell || null };
-  if (loc.shapeId == null) return base;
+  const base = { format: "pptx", ...(loc.protected ? { protected: true } : {}), slideId: slide.id, slidePart: slide.part, slideIndex: slide.index, slideTitle: titleOf(slide), titleHash: slide.titleHash, shapeId: null, shapeName: "", ordinal: 0, kind: "slide", text: "", textHash: null, quote: "", prefix: "", suffix: "", start: null, end: null, cell: loc.cell || null };
+  if (loc.shapeId == null || !spend(shapeCost(slide))) return base;
   const same = slide.shapes.filter((s) => s.id === loc.shapeId);
   let sh = same[0];
   if (same.length > 1) {
-    const want = textHash(ctx.text || ctx.quote || "");
+    // the page's text is hashed only when the budget pays for it (null: told apart by name, then the first)
+    const seen = ctx.text || ctx.quote || "";
+    const want = affords(seen.length) && spend(weigh(seen)) ? textHash(seen) : null;
     sh = same.find((s) => s.name === loc.shapeName && s.hash === want) || same.find((s) => s.hash === want) || same.find((s) => s.name === loc.shapeName) || same[0];
   }
   if (!sh) return { ...base, shapeId: loc.shapeId, shapeName: loc.shapeName || "", kind: "shape" };
-  const q = normText(ctx.quote || "");
-  const raw = ctx.quote || "";
-  const at = q ? sh.text.indexOf(raw) : -1;
+  // the page's quote, prefix and suffix are normalized within the budget too (each can be a whole shape's text, per comment); past it
+  // the anchor is the shape, without the text range
+  const q = normPaid(ctx.quote) ?? "";
+  const raw = q ? ctx.quote : "";
+  const at = q && spend(textCost(sh, raw)) ? sh.text.indexOf(raw) : -1;
   return {
     ...base,
     shapeId: sh.id, shapeName: sh.name, ordinal: sh.ordinal, kind: sh.kind,
-    text: normText(sh.text).slice(0, KEEP), textHash: sh.hash,
+    text: spend(normCost(sh)) ? normShape(sh).slice(0, KEEP) : "", textHash: sh.hash,
     // a text range inside the shape: the quote and what surrounds it
     quote: ctx.shapeWide ? "" : q,
-    prefix: normText(ctx.prefix || "").slice(-CTX),
-    suffix: normText(ctx.suffix || "").slice(0, CTX),
+    prefix: (normPaid(ctx.prefix) ?? "").slice(-CTX),
+    suffix: (normPaid(ctx.suffix) ?? "").slice(0, CTX),
     start: !ctx.shapeWide && at >= 0 ? at : null,
     end: !ctx.shapeWide && at >= 0 ? at + raw.length : null,
   };
 }
+
+// A shape's normalized text, kept per shape of a reading: every anchor on a shape normalized all of it again (50 comments on a shape of
+// 8 million characters held the server's thread for 5.6 s while the page placed them).
+const NORM = new WeakMap();
+const normShape = (sh) => {
+  let v = NORM.get(sh);
+  if (v === undefined) NORM.set(sh, (v = normText(sh.text)));
+  return v;
+};
+// A slide's normalized title, kept per slide of a reading and paid from the budget the first time: every anchor on a slide normalized the
+// whole title again, outside the budget. Past the budget the anchor has no title text ("", asked again by the next request); the title's
+// hash, read with the slide, still identifies it.
+const TITLE = new WeakMap();
+const titleOf = (slide) => {
+  let v = TITLE.get(slide);
+  if (v === undefined) {
+    const t = normPaid(slide.title);
+    if (t === null) return "";
+    TITLE.set(slide, (v = t.slice(0, 120)));
+  }
+  return v;
+};
+/** what normShape(sh) is about to read: the shape's text the first time (src/text.js weigh), nothing once it is kept */
+const normCost = (sh) => (NORM.has(sh) ? 0 : weightOf(sh));
+/** a native substring search for `q` in a shape's text (src/text.js searchCost), priced by the shape's byte table (src/text.js hitsOf) */
+const HITS = new WeakMap();
+const textCost = (sh, q) => searchCost(sh.text.length, q, hitsOf(HITS, sh, sh.text, q));
 
 /**
  * Re-resolve against new bytes. Slide: by p:sldId id; else the part path together with the title; else the title alone when unique.
@@ -154,6 +212,7 @@ export function pptxDurable(deck, loc, ctx = {}) {
 export function resolvePptx(deck, d) {
   if (!d) return { method: "none" };
   deck.ensure();
+  if (!spend(slideCost(deck))) return { method: "none" };
   let slide = d.slideId != null ? slideById(deck, d.slideId) : null;
   let method = "id";
   if (!slide) {
@@ -166,6 +225,7 @@ export function resolvePptx(deck, d) {
   const out = { method, slideId: slide.id, slideIndex: slide.index, shapeId: null, shapeName: "", start: null, end: null, changed: false, text: "", titleChanged: slide.titleHash !== d.titleHash };
   if (d.shapeId == null) return out;
   const shapes = slide.shapes;
+  if (!spend(shapeCost(slide))) return { method: "none" };
   const byId = shapes.filter((s) => s.id === d.shapeId);
   let sh = null;
   let how = "";
@@ -183,10 +243,14 @@ export function resolvePptx(deck, d) {
     else if (name.length === 1 && d.textHash && d.textHash !== EMPTY) [sh, how] = [name[0], "name"];
   }
   if (!sh) return { method: "none" };
-  const stext = normText(sh.text);
+  // The shape is found (by its id, or its name and the hash read with the slide). Its text and the quote's place in it are read only when
+  // the budget pays for them: past it the comment is still on its shape, without a text excerpt or a range (a shape of 7.9 million CJK
+  // characters costs more than the whole budget to normalize, and its comments resolved as "moved or removed" with the shape right there).
+  const stext = spend(normCost(sh)) ? normShape(sh) : "";
   const q = d.quote || "";
-  const at = q ? sh.text.indexOf(q) : -1;
-  return { ...out, method: method === "id" ? how : `${method}+${how}`, shapeId: sh.id, shapeName: sh.name, start: at >= 0 ? at : null, end: at >= 0 ? at + q.length : null, changed: sh.hash !== d.textHash, text: stext.slice(0, 200), quoteLost: !!q && at < 0 };
+  const searched = !!q && spend(textCost(sh, q)); // a shape-wide comment has no quote, and no search to pay for
+  const at = searched ? sh.text.indexOf(q) : -1;
+  return { ...out, method: method === "id" ? how : `${method}+${how}`, shapeId: sh.id, shapeName: sh.name, start: at >= 0 ? at : null, end: at >= 0 ? at + q.length : null, changed: sh.hash !== d.textHash, text: stext.slice(0, 200), quoteLost: searched && at < 0 };
 }
 
 /** Locator fields for the batch: the names the `apply` targets use. */

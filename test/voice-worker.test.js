@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
-import { Worker } from "node:worker_threads";
 import { docxBytes, tmpdir } from "./helpers/zipbuild.js";
 import { analyzeVoice } from "../src/voice-worker.js";
+import { startWorker } from "../src/offload.js";
 
 // The learning worker: three snapshot blobs in, pairs (booleans) and examples out, using src/voice.js as it is.
 const root = tmpdir();
@@ -20,7 +20,7 @@ const blob = (name, bytes) => {
 };
 const run = (workerData) =>
   new Promise((resolve, reject) => {
-    const w = new Worker(new URL("../src/voice-worker.js", import.meta.url), { workerData });
+    const w = startWorker("voice-worker.js", { workerData });
     w.once("message", resolve);
     w.once("error", reject);
   });

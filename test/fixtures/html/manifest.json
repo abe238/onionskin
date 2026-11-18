@@ -1,0 +1,390 @@
+{
+ "about": "A small subset of spike S2's generated HTML corpus (no fetched public pages): LibreOffice exports of this repo's own sample documents, pandoc output of Markdown written for the spike, and hand-written pages and parser edge cases. Each file is unchanged; sha256 as generated. test/html-fixtures.test.js reads every file.",
+ "files": [
+  {
+   "file": "doc-page-0.html",
+   "class": "hand-doc",
+   "origin": "scripts/gen-hand.mjs: generic static document page",
+   "bytes": 5221,
+   "sha256": "d7b9383c83801d78d0cf7adc6cdc2e23cb6b3e6a10b88ccd82d86eba5e11442a"
+  },
+  {
+   "file": "doc-page-1.html",
+   "class": "hand-doc",
+   "origin": "scripts/gen-hand.mjs: generic static document page",
+   "bytes": 6241,
+   "sha256": "75b566d8ae604f4def3af2102fcb1e92dfbdd7b6b9af035e38dca4f63307401f"
+  },
+  {
+   "file": "doc-page-2.html",
+   "class": "hand-doc",
+   "origin": "scripts/gen-hand.mjs: generic static document page",
+   "bytes": 7434,
+   "sha256": "14b41e2e96cc5c1fbe76e8fdbde95bfc99bb2df91583586b4528d59d484a2c2f"
+  },
+  {
+   "file": "doc0-standalone.html",
+   "class": "pandoc",
+   "origin": "pandoc from corpus-src/md (doc0-standalone.html)",
+   "bytes": 12015,
+   "sha256": "270038b11bd9486462cbdb6a798b1b6c128d40d07f6a347c0967735a42444415"
+  },
+  {
+   "file": "doc1-html4-mathml.html",
+   "class": "pandoc",
+   "origin": "pandoc from corpus-src/md (doc1-html4-mathml.html)",
+   "bytes": 12419,
+   "sha256": "2d6abbff6ae8e26bcd3f3d258ec9b0cec17a3f45ec9448f5a711681161e11c69"
+  },
+  {
+   "file": "doc2-selfcontained.html",
+   "class": "pandoc",
+   "origin": "pandoc from corpus-src/md (doc2-selfcontained.html)",
+   "bytes": 12520,
+   "sha256": "e6d66477a321ff624514a1777a7a40a04133e1a14d2ecaa12e7cba9f4411d662"
+  },
+  {
+   "file": "edge-a-in-a.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: a-in-a",
+   "bytes": 72,
+   "sha256": "d5357eeb23a1137a1173d0cdccc801862fc423191ab8612f2c584c8e0625a384"
+  },
+  {
+   "file": "edge-astral.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: astral",
+   "bytes": 144,
+   "sha256": "bf8b62c339a62a80737378ab0534d5ad40f96831301f965a51c0c7415a233b09"
+  },
+  {
+   "file": "edge-attr-quoting.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: attr-quoting",
+   "bytes": 209,
+   "sha256": "3a89a366791b409e111872d6b361d51eeeb5dad5d18f89ff1fa4831b84b115a9"
+  },
+  {
+   "file": "edge-bom.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: bom",
+   "bytes": 114,
+   "sha256": "036337a708c19a7a3c674ebcadbaa612fdc9ade1290db2d7af724b13d5eacf89"
+  },
+  {
+   "file": "edge-cdata-foreign.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: cdata-foreign",
+   "bytes": 186,
+   "sha256": "a7c9a320f8ea2e2850480c2113688bcf655936f13c7ba350f055beb6c97ce3fe"
+  },
+  {
+   "file": "edge-combined.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: all edge cases in one file",
+   "bytes": 4505,
+   "sha256": "bedbc65930508ca37bbbf0e27434e8425b8a1472a0db54eb7f5b2a3af7d7b060"
+  },
+  {
+   "file": "edge-comments-odd.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: comments-odd",
+   "bytes": 98,
+   "sha256": "8c5845a94ffdbaa8e2f0a09963cc8adc54f0a85a24d846a56c0679a3bed7ccd9"
+  },
+  {
+   "file": "edge-crlf-mixed.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: crlf-mixed",
+   "bytes": 107,
+   "sha256": "e225b0c9372376e45c3ba4315b753139ac8ed44777fd6e4d8904bc3f6775342e"
+  },
+  {
+   "file": "edge-deep-inline.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: deep-inline",
+   "bytes": 806,
+   "sha256": "f00a716e20bd0364a63badd4c75b21744afbcedad4d20beb0f8f536c5dd952cb"
+  },
+  {
+   "file": "edge-duplicate-attrs.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: duplicate-attrs",
+   "bytes": 118,
+   "sha256": "af0734cdb9d9593c620c05b12688a4c73cd07d0600df99372362cae8343acfea"
+  },
+  {
+   "file": "edge-entities.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: entities",
+   "bytes": 260,
+   "sha256": "a68e9b1bc1077ab632b606ef581388d6e25432d796b8c6751d0a7795aae76eca"
+  },
+  {
+   "file": "edge-form-elements.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: form-elements",
+   "bytes": 167,
+   "sha256": "1396834e9816fccbb8e2cf12ccb6425ceef8c9a1907f26458dfd8c53561b211b"
+  },
+  {
+   "file": "edge-foster-parenting.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: foster-parenting",
+   "bytes": 117,
+   "sha256": "d46c3d56a9fb96c7b1e0ab3a17118b9e4356babcd5b78d6214b6d2d9e00e6408"
+  },
+  {
+   "file": "edge-frameset.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: frameset",
+   "bytes": 141,
+   "sha256": "ff2f11c22c8a6d0f537399b1cc0183d4b52e4bae0938c9c5b3b4dac2988c5c19"
+  },
+  {
+   "file": "edge-head-misplaced.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: head-misplaced",
+   "bytes": 168,
+   "sha256": "8536c9ee0ba77299648f2d6b061305257143f846ac209424e56f0366bc883c85"
+  },
+  {
+   "file": "edge-image-map.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: image-map",
+   "bytes": 144,
+   "sha256": "ab1f417cb7c3e933c3beeb8ddb03c641165f25cf22c2282f3860d2669ab14e74"
+  },
+  {
+   "file": "edge-invalid-utf8.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: invalid UTF-8, undeclared",
+   "bytes": 36,
+   "sha256": "999fb524e87b734d0968d81efc2deb8056570e5e1d75074108e656dd91792fe0"
+  },
+  {
+   "file": "edge-latin1-declared.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: ISO-8859-1 declared",
+   "bytes": 53,
+   "sha256": "0826aa9373a4c99b9ae4599207eb424d26e0b4ac8472703b9705895c1b3615a0"
+  },
+  {
+   "file": "edge-lists-implied.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: lists-implied",
+   "bytes": 154,
+   "sha256": "71709381528086d99d29ddb20e5de236e6b6183411e7671dd1e135757d9a564c"
+  },
+  {
+   "file": "edge-lone-cr.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: lone-cr",
+   "bytes": 118,
+   "sha256": "165b5928d313f1185800de81e8939ab463cc751d5cca3f2a51cd19816a99292a"
+  },
+  {
+   "file": "edge-misnested-b-i.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: misnested-b-i",
+   "bytes": 69,
+   "sha256": "32ac5b5066bde667904fe751c9a958ff5447bbc5a95617e5e0c86fa89b7f5a43"
+  },
+  {
+   "file": "edge-no-html-head-body.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: no-html-head-body",
+   "bytes": 102,
+   "sha256": "522465eb876f8a870123ddb8d10001f3003718202860c64a9ccfe3209f2171cf"
+  },
+  {
+   "file": "edge-noscript.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: noscript",
+   "bytes": 185,
+   "sha256": "5fa755d182c19020067e60f4fc2e9d10e89fa50ec70187ed9b429ba93c7ac504"
+  },
+  {
+   "file": "edge-nul-bytes.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: nul-bytes",
+   "bytes": 123,
+   "sha256": "0da63c38a0199bdaab57c79b8d0881abab25947667c71bae430cfadd22354cc4"
+  },
+  {
+   "file": "edge-p-in-p.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: p-in-p",
+   "bytes": 60,
+   "sha256": "b8934a02deadd567824b61b430074bb04b670349c27a14ecae4a4786411b0a5b"
+  },
+  {
+   "file": "edge-plaintext.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: plaintext",
+   "bytes": 79,
+   "sha256": "5131b76d702ece3bfe32f733dce19b484eb7749b3868dbcbcc3f2d346debe5d9"
+  },
+  {
+   "file": "edge-pre-leading-newline.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: pre-leading-newline",
+   "bytes": 100,
+   "sha256": "2da57652b8cf60c0cc48ae47b0d3c67f1408ae0b53865259c84bfd56d9b54aa6"
+  },
+  {
+   "file": "edge-ruby-bidi.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: ruby-bidi",
+   "bytes": 114,
+   "sha256": "0a2a02b62447d7b71a3bca5c0deafecd921d60774cf2bcb21f041f48c78d5fdc"
+  },
+  {
+   "file": "edge-script-tricky.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: script-tricky",
+   "bytes": 240,
+   "sha256": "a274c3186f5ca1b4880cfd8cbc9199abcd92cc23f5a06e6a9aaccd15a66b58f9"
+  },
+  {
+   "file": "edge-shiftjis-declared.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: Shift_JIS declared",
+   "bytes": 95,
+   "sha256": "07bf0adfcaa69851bdf841103ea48bc05c7231c7edf92e0ebf1c2071089daeb9"
+  },
+  {
+   "file": "edge-style-tricky.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: style-tricky",
+   "bytes": 119,
+   "sha256": "483812a41fe5f2c97b0a5fc37fecc6599ebb5234aa2c5881792c10d6dfb525c9"
+  },
+  {
+   "file": "edge-tables-complex.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: tables-complex",
+   "bytes": 168,
+   "sha256": "c95e750c6940ccadb69061742cac93dd3387baadc13b25d49b3acb3a602b669e"
+  },
+  {
+   "file": "edge-template-syntax.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: template syntax",
+   "bytes": 145,
+   "sha256": "0b918fc633e398e48160b411d344c33371720a3c0daa7de196ed43b4df563e69"
+  },
+  {
+   "file": "edge-template.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: template",
+   "bytes": 155,
+   "sha256": "3a9ceb21339983f69e1f8e8a7980d4e294910f5d59fc6228733627e983764271"
+  },
+  {
+   "file": "edge-textarea-title.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: textarea-title",
+   "bytes": 127,
+   "sha256": "587eb0fbede812dbc51cd2ca034f7a82786af6e277369f019e272259d08e8d09"
+  },
+  {
+   "file": "edge-unclosed-eof.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: unclosed-eof",
+   "bytes": 62,
+   "sha256": "12875402130221259d9994fb56ed2c5eca9ab445a200f9f0aefe9431ed62c648"
+  },
+  {
+   "file": "edge-utf16-bom.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: UTF-16LE with BOM",
+   "bytes": 56,
+   "sha256": "26d5b0cb9391b39dc79e24966bda6508450239b6dd2c13553c4f4474fc45ab85"
+  },
+  {
+   "file": "edge-whitespace-text.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: whitespace-text",
+   "bytes": 88,
+   "sha256": "7dc40f84f9639bbb44b847ab9a89fe4649e30607c30a1698163f0c7ddac7e9c1"
+  },
+  {
+   "file": "edge-xmp.html",
+   "class": "hand-edge",
+   "origin": "scripts/gen-hand.mjs: edge case: xmp",
+   "bytes": 139,
+   "sha256": "b4a42ffef9e4c4240bad839824e78dc553766c98433fe3cc9302cd11a8643a2d"
+  },
+  {
+   "file": "framework-vite-index.html",
+   "class": "hand-framework",
+   "origin": "scripts/gen-hand.mjs: Framework index.html, empty root",
+   "bytes": 451,
+   "sha256": "0081d76b0d34c0bdc475374595d23a3c10a88b9a2de4ac2eb690a7a729b30a06"
+  },
+  {
+   "file": "lo-engine-sample-docx.html",
+   "class": "lo-docx",
+   "origin": "LibreOffice --convert-to html of onionskin test/fixtures/engine/sample.docx",
+   "bytes": 22396,
+   "sha256": "934a49c9a56ae6b2cbd1252a81f10dfaa1d5e6766b647205f6b6e89697764d33"
+  },
+  {
+   "file": "lo-engine-sample-pptx.html",
+   "class": "lo-pptx",
+   "origin": "LibreOffice --convert-to html of onionskin test/fixtures/engine/sample.pptx",
+   "bytes": 69250,
+   "sha256": "3920b3413aa51e33cf87ff40733ba12028711a32e1ca034d7d07e8a8780e8d5a"
+  },
+  {
+   "file": "lo-page-saves-docx-typed-base-docx.html",
+   "class": "lo-docx",
+   "origin": "LibreOffice --convert-to html of onionskin test/fixtures/page-saves/docx-typed/base.docx",
+   "bytes": 68182,
+   "sha256": "846e073fbed19f4cdaecd10fc46d257fd277e02859b15fe883d52d1e0c7dc9a7"
+  },
+  {
+   "file": "nbconvert-lab-imitation-0.html",
+   "class": "hand-tool-report",
+   "origin": "scripts/gen-hand.mjs: imitation of nbconvert lab template (nbconvert not installed)",
+   "bytes": 201890,
+   "sha256": "164809a2eabc9d8eb6dd8b97bee110a5cecb159fdb39be976abdb180719bd9a9"
+  },
+  {
+   "file": "outlook-newsletter-0.html",
+   "class": "hand-office-email",
+   "origin": "scripts/gen-hand.mjs: Outlook-style newsletter, nested tables, CRLF, tracking pixel",
+   "bytes": 3744,
+   "sha256": "0acd3b445b782ad3dda034f035ff66debeda6466425f93adb066c9b13b7cf686"
+  },
+  {
+   "file": "portfolio-svg.html",
+   "class": "hand-doc",
+   "origin": "scripts/gen-hand.mjs: Portfolio with inline SVG, foreignObject, MathML",
+   "bytes": 2648,
+   "sha256": "4697b752ca17ea9517d875ca7ad513a9b31d4f5acf2f5ebffca1022d8b698cbd"
+  },
+  {
+   "file": "saved-article.html",
+   "class": "hand-saved-page",
+   "origin": "scripts/gen-hand.mjs: Saved article, Webpage Complete, _files folder",
+   "bytes": 5015,
+   "sha256": "10f9a52b203c5f1bf4b0bdc806bb3aed0702de72288063684b8c1376cab77a92"
+  },
+  {
+   "file": "word-export-utf8.htm",
+   "class": "hand-office-email",
+   "origin": "scripts/gen-hand.mjs: Word export re-saved as UTF-8",
+   "bytes": 3592,
+   "sha256": "f8fe9f3fffde2b247324ae1ccc2e2965c6cbb6a55e772c8155644f50c709f6af"
+  },
+  {
+   "file": "word-save-as-web-page.htm",
+   "class": "hand-office-email",
+   "origin": "scripts/gen-hand.mjs: Word Save as Web Page, windows-1252, CRLF, conditional comments, o:p",
+   "bytes": 3579,
+   "sha256": "35ba1fc69195535a201b0e42351ed91c3693e90a1eab17716a0c13fec3d54662"
+  }
+ ]
+}

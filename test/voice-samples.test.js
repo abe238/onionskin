@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
-import { Worker } from "node:worker_threads";
 import { buildZip, contentTypes, docxBytes, tmpdir, xlsxBytes } from "./helpers/zipbuild.js";
 import { readDocxParagraphs } from "../src/docx.js";
 import { parseDeck } from "../src/pptx.js";
 import * as V from "../src/voice-samples.js";
 import { SampleError, sampleSources } from "../src/voice-sample-worker.js";
+import { startWorker } from "../src/offload.js";
 
 // Samples of the person's writing: a fixed, deterministic cut of a long document, agent text left out, and the printed-batch budget.
 const root = tmpdir("voice-samples-");
@@ -242,7 +242,7 @@ test("the worker refuses a macro-enabled package, an Excel file, a broken file a
 test("the worker runs as a thread: one message, samples or a refusal", async () => {
   const run = (workerData) =>
     new Promise((resolve, reject) => {
-      const w = new Worker(new URL("../src/voice-sample-worker.js", import.meta.url), { workerData });
+      const w = startWorker("voice-sample-worker.js", { workerData });
       w.once("message", (m) => (w.terminate(), resolve(m)));
       w.once("error", reject);
     });

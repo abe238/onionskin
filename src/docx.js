@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { engineNodePath } from "./ops/engine.js";
-import { walkXml } from "./xml.js";
-import { normText, similarity, textHash } from "./text.js";
+import { readBudget, tooMany, walkXml } from "./xml.js";
+import { OCCURRENCE, affords, bigramCodes, diceOf, hitsOf, normPaid, normText, searchCost, similarity, spend, textHash, weigh, weightOf } from "./text.js";
 import { openZip } from "./zip.js";
 import { summarizeRuns } from "./fmt.js";
 
@@ -43,6 +43,16 @@ function runSet(name, a) {
   if (name === "w:vertAlign") return only(a, "w:val") && (v === "superscript" || v === "subscript") ? ["va", v.slice(0, 3)] : null;
   return null;
 }
+// What one reading of a Word document may hold. The server reads a document on its own thread at Send, at each delivery to an agent, for a
+// queued comment and at the end of a run, so these bound how long one such reading can keep it from answering anything else (the outside
+// review: a part of 1 million runs held it 4.3 s, a run of 3 million attributes 2.4 s). A real report of about 1,000 pages has about 16,000
+// paragraphs, 240,000 elements, 350,000 attributes and 3 million characters (measured: read in about 240 ms here).
+export const MAX_PARAGRAPHS = 50_000;
+export const MAX_ELEMENTS = 400_000;
+export const MAX_ATTRIBUTES = 800_000;
+export const MAX_TEXT = 8_000_000;
+/** One reading's budget (src/xml.js readBudget), shared by the parts it walks. */
+export const docxBudget = () => readBudget({ elements: MAX_ELEMENTS, attrs: MAX_ATTRIBUTES, text: MAX_TEXT });
 const PPR_OWN = new Set(["w:pStyle", "w:jc", "w:numPr", "w:rPr", "w:sectPr"]); // read on their own, or not paragraph formatting the user sets
 const RANGE = /^(.+)(Start|End)$/;
 
@@ -55,7 +65,7 @@ const RANGE = /^(.+)(Start|End)$/;
  * (null when they do not add up to it); `list` {numId, ilvl} from its own w:numPr, else null; `ppr`, its other paragraph properties as
  * written; `sect`, it ends a section; `loose`, a bookmark, comment or other range starts or ends inside it without its other end.
  */
-export function parseDocxParagraphs(xml, { detail = false } = {}) {
+export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget() } = {}) {
   const paragraphs = [];
   const stack = []; // {name, ...}
   let bodyIndex = -1;
@@ -107,6 +117,7 @@ export function parseDocxParagraphs(xml, { detail = false } = {}) {
           path = [info.tableIndex, info.row, info.col, cellK++];
           tableNo = tableCount;
         }
+        if (paragraphs.length >= MAX_PARAGRAPHS) throw tooMany(budget, MAX_PARAGRAPHS, "paragraphs");
         cur = { ordinal: paragraphs.length, path, tableNo, paraId: /^[0-9A-Fa-f]{8}$/.test(attrs["w14:paraId"] || "") ? attrs["w14:paraId"].toUpperCase() : null, text: "", instr: "", protected: false, style: null, align: "", runs: [] };
         if (detail) (Object.assign(cur, { spans: [], list: null, ppr: [], sect: false, loose: false }), (marks = new Set()), (pprTop = null));
         paragraphs.push(cur);
@@ -175,7 +186,7 @@ export function parseDocxParagraphs(xml, { detail = false } = {}) {
       }
       if (detail && name === pprTop && stack[stack.length - 1] === "w:pPr") pprTop = null;
     },
-  });
+  }, budget);
   for (const p of paragraphs) p.hash = textHash(p.text);
   const reasons = protectReasons(xml);
   // the engine lists paragraphs the same way; if the two ever disagree on the count, nothing can be trusted as editable
@@ -204,10 +215,28 @@ export function protectInfo(p) {
 }
 
 const HEADING = /^(heading\s?\d|title|subtitle)$/i;
-/** The text of the nearest heading above a paragraph (by paragraph style), or "" when there is none. */
+// the nearest heading at or before each ordinal, found in one pass per reading: a scan up from every resolved comment was a pass over
+// the paragraphs per comment, and the heading's text was normalized whole again each time, outside the budget
+const HEADS = new WeakMap();
+/** The text of the nearest heading above a paragraph (by paragraph style), or "" when there is none (or the budget cannot pay for it). */
 export function headingBefore(paragraphs, ordinal) {
-  for (let i = ordinal - 1; i >= 0; i--) if (paragraphs[i].style && HEADING.test(paragraphs[i].style) && paragraphs[i].text.trim()) return normText(paragraphs[i].text).slice(0, 80);
-  return "";
+  if (!Number.isInteger(ordinal) || ordinal <= 0) return "";
+  let at = HEADS.get(paragraphs);
+  if (!at) {
+    at = new Int32Array(paragraphs.length + 1);
+    let last = -1;
+    for (let i = 0; i < paragraphs.length; i++) {
+      at[i] = last; // the heading strictly before paragraph i
+      const p = paragraphs[i];
+      if (p.style && HEADING.test(p.style) && p.text.trim()) last = i;
+    }
+    at[paragraphs.length] = last;
+    HEADS.set(paragraphs, at);
+  }
+  const h = at[Math.min(ordinal, paragraphs.length)];
+  if (h < 0) return "";
+  const p = paragraphs[h];
+  return spend(normCost(p)) ? norm(p).slice(0, 80) : "";
 }
 
 /** `detail` (the merge only): formatting per run and the paragraph's list, see parseDocxParagraphs; `list.kind` is "bullet", "number" or "other". */
@@ -215,11 +244,12 @@ export function readDocxParagraphs(bytes, { detail = false } = {}) {
   const zip = openZip(bytes);
   const xml = zip.readText("word/document.xml");
   if (xml == null) throw new Error("word/document.xml missing");
-  const paragraphs = parseDocxParagraphs(xml, { detail });
-  const names = styleNames(zip.readText("word/styles.xml"));
+  const budget = docxBudget(); // the main part, the styles and the numbering of one reading share it
+  const paragraphs = parseDocxParagraphs(xml, { detail, budget });
+  const names = styleNames(zip.readText("word/styles.xml"), budget);
   if (names.size) for (const p of paragraphs) if (p.style && names.has(p.style)) p.styleName = names.get(p.style);
   if (detail && paragraphs.some((p) => p.list)) {
-    const kinds = listKinds(zip.readText("word/numbering.xml"));
+    const kinds = listKinds(zip.readText("word/numbering.xml"), budget);
     for (const p of paragraphs) if (p.list) p.list = p.list.numId && p.list.numId !== "0" ? { ...p.list, kind: kinds.get(p.list.numId) || "other" } : null; // numId 0 switches a style's list off
   }
   return paragraphs;
@@ -229,7 +259,7 @@ export function readDocxParagraphs(bytes, { detail = false } = {}) {
  * w:numId -> "bullet" | "number" | "other", by the first level of its definition: the two kinds the editor's list buttons make and
  * the engine can set again. A list with level overrides, or one this cannot read, is "other".
  */
-function listKinds(xml) {
+function listKinds(xml, budget) {
   const out = new Map();
   if (xml == null) return out;
   const fmt = new Map(); // abstractNumId -> numFmt of level 0
@@ -258,13 +288,13 @@ function listKinds(xml) {
           num = null;
         }
       },
-    });
+    }, budget);
   } catch {} // an unreadable numbering part: every list is "other", which is reported, never set
   return out;
 }
 
 /** w:styleId -> the style's display name ("heading 2" is shown as "Heading 2"); empty when styles.xml is missing or unreadable. */
-function styleNames(xml) {
+function styleNames(xml, budget) {
   const out = new Map();
   if (xml == null) return out;
   let id = null;
@@ -277,7 +307,7 @@ function styleNames(xml) {
       onClose(name) {
         if (name === "w:style") id = null;
       },
-    });
+    }, budget);
   } catch {} // a damaged styles part only costs the readable style names
   return out;
 }
@@ -287,15 +317,96 @@ const PARA_TEXT_KEEP = 2000;
 
 // ---- engine location -> durable anchor ----------------------------------------------------------------------
 
+// A paragraph's normalized text, kept per paragraph object: every comment resolved against the same reading reuses it.
+const NORM = new WeakMap();
+const norm = (p) => {
+  let v = NORM.get(p);
+  if (v === undefined) NORM.set(p, (v = normText(p.text)));
+  return v;
+};
+/** what norm(p) is about to read: the paragraph's text the first time (src/text.js weigh), nothing once it is kept (spent from the request's budget) */
+const normCost = (p) => (NORM.has(p) ? 0 : weightOf(p));
+// the byte tables a search is priced by (src/text.js hitsOf): of a paragraph's normalized text, and of its text as written
+const NORM_HITS = new WeakMap();
+const RAW_HITS = new WeakMap();
+/** a native search for `q` in norm(p), which is already kept (src/text.js searchCost) */
+const normSearch = (p, q) => searchCost(norm(p).length, q, hitsOf(NORM_HITS, p, norm(p), q));
+
+// The paragraphs of one reading by w14:paraId and by text hash, in document order, built once: every anchor resolved against the reading
+// looks its paragraph up instead of scanning them all.
+const INDEX = new WeakMap();
+function indexOf(paragraphs) {
+  let ix = INDEX.get(paragraphs);
+  if (ix) return ix;
+  ix = { byId: new Map(), byHash: new Map(), byPath: new Map(), byTop: new Map(), noPath: [], tops: null };
+  for (const p of paragraphs) {
+    if (p.path) (ix.byTop.get(p.path[0]) || ix.byTop.set(p.path[0], []).get(p.path[0])).push(p);
+    else ix.noPath.push(p);
+    if (p.paraId) (ix.byId.get(p.paraId) || ix.byId.set(p.paraId, []).get(p.paraId)).push(p);
+    (ix.byHash.get(p.hash) || ix.byHash.set(p.hash, []).get(p.hash)).push(p);
+    if (p.path && !ix.byPath.has(p.path.join(","))) ix.byPath.set(p.path.join(","), p); // the first, as a scan finds it
+  }
+  INDEX.set(paragraphs, ix);
+  return ix;
+}
+
+// The paragraphs in the order nearest() ranks them, one level of equal distance from the body block `want` at a time (document order
+// within a level), those without a body position last: the first level holding a match holds the match a scan of all of them picks.
+function* byDistance(paragraphs, ix, want) {
+  if (!Number.isSafeInteger(want) || !ix.byTop.size) return yield paragraphs;
+  // the body blocks that hold paragraphs, outward from `want` (a body of many tables and few paragraphs has gaps: they are not walked)
+  const tops = (ix.tops ||= [...ix.byTop.keys()].sort((a, b) => a - b));
+  let hi = 0;
+  for (let lo = 0, top = tops.length; lo < top; ) {
+    const mid = (lo + top) >> 1;
+    if (tops[mid] < want) lo = mid + 1;
+    else top = mid;
+    hi = lo;
+  }
+  let lo = hi - 1;
+  while (lo >= 0 || hi < tops.length) {
+    const dl = lo >= 0 ? want - tops[lo] : Infinity;
+    const dh = hi < tops.length ? tops[hi] - want : Infinity;
+    const d = Math.min(dl, dh);
+    const a = dl === d ? ix.byTop.get(tops[lo--]) : null;
+    const b = dh === d ? ix.byTop.get(tops[hi++]) : null;
+    yield a && b ? a.concat(b) : a || b;
+  }
+  if (ix.noPath.length) yield ix.noPath;
+}
+
+const BIGRAMS = new WeakMap();
+const bigramsOf = (p) => {
+  let v = BIGRAMS.get(p);
+  if (!v) BIGRAMS.set(p, (v = bigramCodes(p.text)));
+  return v;
+};
+
 function locate(paragraphs, { path, paraId, quote, prefix, text, prevHash, nextHash, dupCount, allowPath = false }) {
-  const q = normText(quote || "");
+  // The page's quote and paragraph text (each can be a whole paragraph, per comment) are paid for before they are read: the text is
+  // normalized up to four times below (its hash, its length, the slot's similarity, its bigrams). Past the budget a step that needs it
+  // is skipped, and at Send the bare position still answers.
+  const q = normPaid(quote) ?? "";
+  if (text && !(affords(4 * text.length) && spend(4 * weigh(text)))) text = "";
   const want = path ? path[0] : null;
   const dist = (p) => (want == null || !p.path ? 1e6 : Math.abs(p.path[0] - want));
-  const nearest = (list) => list.slice().sort((a, b) => dist(a) - dist(b) || a.ordinal - b.ordinal)[0];
+  // the nearest of `list` (smaller distance, then smaller ordinal) in one pass, charged to the request's budget: null when it runs out
+  // (sorting a copy of 50,000 look-alikes for each of 500 anchors held the thread for 4 s, outside the budget)
+  const nearest = (list) => {
+    if (!spend(list.length * 3)) return null;
+    let best = null;
+    let bd = 0;
+    for (const p of list) {
+      const d = dist(p);
+      if (!best || d < bd || (d === bd && p.ordinal < best.ordinal)) (best = p), (bd = d);
+    }
+    return best;
+  };
   const nb = (p) => (prevHash && paragraphs[p.ordinal - 1]?.hash === prevHash ? 1 : 0) + (nextHash && paragraphs[p.ordinal + 1]?.hash === nextHash ? 1 : 0);
+  const ix = indexOf(paragraphs);
   // 1. w14:paraId
   if (paraId) {
-    const hit = paragraphs.filter((p) => p.paraId === paraId.toUpperCase());
+    const hit = ix.byId.get(paraId.toUpperCase()) || [];
     if (hit.length === 1) return { p: hit[0], method: "id" };
   }
   // 2. identical text; among duplicates prefer the one whose neighbors are unchanged, then the nearest.
@@ -304,44 +415,110 @@ function locate(paragraphs, { path, paraId, quote, prefix, text, prevHash, nextH
   let ambiguousHash = null;
   if (text) {
     const h = textHash(text);
-    const hits = paragraphs.filter((p) => p.hash === h);
+    const hits = ix.byHash.get(h) || [];
     const ambiguous = (dupCount != null ? dupCount > 1 : normText(text).length < 20) && (prevHash || nextHash);
-    if (hits.length && (!ambiguous || hits.some((p) => nb(p) > 0))) return { p: nearest(hits.filter((p) => nb(p) === Math.max(...hits.map(nb)))), method: "hash" };
-    if (hits.length) ambiguousHash = h;
+    // one pass over the hits for the best neighbor count, then the nearest of those (a document of 50,000 identical paragraphs and 500
+    // anchors held the thread for 4 s: the scans and the sort were outside the budget). Spent up front, at about what a hit costs here.
+    if (hits.length && spend(hits.length * 24)) {
+      let best = null;
+      let top = 0;
+      let bd = 0;
+      for (const p of hits) {
+        const n = nb(p);
+        const d = dist(p);
+        if (!best || n > top || (n === top && (d < bd || (d === bd && p.ordinal < best.ordinal)))) (best = p), (top = n), (bd = d);
+      }
+      if (!ambiguous || top > 0) return { p: best, method: "hash" };
+      ambiguousHash = h;
+    }
   }
   // 3. same slot: both neighbors unchanged and exactly one paragraph sits between them (edited in place)
   if (prevHash && nextHash) {
-    const slots = paragraphs.filter((p) => nb(p) === 2);
-    if (slots.length === 1 && (!text || similarity(slots[0].text, text) >= 0.3 || (q && normText(slots[0].text).includes(q)))) return { p: slots[0], method: "neighbors" };
+    const after = ix.byHash.get(prevHash) || [];
+    const slots = spend(after.length * 4) ? after.map((p) => paragraphs[p.ordinal + 1]).filter((p) => p && nb(p) === 2) : [];
+    // the slot's whole text is compared: within the request's budget (a slot of 8 million characters, 50 comments: 56 s before)
+    if (slots.length === 1 && (!text || (spend(2 * weightOf(slots[0]) + normCost(slots[0])) && (similarity(slots[0].text, text) >= 0.3 || (q && norm(slots[0]).includes(q)))))) return { p: slots[0], method: "neighbors" };
   }
-  // 4. exact quote. Ambiguous when the quote also occurs elsewhere and the prefix does not disambiguate: do not guess here.
+  // steps 4 and 5 scan every paragraph: only within the budget of the anchors resolved together (src/text.js scanBudget), 16 units a
+  // paragraph, and the text each step searches character by character
+  // 4. exact quote. Ambiguous when the quote also occurs elsewhere and the prefix does not disambiguate: do not guess here. The
+  //    paragraphs are read nearest first (byDistance): the answer is the nearest match, so the search stops at the first distance that
+  //    has one (50 comments on a paragraph the agent changed, in 26,000 paragraphs, searched every paragraph 50 times).
+  let read = true;
   if (q) {
-    const hits = paragraphs.filter((p) => normText(p.text).includes(q) && !(ambiguousHash && p.hash === ambiguousHash)); // look-alikes rejected in step 2 stay rejected
-    if (hits.length) {
-      const pre = normText(prefix || "");
-      const better = pre ? hits.filter((p) => normText(p.text).includes(pre + (pre.endsWith(" ") ? "" : " ") + q) || normText(p.text).includes(pre + q)) : [];
-      if (better.length) return { p: nearest(better), method: "quote" };
-      if (hits.length === 1 || (!pre && !text)) return { p: nearest(hits), method: "quote" };
+    const pre = normPaid(prefix) ?? "";
+    const longer = pre ? [pre + (pre.endsWith(" ") ? "" : " ") + q, pre + q] : null;
+    const hits = [];
+    const better = [];
+    for (const level of byDistance(paragraphs, ix, want)) {
+      for (const p of level) {
+        if (!(read = spend(16 + normCost(p)) && spend(normSearch(p, q)))) break; // a native substring search (src/text.js searchCost)
+        if (!norm(p).includes(q) || (ambiguousHash && p.hash === ambiguousHash)) continue; // look-alikes rejected in step 2 stay rejected
+        hits.push(p);
+        // two native substring searches per hit (src/text.js searchCost, as in the loop above)
+        if (longer && spend(2 * normSearch(p, longer[1])) && (norm(p).includes(longer[0]) || norm(p).includes(longer[1]))) better.push(p);
+      }
+      if (!read) break;
+      const found = better.length ? better : !pre && !text ? hits : [];
+      if (found.length) {
+        const p = nearest(found);
+        if (p) return { p, method: "quote" };
+      }
     }
-  }
+    if (read && hits.length === 1) {
+      const p = nearest(hits);
+      if (p) return { p, method: "quote" };
+    }
+  } else read = spend(paragraphs.length * 16);
   // 5. fuzzy: similarity to the remembered text (or the quote), neighbors count in favor
   const probe = text || q;
-  if (probe) {
+  let spent = !read;
+  if (probe && read) {
     // The best candidate must clearly beat the runner-up: in templated text a deleted paragraph looks like its siblings,
     // and "moved or removed" is a better answer than attaching the comment to the wrong one.
-    const scored = [];
+    // the two best candidates only, found in one pass: the answer needs the winner and the runner-up, never the order of the rest
+    let best = null;
+    let second = null;
+    let count = 0;
+    const P = bigramCodes(text || q); // the probe's bigrams once; each paragraph's are kept with it (bigramsOf)
+    const n = P.codes.length;
     for (const p of paragraphs) {
       if (ambiguousHash && p.hash === ambiguousHash) continue; // rejected above: a look-alike elsewhere is not this paragraph
-      const sim = text ? similarity(p.text, text) : normText(p.text).length ? similarity(normText(p.text).slice(0, q.length + 40), q) : 0;
-      if (sim >= 0.6) scored.push({ p, sim, score: sim + nb(p) * 0.1 - dist(p) * 1e-6 }); // distance only breaks ties
+      let sim = 0;
+      if (text) {
+        if (!BIGRAMS.has(p) && !spend(weightOf(p))) {
+          spent = true; // its bigrams are read (and sorted) once per reading: the first time costs its text
+          break;
+        }
+        const B = bigramsOf(p);
+        // 0.6 needs the shorter at least 3/7 of the longer (Dice is at most 2 min / (m + n)): skip the others without comparing
+        const m = B.codes.length;
+        if (P.short === null && B.short === null && (Math.min(m, n) * 7 < Math.max(m, n) * 3)) continue;
+        if (!spend(m + n)) {
+          spent = true; // the budget is spent: "moved or removed" (src/text.js scanBudget), or the bare position at Send
+          break;
+        }
+        sim = diceOf(B, P);
+      } else if (norm(p).length) {
+        if (!spend(normCost(p) + q.length + 40 + n)) {
+          spent = true;
+          break;
+        }
+        sim = diceOf(bigramCodes(norm(p).slice(0, q.length + 40)), P);
+      }
+      if (sim >= 0.6) {
+        const c = { p, sim, score: sim + nb(p) * 0.1 - dist(p) * 1e-6 }; // distance only breaks ties
+        count++;
+        if (!best || c.score > best.score) (second = best), (best = c);
+        else if (!second || c.score > second.score) second = c;
+      }
     }
-    scored.sort((a, b) => b.score - a.score);
-    if (scored.length && (scored.length === 1 || scored[0].score - scored[1].score >= 0.04)) return { p: scored[0].p, method: "fuzzy", score: Math.round(scored[0].sim * 100) / 100 };
+    if (!spent && best && (count === 1 || best.score - second.score >= 0.04)) return { p: best.p, method: "fuzzy", score: Math.round(best.sim * 100) / 100 };
   }
   // At Send time the browser's own index is as fresh as the bytes, so the bare position is acceptable.
   // After a reload it never is (an insert above shifts it): resolveDurable does not pass allowPath.
   if (allowPath && path) {
-    const hit = paragraphs.find((p) => p.path && p.path.length === path.length && p.path.every((v, i) => v === path[i]));
+    const hit = ix.byPath.get(path.join(",")); // by lookup, not a scan: the bare position must still answer once the budget is spent
     if (hit) return { p: hit, method: "path" };
   }
   return null;
@@ -358,21 +535,152 @@ export function durableFromEngine(paragraphs, loc, ctx = {}) {
   return durableFor(paragraphs, hit.p, loc.blockPath ? loc.blockPath[0] : null, ctx, loc);
 }
 
-/** Offsets of every non-overlapping occurrence of `q` in `text`. */
-function occurrences(text, q) {
+/**
+ * Offsets of the non-overlapping occurrences of `q` in `text` (the first `max` of them), or null when the request's budget runs out: the
+ * search is counted as a native substring search (src/text.js searchCost) and each occurrence found at OCCURRENCE.
+ */
+// the complete list of a quote's occurrences in a paragraph, kept per paragraph of a reading for the last few quotes (rule: what is
+// derived from the same paragraph is computed once per reading): 50 comments on one selection of a repeated text listed the same
+// 395,000 occurrences 50 times. Ceiling: OCC_KEEP quotes per paragraph, the oldest dropped first.
+const OCC = new WeakMap();
+const OCC_KEEP = 16;
+function occurrencesIn(p, q) {
+  let m = OCC.get(p);
+  const hit = m?.get(q);
+  if (hit) return hit;
+  const occ = occurrences(p, q);
+  if (occ) {
+    if (!m) OCC.set(p, (m = new Map()));
+    if (m.size >= OCC_KEEP) m.delete(m.keys().next().value);
+    m.set(q, occ);
+  }
+  return occ;
+}
+function occurrences(p, q, max = Infinity) {
+  const { text } = p;
+  if (!spend(searchCost(text.length, q, hitsOf(RAW_HITS, p, text, q)))) return null;
   const out = [];
-  for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + q.length)) out.push(i);
+  for (let i = text.indexOf(q); i >= 0 && out.length < max; i = text.indexOf(q, i + q.length)) {
+    if (!spend(OCCURRENCE)) return null;
+    out.push(i);
+  }
   return out;
 }
 
 /**
- * Which occurrence of a repeated quote a selection or a stored anchor means. Prefix and suffix are the normalized text around it;
- * `nth` is the occurrence index remembered at capture. Returns the offset, or -1 when the text does not occur.
+ * normText(text).slice(0, n), reading only as much of the text as that needs (windows cut as endsWithNorm cuts them), each character read
+ * spent from the budget; null past it. A comment's paragraph text is kept to 2,000 characters, and normalizing a whole paragraph of
+ * 8 million characters for each of 50 comments held the thread for seconds.
  */
-function pickOccurrence(text, q, { prefix = "", suffix = "", nth = null } = {}) {
-  const occ = occurrences(text, q);
-  if (!occ.length) return -1;
-  const guarded = occ.filter((at) => (!prefix || normText(text.slice(0, at)).endsWith(prefix)) && (!suffix || normText(text.slice(at + q.length)).startsWith(suffix)));
+function normHead(text, n) {
+  for (let size = 2 * n + 8; ; size *= 2) {
+    const e = cutNear(text, Math.min(text.length, size), 1);
+    if (e === null || !spend(weigh(text.slice(0, e)))) return null;
+    const head = normText(text.slice(0, e));
+    if (e === text.length || head.length > n) return head.slice(0, n);
+  }
+}
+
+// normText(text.slice(0, at)).endsWith(prefix) and normText(text.slice(from)).startsWith(suffix), reading only as much of the text as
+// the prefix or suffix needs. A window is cut only where nothing on one side changes how the other side normalizes (`cuttable`), so the
+// window normalizes to exactly the end (or the start) of what the whole text normalizes to, give or take one space where it was cut.
+// Once the window holds at least as many normalized characters as the prefix, it answers for the whole text; else it doubles.
+// Every character read (the walk to a cut and the window normalized) is spent from the budget of the request (src/text.js): null when it
+// runs out. An outside review: CJK text has no character below U+0300, every window grew to the whole paragraph, 3.65 s for one anchor.
+const MARK = /\p{M}/u;
+/**
+ * May a window start (or end) right before text[i]? Yes below U+0300 (no such character joins the one before it under NFC); never inside a
+ * surrogate pair or before a combining mark; otherwise when the character normalizes the same after the three before it as on its own
+ * (the longest chain of starters that compose, Hangul L V T and its like, is three: test/parse-limits.test.js checks every code point).
+ * Exported with the two window readers for that test.
+ */
+export function cuttable(text, i) {
+  if (i <= 0 || i >= text.length) return true;
+  const c = text.charCodeAt(i);
+  if (c < 0x300) return true;
+  if (c >= 0xdc00 && c <= 0xdfff) return false;
+  const ch = String.fromCodePoint(text.codePointAt(i));
+  if (MARK.test(ch)) return false;
+  const before = text.slice(Math.max(0, i - 3), i);
+  return (before + ch).normalize("NFC") === before.normalize("NFC") + ch.normalize("NFC");
+}
+/** The nearest place at or before (dir -1) or after (dir 1) i where a window may be cut, each character walked spent; null past the budget. */
+function cutNear(text, i, dir) {
+  let n = 0;
+  while (!cuttable(text, i)) {
+    i += dir;
+    if (++n % 1024 === 0 && !spend(1024)) return null;
+  }
+  return spend(n % 1024) ? i : null;
+}
+export function endsWithNorm(text, at, prefix) {
+  for (let size = 2 * prefix.length + 8; ; size *= 2) {
+    const w = cutNear(text, Math.max(0, at - size), -1);
+    if (w === null || !spend(weigh(text.slice(w, at)))) return null;
+    const n = normText(text.slice(w, at));
+    if (w === 0 || n.length >= prefix.length) return n.endsWith(prefix);
+  }
+}
+export function startsWithNorm(text, from, suffix) {
+  for (let size = 2 * suffix.length + 8; ; size *= 2) {
+    const e = cutNear(text, Math.min(text.length, from + size), 1);
+    if (e === null || !spend(weigh(text.slice(from, e)))) return null;
+    const n = normText(text.slice(from, e));
+    if (e === text.length || n.length >= suffix.length) return n.startsWith(suffix);
+  }
+}
+
+/**
+ * Which occurrence of a repeated quote a selection or a stored anchor means. Prefix and suffix are the normalized text around it;
+ * `nth` is the occurrence index remembered at capture. Returns {at: the offset, k: which occurrence it is}, or {at: -1, k: null} when the
+ * text does not occur or the budget ran out.
+ */
+function pickOccurrence(p, q, opts = {}) {
+  const text = p.text;
+  // the remembered occurrence first, listing only the occurrences up to it: when its surroundings still fit, it is the answer every rule
+  // of pickFrom gives, and the others need not be listed or read (an outside review: 300,000 "a" with nth 150,000 lost its offsets
+  // under the budget, though the remembered one still fit)
+  const { nth = null } = opts;
+  // only an index of the occurrences is one: a selection that starts between two of them ("aa" at offset 1 of "aaaa", which the
+  // non-overlapping search does not list) was stored with nth -1, and occ[-1] (undefined) made the window readers loop forever on the
+  // server's thread, the budget never asked (a window of no characters costs nothing)
+  const remembered = Number.isInteger(nth) && nth >= 0 ? nth : null;
+  if (remembered !== null && (opts.prefix || opts.suffix)) {
+    const head = occurrences(p, q, remembered + 1);
+    if (head === null) return { at: -1, k: null };
+    if (head.length === remembered + 1) {
+      const ok = fitsAt(text, q, head[remembered], opts);
+      if (ok === null) return { at: -1, k: null };
+      if (ok) return { at: head[remembered], k: remembered };
+    }
+  }
+  const occ = occurrencesIn(p, q);
+  const at = occ?.length ? pickFrom(text, q, occ, { ...opts, nth: remembered }) : -1;
+  return at < 0 ? { at: -1, k: null } : { at, k: occ.indexOf(at) };
+}
+/** does the text around the occurrence at `at` read as prefix and suffix (normalized, as an anchor keeps them)? null: the budget ran out */
+function fitsAt(text, q, at, { prefix = "", suffix = "" }) {
+  prefix = String(prefix || "").slice(-CTX); // what an anchor keeps (durableFor); a longer one from elsewhere is read as its last CTX
+  suffix = String(suffix || "").slice(0, CTX);
+  const pre = !prefix || endsWithNorm(text, at, prefix);
+  if (pre === null) return null;
+  const suf = pre && (!suffix || startsWithNorm(text, at + q.length, suffix));
+  return suf === null ? null : !!(pre && suf);
+}
+function pickFrom(text, q, occ, { prefix = "", suffix = "", nth = null }) {
+  if (!(Number.isInteger(nth) && nth >= 0 && nth < occ.length)) nth = null;
+  prefix = String(prefix || "").slice(-CTX);
+  suffix = String(suffix || "").slice(0, CTX);
+  const fits = (at) => fitsAt(text, q, at, { prefix, suffix });
+  // each occurrence reads about CTX characters on each side, out of the budget of the request (src/text.js): a paragraph of 100,000
+  // "a" read the whole text before every one of them and took 10 seconds in an outside review. Past the budget, no offset.
+  if ((prefix || suffix) && occ.length > 1 && !spend(occ.length * 2 * (prefix.length + suffix.length + 16))) return -1;
+  const guarded = [];
+  for (const at of occ) {
+    const ok = fits(at);
+    if (ok === null) return -1;
+    if (ok) guarded.push(at);
+  }
   if (guarded.length === 1) return guarded[0];
   if (nth != null && nth < occ.length && guarded.includes(occ[nth])) return occ[nth];
   if (guarded.length) return guarded[0];
@@ -380,20 +688,22 @@ function pickOccurrence(text, q, { prefix = "", suffix = "", nth = null } = {}) 
 }
 
 function durableFor(paragraphs, p, engineTop, ctx, loc = {}) {
-  const norm = normText(p.text);
-  const q = normText(ctx.quote || "");
-  const prefix = normText(ctx.prefix || "").slice(-CTX);
-  const suffix = normText(ctx.suffix || "").slice(0, CTX);
+  // the page's quote, prefix and suffix, paid for before they are normalized; past the budget the anchor is the paragraph alone
+  const q = normPaid(ctx.quote) ?? "";
+  const prefix = (normPaid(ctx.prefix) ?? "").slice(-CTX);
+  const suffix = (normPaid(ctx.suffix) ?? "").slice(0, CTX);
   let start = null;
   let end = null;
   let nth = null;
   if (q) {
     // the engine's own offsets when they point at the quote; else the occurrence whose surroundings match prefix and suffix
-    const at = Number.isInteger(loc.start) && Number.isInteger(loc.end) && p.text.slice(loc.start, loc.end) === ctx.quote ? loc.start : pickOccurrence(p.text, ctx.quote, { prefix, suffix });
-    if (at >= 0) {
-      start = at;
-      end = at + ctx.quote.length;
-      nth = occurrences(p.text, ctx.quote).indexOf(at);
+    const own = Number.isInteger(loc.start) && Number.isInteger(loc.end) && p.text.slice(loc.start, loc.end) === ctx.quote;
+    const k = own ? occurrencesIn(p, ctx.quote)?.indexOf(loc.start) ?? -1 : -1;
+    const picked = own ? { at: loc.start, k: k >= 0 ? k : null } : pickOccurrence(p, ctx.quote, { prefix, suffix });
+    if (picked.at >= 0) {
+      start = picked.at;
+      end = picked.at + ctx.quote.length;
+      nth = picked.k;
     }
   }
   return {
@@ -407,8 +717,8 @@ function durableFor(paragraphs, p, engineTop, ctx, loc = {}) {
     textHash: p.hash,
     prevHash: paragraphs[p.ordinal - 1]?.hash || null,
     nextHash: paragraphs[p.ordinal + 1]?.hash || null,
-    dupCount: paragraphs.filter((x) => x.hash === p.hash).length,
-    paraText: norm.slice(0, PARA_TEXT_KEEP),
+    dupCount: indexOf(paragraphs).byHash.get(p.hash)?.length ?? 0,
+    paraText: normHead(p.text, PARA_TEXT_KEEP) ?? "",
     quote: q,
     prefix,
     suffix,
@@ -429,10 +739,10 @@ export function resolveDurable(paragraphs, d) {
   const q = d.quote || "";
   let start = null;
   let end = null;
-  const at = q ? pickOccurrence(p.text, q, { prefix: d.prefix, suffix: d.suffix, nth: d.nth }) : -1;
+  const { at, k } = q ? pickOccurrence(p, q, { prefix: d.prefix, suffix: d.suffix, nth: d.nth }) : { at: -1, k: null };
   if (at >= 0) {
     start = at;
     end = at + q.length;
   }
-  return { method: hit.method, score: hit.score, ordinal: p.ordinal, path: p.path, tableNo: p.tableNo ?? null, paraId: p.paraId, textHash: p.hash, protected: !!p.protected, ...(p.protected ? { protectInfo: protectInfo(p) } : {}), dupCount: paragraphs.filter((x) => x.hash === p.hash).length, nth: at >= 0 ? occurrences(p.text, q).indexOf(at) : null, prevHash: paragraphs[p.ordinal - 1]?.hash || null, nextHash: paragraphs[p.ordinal + 1]?.hash || null, text: normText(p.text).slice(0, PARA_TEXT_KEEP), start, end, engineDelta: d.engineDelta || 0 };
+  return { method: hit.method, score: hit.score, ordinal: p.ordinal, path: p.path, tableNo: p.tableNo ?? null, paraId: p.paraId, textHash: p.hash, protected: !!p.protected, ...(p.protected ? { protectInfo: protectInfo(p) } : {}), dupCount: indexOf(paragraphs).byHash.get(p.hash)?.length ?? 0, nth: at >= 0 ? k : null, prevHash: paragraphs[p.ordinal - 1]?.hash || null, nextHash: paragraphs[p.ordinal + 1]?.hash || null, text: normHead(p.text, PARA_TEXT_KEEP) ?? "", start, end, engineDelta: d.engineDelta || 0 };
 }

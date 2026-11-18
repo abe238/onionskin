@@ -4,6 +4,7 @@ import { openZip, ZipError } from "./zip.js";
 import { walkXml } from "./xml.js";
 import { runDeepCheck } from "./checker.js";
 import { cleanFlag } from "./sanitize.js";
+import { decodeHtml, HtmlEncodingError, readHtml } from "./html.js";
 
 const MAX_TYPES_BYTES = 4 * 1024 * 1024; // [Content_Types].xml of a real document is a few KB
 // Cumulative work of the relationship scan: a hostile archive can hold thousands of individually allowed .rels parts.
@@ -14,6 +15,13 @@ const MAX_RELS_BYTES = 64 * 1024 * 1024;
 export function validatePackage(bytes, format) {
   const want = FORMATS[format];
   if (!want) throw new ZipError(`unsupported format: ${format}`);
+  // an HTML file is no package: its encoding is checked here (no parse; the parser lives in worker threads only, src/html-parser.js).
+  // Returns null; the open worker reads it whole (src/open-worker.js), a write goes through src/html-write.js
+  if (format === "html") {
+    const d = decodeHtml(bytes);
+    if (!d.ok) throw new HtmlEncodingError(d);
+    return null;
+  }
   const zip = openZip(bytes);
   const ct = zip.readText("[Content_Types].xml", MAX_TYPES_BYTES);
   if (ct == null) throw new ZipError("missing [Content_Types].xml");
@@ -36,11 +44,11 @@ function relTargets(zip) {
   let bytes = 0;
   for (const name of zip.names) {
     if (!name.endsWith(".rels")) continue;
-    if (++parts > MAX_RELS_PARTS) throw new ZipError(`too many relationship parts (more than ${MAX_RELS_PARTS})`);
+    if (++parts > MAX_RELS_PARTS) throw new ZipError(`this file has more than ${MAX_RELS_PARTS.toLocaleString("en-US")} relationship parts, more than Onionskin can read. Save it again in Word, Excel or PowerPoint, or split it, and open that`);
     const xml = zip.readText(name);
     if (xml == null) continue;
     bytes += xml.length;
-    if (bytes > MAX_RELS_BYTES) throw new ZipError("the relationship parts are too large in total");
+    if (bytes > MAX_RELS_BYTES) throw new ZipError(`the relationship parts of this file are larger than ${MAX_RELS_BYTES / 1024 / 1024} MB in all, more than Onionskin can read. Save it again in Word, Excel or PowerPoint, or split it, and open that`);
     const srcDir = path.posix.dirname(path.posix.dirname(name)); // word/_rels/x.rels -> word
     const base = srcDir === "." ? "" : srcDir;
     walkXml(xml, {
@@ -157,6 +165,21 @@ export function nodeChecks(preBytes, postBytes, format) {
   return rawNodeChecks(preBytes, postBytes, format).map(cleanFlag);
 }
 
+/**
+ * The check of an HTML file at `done` (no package, no deeper check, PLAN-html D9): the version the agent left still reads as HTML within
+ * Onionskin's limits (every write through Onionskin was checked whole before it was written, src/html-write.js; a direct save was not).
+ * Needs the parser: runs in the check worker (src/check-worker.js).
+ */
+function htmlChecks(postBytes) {
+  const skipped = { status: "skipped", reason: "the deeper checks are for Word, Excel and PowerPoint files", code: "not_for_html" };
+  try {
+    readHtml(postBytes);
+    return { flags: [], checks: { node: "ran", deep: skipped, notice: "Checked that the page still reads as HTML within Onionskin's limits. The deeper checks are for Word, Excel and PowerPoint files." } };
+  } catch (err) {
+    return { flags: [cleanFlag({ code: "html_unreadable", severity: "error", detail: String(err?.message || err).slice(0, 200) })], checks: { node: "ran", deep: skipped, notice: "The page the agent left cannot be read as HTML by Onionskin. Revert restores the version before the run." } };
+  }
+}
+
 /** The one sentence about the deeper check. A LibreOffice check still running is "pending", never "passed". */
 export const deepNotice = (skipped = [], pending = false) =>
   `Deeper check ran${skipped.length ? `; skipped: ${skipped.map((x) => `${x.check} (${x.reason})`).join(", ")}` : ""}${pending ? "; the LibreOffice conversion check is still running (pending), the Activity list updates when it finishes" : ""}.`;
@@ -168,6 +191,7 @@ const flagKey = (f) => JSON.stringify([f.code, f.part, f.element, f.rels, f.targ
  * Returns {flags, checks}: `flags` are findings (severity info/warn/error); `checks` says what ran, so a skipped deep check is never silent.
  */
 export function checkPackages(preBytes, postBytes, format, opts = {}) {
+  if (format === "html") return htmlChecks(postBytes);
   const node = rawNodeChecks(preBytes, postBytes, format);
   if (node.some((f) => f.code === "invalid_package")) return { flags: node.map(cleanFlag), checks: { node: "ran", deep: { status: "skipped", reason: "the package is invalid" } } };
   const deep = runDeepCheck(preBytes, postBytes, format, { deferSoffice: !!opts.deferSoffice });

@@ -62,10 +62,17 @@ function check(value, schema, at, errors) {
 }
 
 const DOC_OPS = new Set(["replace_text", "insert_paragraph_after", "insert_paragraph_before", "delete_paragraph", "set_paragraph_style", "format_text"]);
+const HTML_OPS = new Set(["set_text", "set_attribute", "remove_attribute", "insert_html", "replace_element", "delete_element"]);
+const HTML_TARGET = ["anchor_id", "path", "element_id"];
 
 /** Rules JSON Schema cannot say without heavy machinery: exclusive field groups and what `expect` must contain. */
 function semantic(op, at, errors) {
-  if (DOC_OPS.has(op.op)) {
+  const html = HTML_OPS.has(op.op) || (op.op === "replace_text" && ("path" in (op.target || {}) || "element_id" in (op.target || {})));
+  if (html) {
+    // an element of an HTML file: exactly one of anchor_id, path, element_id (replace_text names one of the last two for HTML)
+    const t = op.target || {};
+    if (HTML_TARGET.filter((k) => k in t).length !== 1 || Object.keys(t).some((k) => !HTML_TARGET.includes(k))) errors.push(`${at}.target: give exactly one of anchor_id, path or element_id`);
+  } else if (DOC_OPS.has(op.op)) {
     const t = op.target || {};
     const n = ["anchor_id", "para_id", "body_path", "text_hash"].filter((k) => k in t);
     if (!n.length) errors.push(`${at}.target: give anchor_id, or para_id, or body_path with text_hash, or text_hash`);

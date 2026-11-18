@@ -242,6 +242,34 @@ describe("Saved, Not saved, and the Quick ask chip", () => {
     }
   });
 
+  test("a draft past the server's 32 MB cap: the real server refuses it in words, the page says so once and does not retry until the comments change", async () => {
+    const t = await world("sidebar-toolarge.docx");
+    try {
+      const { page } = t;
+      await addComment(page, "Paragraph 015:", "First words.");
+      const ack = page.locator(`${q("card-ack")}[data-ack]`);
+      await until(async () => (await ack.getAttribute("data-ack").catch(() => null)) === "saved", "Saved");
+      let hits = 0;
+      page.on("request", (r) => /\/api\/draft/.test(r.url()) && hits++);
+      const area = page.locator(`${q("comment-card")} textarea`).first();
+      // 33 MB of words in the comment, typed the way React reads a change (fill() of this much is slow over the wire)
+      const setText = (n) => area.evaluate((el, len) => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(el, "word ".repeat(len / 5));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }, n);
+      await setText(33 * 1024 * 1024);
+      await until(async () => (await ack.getAttribute("data-ack").catch(() => null)) === "failed", "Not saved", 60_000);
+      assert.match(await text(page, "notice"), /This draft is larger than Onionskin takes \(32 MB\), so nothing was saved\./);
+      const sent = hits;
+      await new Promise((r) => setTimeout(r, 4000)); // past the first two quick retries of a failed save (1 s, 2 s)
+      assert.equal(hits, sent, "not tried again by itself");
+      await setText(50);
+      await until(async () => (await ack.getAttribute("data-ack").catch(() => null)) === "saved", "Saved once the comments changed", 30_000);
+    } finally {
+      await t.end();
+    }
+  });
+
   test("Quick ask: after Cmd/Ctrl+Enter a chip says Sent; pressing it opens the panel, shows that card and puts the focus on it", async () => {
     const t = await world("sidebar-chip.docx");
     try {
@@ -419,11 +447,14 @@ describe("the event stream", () => {
         const quote = (await page.locator(q("card-preview")).first().textContent()).trim();
         assert.ok(quote && clip.includes(`"${quote}"`) && clip.indexOf(`"${quote}"`) < clip.indexOf("First comment"), `the quoted words come before their comment:\n${clip}`);
       }
-      // Send fails while the server is gone and says so in its own words; the not answering message and its button come back, they are not lost
+      // a Send while the server is gone gets no answer: it may have gone through, so what it carried stays locked and says it is being checked
+      // (asked again until the server answers); the not answering message and its button stay, so nothing is lost
       await page.locator(q("send")).click();
-      await page.locator(q("banner-error")).filter({ hasNotText: "not answering" }).waitFor({ timeout: 10000 });
+      await page.locator(`[data-held="1"] ${q("card-state")}`, { hasText: "Checking" }).first().waitFor({ timeout: 15000 });
       await page.locator(q("banner-error"), { hasText: "not answering" }).waitFor({ timeout: 15000 });
       assert.equal(await page.locator(q("copy-comments")).count(), 1);
+      await page.locator(q("copy-comments")).click();
+      if (!WEBKIT) await page.locator(q("notice"), { hasText: "2 comments copied." }).waitFor({ timeout: 5000 });
     } finally {
       await page.close();
       await w.cleanup();

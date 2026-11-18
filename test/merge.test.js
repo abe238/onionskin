@@ -19,6 +19,33 @@ test("minimalReplace: the find text occurs once and is never empty", () => {
   assert.deepEqual(minimalReplace("hello world", "hello"), { find: " world", replace: "" });
 });
 
+test("minimalReplace stays near linear: a long run of one letter, and a far second match, do not hold the thread", () => {
+  // outside review: 20,000 "a" with one letter typed in the middle took more than 5 seconds (every widening counted every match)
+  const typed = (n) => minimalReplace("a".repeat(n), `${"a".repeat(n / 2)}b${"a".repeat(n / 2)}`);
+  const time = (f) => {
+    const t = performance.now();
+    f();
+    return performance.now() - t;
+  };
+  const [small, large] = [time(() => typed(1500)), time(() => typed(6000))];
+  assert.ok(large < 10 * small + 300, `4 times the text took ${Math.round(large)} ms, against ${Math.round(small)} ms`);
+  assert.equal(typed(20000), null, "no unique find within the op's limit: the whole paragraph is set");
+  // the same block at both ends of a long paragraph: each widening searched to the far copy; past the budget, null
+  let seed = 7;
+  const pick = () => "xyz"[(seed = (seed * 1103515245 + 12345) & 0x7fffffff) % 3];
+  const block = Array.from({ length: 1990 }, pick).join("");
+  const filler = Array.from({ length: 300000 }, pick).join("");
+  assert.equal(minimalReplace(block + filler + block, `${block.slice(0, 995)}Q${block.slice(995)}${filler}${block}`), null);
+  assert.deepEqual(minimalReplace(`${block}${filler.slice(0, 50)}`, `${block.slice(0, 995)}Q${block.slice(995)}${filler.slice(0, 50)}`)?.replace.includes("Q"), true, "a short paragraph still gets a small find");
+});
+
+test("the outside review's case: one letter typed into a paragraph of 20,000 \"a\" while the agent edits the next one merges whole", async () => {
+  const A = "a".repeat(20000);
+  const r = await mergeDocx({ base: docxBytes([A, "tail"]), mine: docxBytes([`${A.slice(0, 10000)}b${A.slice(10000)}`, "tail"]), theirs: docxBytes([A, "tail by the agent"]), name: "t.docx", runOps });
+  assert.deepEqual([r.merged, r.unplaced], [1, []]);
+  assert.deepEqual(texts(r.bytes), [`${A.slice(0, 10000)}b${A.slice(10000)}`, "tail by the agent"]);
+});
+
 test("the user and the agent edit different paragraphs: both edits are in the result", async () => {
   const r = await merge(edit(P, 5, "short note", "short written note"), edit(P, 1, "reviews", "audits"));
   assert.equal(r.merged, 1);
@@ -64,12 +91,12 @@ test("a paragraph the user deleted is deleted; one the agent changed meanwhile i
   assert.match(r.unplaced[0].why, /You deleted this paragraph, but the agent changed it/);
 });
 
-test("a new paragraph next to one the agent rewrote still lands near it, by the nearest untouched paragraph", async () => {
+test("a new paragraph typed under one the agent rewrote lands right under the agent's version of it, not above it", async () => {
   const mine = [...P.slice(0, 3), "Typed under paragraph three.", ...P.slice(3)];
   const theirs = edit(P, 2, "reviews", "audits");
   const r = await merge(mine, theirs);
   assert.equal(r.merged, 1);
-  assert.deepEqual(texts(r.bytes), [...theirs.slice(0, 2), "Typed under paragraph three.", ...theirs.slice(2)]);
+  assert.deepEqual(texts(r.bytes), [...theirs.slice(0, 3), "Typed under paragraph three.", ...theirs.slice(3)]);
 });
 
 test("the user changed nothing: nothing to write", async () => {
@@ -216,7 +243,7 @@ test("a move is not carried, and said so, when the agent edited, removed or also
     [[retext(RICH, "Section 3", "short", "brief")], /agent changed or removed it/],
     [[{ op: "delete_paragraph", target: loc(RICH, "Section 3"), expect: loc(RICH, "Section 3") }], /agent changed or removed it/],
     [[mv(RICH, "Section 3", "before", "Section 1:")], /so did the agent\. It is where the agent put it/],
-    [[retext(RICH, "Section 6", "short", "brief"), { op: "delete_paragraph", target: loc(RICH, "Section 4"), expect: loc(RICH, "Section 4") }], /agent changed the paragraphs next to its new place/],
+    [[{ op: "delete_paragraph", target: loc(RICH, "Section 6"), expect: loc(RICH, "Section 6") }], /agent changed the paragraphs next to its new place/],
   ];
   for (const [agent, why] of cases) {
     const theirs = await edited(RICH, agent);
@@ -227,6 +254,10 @@ test("a move is not carried, and said so, when the agent edited, removed or also
     assert.match(r.unplaced[0].why, why);
     assert.equal(r.unplaced[0].text, "", "nothing to copy: the text is in the document");
   }
+  // the agent rewrote the paragraph the move goes under: it is still that paragraph (its id says so), and the move lands under it
+  const r = await rich(mine, await edited(RICH, [retext(RICH, "Section 6", "short", "brief")]));
+  assert.deepEqual(r.unplaced, []);
+  assert.deepEqual(order(r.bytes), order(mine));
 });
 
 test("formatting changed on a paragraph that was also moved: the move is carried, the formatting is not, and the report says which", async () => {
@@ -276,7 +307,7 @@ test("a moved paragraph is the agent's paragraph, as it is: what a paste did to 
   const theirs = await edited(base, [retext(base, "Section 1:", "short", "brief")]);
   r = await go(theirs);
   assert.equal(r.merged, 1);
-  assert.deepEqual(r.unplaced, [{ label: `"${T(2).split(" ").slice(0, 8).join(" ")}..."`, text: "", why: "Your move was carried over. This paragraph has the formatting of the agent's version: if you changed its formatting too, set it again.", check: true }]);
+  assert.deepEqual(r.unplaced, [{ label: `"${T(2).split(" ").slice(0, 8).join(" ")}..."`, text: "", why: "Your move was carried over. This paragraph has the formatting of the agent's version: if you changed its formatting too, set it again.", of: ["m5", "b1"], check: true }]);
   assert.deepEqual(order(r.bytes), order(mine));
   assert.equal(paraXml(r.bytes, 2), head, "byte for byte the paragraph the agent has");
   // one word of the pasted copy is italic where the original has one look from end to end: that is the user's, and it is said
@@ -454,4 +485,139 @@ test("a move or a formatting change that does not come out as planned is not wri
     assert.deepEqual(shape(r.bytes), shape(theirs, true), "only the typing was written: the agent's order and formatting are as they were");
     assert.deepEqual(r.unplaced.map((x) => x.why), ["The bold you changed here could not be set on the agent's version.", "You moved this paragraph, but the move could not be made on the agent's version."]);
   }
+});
+
+test("every one of 20,000 paragraphs rewritten, no paragraph ids: the agent's document is kept whole and the person's edits are handed back", async () => {
+  // the matcher's similarity budget runs out on a long run of rewritten paragraphs, so none of them is paired with its original: deleting
+  // the unpaired originals left one paragraph of 49,999 (the person's version went to a copy, the agent's was gone)
+  const n = 20_000;
+  const make = (suffix = "", first = null) => docxBytes(Array.from({ length: n }, (_, i) => (i === 0 && first ? first : `Paragraph number ${i} of the text${suffix}`)));
+  const theirs = make("", "Changed by the agent here");
+  const r = await mergeDocx({ base: make(), mine: make(", edited by me"), theirs, name: "f.docx", runOps });
+  const out = r.bytes ? readDocxParagraphs(r.bytes) : readDocxParagraphs(theirs);
+  assert.equal(out.length, n, "no paragraph of the agent's is deleted");
+  assert.equal(out[0].text, "Changed by the agent here");
+  assert.ok(r.unplaced.length >= n - 1, `the person's edits are handed back (${r.unplaced.length})`);
+  assert.ok(r.unplaced.some((u) => /paragraphs you deleted or rewrote were kept/.test(u.why)));
+});
+
+test("an edit counts as already carried only when the agent's own copy of that paragraph has it, never because the same text is elsewhere", async () => {
+  const doc = (list, ids) => docxBytes(list.map((text, i) => (ids ? { text, paraId: pid(i + 1) } : text)));
+  const run = (b, m, t, ids) => mergeDocx({ base: doc(b, ids), mine: doc(m, ids), theirs: doc(t, ids), name: "t.docx", runOps });
+  for (const ids of [true, false]) {
+    // outside review: the agent rewrote the first paragraph and wrote the person's new first sentence into the second one
+    const r = await run(["The first user sentence.", "The second original sentence."], ["My rewritten first sentence.", "The second original sentence."], ["Agent rewritten first sentence.", "My rewritten first sentence."], ids);
+    assert.equal(r.bytes, null, `ids ${ids}: nothing to write`);
+    assert.deepEqual(r.unplaced.map((u) => [u.text, u.why]), [["My rewritten first sentence.", "The agent changed this paragraph too. Its version is in the document; this is yours."]], `ids ${ids}: the person's edit is handed back`);
+    // the edit really is in the agent's copy of that paragraph (an earlier pass carried it), and the agent changed another one: nothing to do
+    const base = ["The first paragraph of the quarterly report, as sent.", "The second paragraph of the quarterly report, as sent."];
+    const mine = ["The first paragraph of the quarterly report, as I edited it.", base[1]];
+    const done = await run(base, mine, [mine[0], "The second paragraph of the quarterly report, as the agent wrote it."], ids);
+    assert.deepEqual([done.bytes, done.merged, done.unplaced], [null, 0, []], `ids ${ids}: an edit already carried is recognized`);
+  }
+});
+
+test("a carried edit is proven in its own paragraph: the same text elsewhere in the agent's version does not stand in for it", async () => {
+  const base = ["Alpha paragraph of the plan, as it was sent.", "Beta paragraph of the plan, as it was sent.", "Gamma paragraph of the plan, as it was sent."];
+  const mine = ["Alpha paragraph of the plan, as I edited it.", base[1], base[2]];
+  const theirs = [base[0], base[1], mine[0]]; // the agent wrote the person's sentence into the third paragraph
+  // an engine that reports "applied" but writes something else
+  const bent = (o) => runOps({ ...o, ops: o.ops.map((op) => (op.op === "replace_text" ? { ...op, replace: `${op.replace} (bent)`, ...(op.text ? { text: `${op.text} (bent)` } : {}) } : op)) });
+  const r = await mergeDocx({ base: docxBytes(base), mine: docxBytes(mine), theirs: docxBytes(theirs), name: "t.docx", runOps: bent });
+  assert.deepEqual([r.bytes, r.merged], [null, 0], "nothing is written");
+  assert.deepEqual(r.unplaced.map((u) => [u.text, u.why]), [[mine[0], "Carrying your edits over would have changed the agent's text, so none were applied."]]);
+});
+
+// ---- a match by text never contradicts the paragraph ids (outside review, round 5) -----------------------------------------------------
+// base [A, B], the person edits A, the agent rewrites A and writes A's old text into B: the text match of A is the agent's second
+// paragraph, whose id says it is B. The person's edit went into B with no conflict. Each kind of op is checked with that shape, then
+// the rest of the family: ids duplicated, ids absent, a paragraph the agent moved, deleted, split or merged.
+const ID_A = "Alpha paragraph of the plan, as it was sent.";
+const ID_B = "Beta paragraph of the plan, as it was sent.";
+const ID_C = "Gamma paragraph of the plan, as it was sent.";
+const withIds = (list) => docxBytes(list.map(([text, id]) => (id == null ? text : { text, paraId: pid(id) })));
+const mergeIds = (base, mine, theirs) => mergeDocx({ base: withIds(base), mine: withIds(mine), theirs: withIds(theirs), name: "t.docx", runOps });
+const idsOf = (bytes) => readDocxParagraphs(bytes).map((p) => [p.text, p.paraId === null ? null : Number(p.paraId)]);
+
+test("ids: the text match of the person's paragraph is another paragraph by id, for every kind of op: handed back, never applied there", async () => {
+  const theirs = [["Alpha, as the agent rewrote it.", 1], [ID_A, 2]];
+  const changed = await mergeIds([[ID_A, 1], [ID_B, 2]], [["Alpha, as I edited it.", 1], [ID_B, 2]], theirs);
+  assert.deepEqual([changed.bytes, changed.merged], [null, 0], "nothing is written into paragraph 2");
+  assert.deepEqual(changed.unplaced.map((u) => [u.text, u.why]), [["Alpha, as I edited it.", "The agent changed this paragraph too. Its version is in the document; this is yours."]]);
+  const deleted = await mergeIds([[ID_A, 1], [ID_B, 2]], [[ID_B, 2]], theirs);
+  assert.deepEqual([deleted.bytes, deleted.merged], [null, 0], "paragraph 2 is not deleted");
+  assert.deepEqual(deleted.unplaced.map((u) => u.why), ["You deleted this paragraph, but the agent changed it, so it was kept."]);
+  const moved = await mergeIds([[ID_A, 1], [ID_B, 2], [ID_C, 3]], [[ID_B, 2], [ID_A, 1], [ID_C, 3]], [["Alpha, as the agent rewrote it.", 1], [ID_A, 2], [ID_C, 3]]);
+  assert.equal(moved.bytes, null, "paragraph 2 is not moved");
+  assert.match(moved.unplaced[0].why, /^You moved this paragraph/);
+});
+
+test("ids: an edit follows its paragraph when the agent moved it, and is handed back when the agent deleted, split or merged it", async () => {
+  const mine = [["Alpha, as I edited it.", 1], [ID_B, 2], [ID_C, 3]];
+  // moved to the end, text unchanged: the edit is carried there (before, it was handed back as changed by the agent)
+  const moved = await mergeIds([[ID_A, 1], [ID_B, 2], [ID_C, 3]], mine, [[ID_B, 2], [ID_C, 3], [ID_A, 1]]);
+  assert.equal(moved.merged, 1, JSON.stringify(moved.unplaced));
+  assert.deepEqual(idsOf(moved.bytes), [[ID_B, 2], [ID_C, 3], ["Alpha, as I edited it.", 1]]);
+  // deleted, and a new paragraph (no id, as the engine writes one) with the same text elsewhere: not the person's paragraph
+  for (const theirs of [[[ID_B, 2], [ID_C, 3]], [[ID_B, 2], [ID_C, 3], [ID_A, null]], [[ID_B, 2], [ID_A, 4], [ID_C, 3]]]) {
+    const r = await mergeIds([[ID_A, 1], [ID_B, 2], [ID_C, 3]], mine, theirs);
+    assert.deepEqual([r.bytes, r.merged], [null, 0], JSON.stringify(theirs));
+    assert.deepEqual(r.unplaced.map((u) => u.text), ["Alpha, as I edited it."]);
+  }
+  // split: the first half keeps the id with other text, the second half is new
+  const split = await mergeIds([[ID_A, 1], [ID_B, 2], [ID_C, 3]], [["Alpha, as I edited it.", 1], [ID_B, 2], [`${ID_C} More.`, 3]], [["Alpha paragraph", 1], ["of the plan, as it was sent.", null], [ID_B, 2], [ID_C, 3]]);
+  assert.equal(split.merged, 1, "the other paragraph's edit is carried");
+  assert.deepEqual(split.unplaced.map((u) => u.text), ["Alpha, as I edited it."]);
+  assert.deepEqual(idsOf(split.bytes).at(-1), [`${ID_C} More.`, 3]);
+  // merged: A and B became one paragraph with A's id; an edit of either is handed back, an edit of C is carried
+  const joined = await mergeIds([[ID_A, 1], [ID_B, 2], [ID_C, 3]], [[ID_A, 1], ["Beta, as I edited it.", 2], [`${ID_C} More.`, 3]], [[`${ID_A} ${ID_B}`, 1], [ID_C, 3]]);
+  assert.equal(joined.merged, 1);
+  assert.deepEqual(joined.unplaced.map((u) => u.text), ["Beta, as I edited it."]);
+  assert.deepEqual(idsOf(joined.bytes), [[`${ID_A} ${ID_B}`, 1], [`${ID_C} More.`, 3]]);
+});
+
+test("ids duplicated or absent: a duplicated id counts only on the paragraph that carries it; without ids text and order decide, as before", async () => {
+  // the agent copied paragraph 1 with its id and rewrote the first copy: the copy that still reads as the base and carries the id is it
+  const copied = await mergeIds([[ID_A, 1], [ID_B, 2]], [["Alpha, as I edited it.", 1], [ID_B, 2]], [["Alpha, as the agent rewrote it.", 1], [ID_A, 1], [ID_B, 2]]);
+  assert.equal(copied.merged, 1);
+  assert.deepEqual(idsOf(copied.bytes), [["Alpha, as the agent rewrote it.", 1], ["Alpha, as I edited it.", 1], [ID_B, 2]]);
+  // the agent's paragraph with A's text carries B's id, which the agent also kept on B: not A
+  const dup = await mergeIds([[ID_A, 1], [ID_B, 2]], [["Alpha, as I edited it.", 1], [ID_B, 2]], [["Alpha, as the agent rewrote it.", 1], [ID_A, 2], [ID_B, 2]]);
+  assert.deepEqual([dup.bytes, dup.merged], [null, 0]);
+  // ids duplicated in the base say nothing about which is which, but an id unique in the base still rules a paragraph out
+  const baseDup = await mergeIds([[ID_A, 1], [ID_B, 1], [ID_C, 3]], [["Alpha, as I edited it.", 1], [ID_B, 1], [ID_C, 3]], [[ID_C, 3], [ID_A, 3]]);
+  assert.deepEqual([baseDup.bytes, baseDup.merged], [null, 0], "the agent's copy of A's text carries C's id");
+  // no ids anywhere: the paragraphs are told apart by text and order
+  const none = await mergeIds([[ID_A], [ID_B]], [["Alpha, as I edited it."], [ID_B]], [[ID_A], ["Beta, as the agent rewrote it."]]);
+  assert.equal(none.merged, 1);
+  assert.deepEqual(readDocxParagraphs(none.bytes).map((p) => p.text), ["Alpha, as I edited it.", "Beta, as the agent rewrote it."]);
+});
+
+// The person's side follows the same rule (outside review, final round): base [A, B, C, D] with ids 1 to 4, the person retyped
+// paragraph 1 to read as paragraph 2 and edited paragraph 2, the agent edited paragraphs 2 and 4. Text matching paired the person's
+// first paragraph with base paragraph 2, so the A -> B edit was read as a deletion of paragraph 1 and disappeared (merged 2, nothing
+// handed back, the result [B3, B2, C, D4]). Paragraph 1 is paragraph 1 by its id: its edit is carried, paragraph 2's is handed back.
+test("ids, the person's side: a paragraph retyped to read as its neighbor stays its own paragraph; the neighbor's edit is handed back", async () => {
+  const why = "The agent changed this paragraph too. Its version is in the document; this is yours.";
+  const r = await mergeIds([["A", 1], ["B", 2], ["C", 3], ["D", 4]], [["B", 1], ["B2", 2], ["C", 3], ["D", 4]], [["A", 1], ["B3", 2], ["C", 3], ["D4", 4]]);
+  assert.deepEqual(idsOf(r.bytes), [["B", 1], ["B3", 2], ["C", 3], ["D4", 4]]);
+  assert.equal(r.merged, 1);
+  assert.deepEqual(r.unplaced.map((u) => [u.text, u.why]), [["B2", why]]);
+  // the same with whole sentences, where similarity alone would also pair the wrong paragraphs
+  const S = ["The first paragraph opens the plan.", "The second paragraph states the goal.", "The third paragraph lists the steps.", "The fourth paragraph closes."];
+  const full = await mergeIds(S.map((t, i) => [t, i + 1]), [[S[1], 1], [`${S[1]} Edited.`, 2], [S[2], 3], [S[3], 4]], [[S[0], 1], ["Agent rewrote two.", 2], [S[2], 3], ["Agent rewrote four.", 4]]);
+  assert.deepEqual(idsOf(full.bytes), [[S[1], 1], ["Agent rewrote two.", 2], [S[2], 3], ["Agent rewrote four.", 4]]);
+  assert.equal(full.merged, 1);
+  assert.deepEqual(full.unplaced.map((u) => [u.text, u.why]), [[`${S[1]} Edited.`, why]]);
+});
+
+// outside review, final round: the agent rewrote the paragraph and wrote it without ids; looking up the base paragraph's id among the
+// agent's ids (there are none) threw while planning. The paragraph is still found by its place, and the alignment is carried.
+test("the agent's version has no ids and the person changed only formatting: the plan does not throw and the alignment is carried", async () => {
+  const T0 = "This paragraph reports the quarterly revenue.";
+  const one = (text, { id = true, center = false } = {}) => docxBytes([], {}, `<w:p${id ? ' w14:paraId="00000001"' : ""}>${center ? '<w:pPr><w:jc w:val="center"/></w:pPr>' : ""}<w:r><w:t>${text}</w:t></w:r></w:p>`);
+  const r = await mergeDocx({ base: one(T0), mine: one(T0, { center: true }), theirs: one(T0.replace("quarterly", "annual"), { id: false }), name: "t.docx", runOps });
+  assert.deepEqual([r.merged, r.unplaced], [1, []]);
+  const [p] = read(r.bytes);
+  assert.deepEqual([p.text, p.align, p.paraId], ["This paragraph reports the annual revenue.", "center", null]);
 });

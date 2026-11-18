@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { parentPort, workerData } from "node:worker_threads";
 import { readDocxParagraphs } from "./docx.js";
 import { documentRuns, editPairs, exampleOf, pairSignals } from "./voice.js";
 
@@ -16,13 +15,12 @@ export function analyzeVoice(preBytes, postBytes, mineBytes) {
   return { pairs: found.map(pairSignals), examples: found.map((p) => exampleOf(p, runs)).filter(Boolean) };
 }
 
-// Run in a worker thread (same pattern as history-worker.js): workerData = {pre, post, mine}, three snapshot blob paths. One message back,
+// Run in a worker thread by src/worker-host.js: data = {pre, post, mine}, three snapshot blob paths. One message back,
 // {ok: true, pairs, examples} or {ok: false, error}. A version that cannot be read or parsed fails the whole job and learns nothing.
-if (parentPort) {
+export function work({ pre, post, mine }) {
   try {
-    const { pre, post, mine } = workerData;
-    parentPort.postMessage({ ok: true, ...analyzeVoice(fs.readFileSync(pre), fs.readFileSync(post), fs.readFileSync(mine)) });
+    return { ok: true, ...analyzeVoice(fs.readFileSync(pre), fs.readFileSync(post), fs.readFileSync(mine)) };
   } catch (err) {
-    parentPort.postMessage({ ok: false, error: String(err?.message || err) });
+    return { ok: false, error: String(err?.message || err) };
   }
 }

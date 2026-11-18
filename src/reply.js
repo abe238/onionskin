@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { FORMATS, PRODUCT } from "./constants.js";
-import { ApplyError, APPLY_EXIT, applyCommand } from "./apply.js";
-import { parseTicket } from "./lease.js";
-import { isAgentHolder } from "./agent-detect.js";
+import { PRODUCT, unknownFormat } from "./constants.js";
+import { ApplyError, APPLY_EXIT, applyCommand, formatOfPath } from "./apply.js";
+import { loadTicketRecord, parseTicket } from "./lease.js";
+import { NOT_YOUR_FILE, agentMayUse, isAgentHolder } from "./agent-detect.js";
 import { QUESTION_FIX, QUESTIONS_PER_BATCH, cleanQuestion } from "./question.js";
 import { SUGGESTIONS_MAX, SUGGEST_FIX, cleanSuggestion } from "./review.js";
 import { VOICE_FIX, cleanVoiceDraft } from "./voice-guide.js";
@@ -186,13 +186,16 @@ export function planReplies(batch, input, { partial = false } = {}) {
     if (mode === "find") {
       if (typeof r.find !== "string" || !r.find || typeof r.replace !== "string") return refuse("bad_reply", "find needs a non-empty string and replace needs a string");
       const extras = Object.fromEntries(SHORTHAND_EXTRAS.filter((k) => k in r).map((k) => [k, r[k]]));
-      if (format === "docx") op = { op: "replace_text", ...base, find: r.find, replace: r.replace, ...extras };
+      if (format === "docx" || format === "html") op = { op: "replace_text", ...base, find: r.find, replace: r.replace, ...extras };
       else if (format === "pptx") op = { op: "replace_text_in_shape", ...base, find: r.find, replace: r.replace, ...extras };
+      else if (format !== "xlsx") return unknownFormat(format, "reply find");
       else return refuse("shorthand_not_for_format", "find/replace does not apply to a .xlsx cell", "use `set` for a cell or range");
     } else if (mode === "text") {
       if (typeof r.text !== "string") return refuse("bad_reply", "text must be a string");
       if (format === "docx") op = { op: "replace_text", ...base, text: r.text };
+      else if (format === "html") op = { op: "set_text", ...base, text: r.text };
       else if (format === "pptx") op = { op: "set_shape_text", ...base, paragraphs: r.text.split("\n") };
+      else if (format !== "xlsx") return unknownFormat(format, "reply text");
       else return refuse("shorthand_not_for_format", "text does not apply to a .xlsx cell", "use `set` for a cell or range");
     } else if (mode === "set") {
       if (format !== "xlsx") return refuse("shorthand_not_for_format", `set applies to a .xlsx cell or range, not a .${format}`, "use `find`+`replace` or `text`");
@@ -264,7 +267,7 @@ const FIX = {
   skipped_protected: "Protected place (field, equation, content control or similar): it cannot be rewritten losslessly. Decline this comment with a note.",
 };
 const fixFor = (r) => FIX[r.status] || (r.status === "refused" ? `Refused by the engine${r.code ? ` (${r.code})` : ""}. Change the op as the reason says, or decline.` : undefined);
-const brief = (comment, r) => ({ comment, op: r.op, status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.reason ? { reason: r.reason } : {}), ...(r.actual_excerpt ? { actual_excerpt: r.actual_excerpt } : {}), ...(fixFor(r) ? { fix: fixFor(r) } : {}) });
+const brief = (comment, r) => ({ comment, op: r.op, status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.reason ? { reason: r.reason } : {}), ...(Array.isArray(r.reasons) ? { reasons: r.reasons } : {}), ...(r.actual_excerpt ? { actual_excerpt: r.actual_excerpt } : {}), ...(fixFor(r) ? { fix: fixFor(r) } : {}) });
 
 /**
  * The command. `deps` = {server: {healthy, req, json}, finish(file, results, lease) -> done's JSON, pollNext(file, timeout) -> string, readStdin(), holder?}.
@@ -279,12 +282,29 @@ export async function replyCommand(rest, deps) {
     throw new ReplyError(err.message);
   }
   const { server } = deps;
+  // who calls: the local runner names itself; otherwise ONIONSKIN_HOLDER (an agent Onionskin started cannot change it), else the holder the
+  // server saved with this ticket. It goes with every request, so the server checks the binding and the lease before it hands out anything.
+  const envHolder = process.env[`${PRODUCT.envPrefix}_HOLDER`];
+  const ticketOfArgs = parseTicket(a.lease);
+  const holder = deps.holder || envHolder || (ticketOfArgs ? loadTicketRecord(ticketOfArgs.batch_id)?.holder : null) || "";
+  const notYours = () => new ReplyError(NOT_YOUR_FILE, { exit: APPLY_EXIT.write_refused, body: { code: "not_your_file" } });
   if (!a.file) {
-    // no file given: the ticket's batch id names the session (the token is still checked by apply and done)
+    // no file given: the whole ticket (batch id and token) names the session; a wrong token names none
     if (!(await server.healthy())) throw new ReplyError(`the ${PRODUCT.name} server is not running, so the delivery named by --lease cannot be checked. Nothing was written.`, { exit: APPLY_EXIT.write_refused });
-    const w = await server.req({ method: "GET", path: `/cli/batch-file?batch_id=${encodeURIComponent(parseTicket(a.lease)?.batch_id || "")}` });
+    const w = await server.req({ method: "GET", path: `/cli/batch-file?batch_id=${encodeURIComponent(ticketOfArgs?.batch_id || "")}&lease_token=${encodeURIComponent(ticketOfArgs?.token || "")}&holder=${encodeURIComponent(holder)}` });
     a.file = w.status === 200 ? server.json(w.text).file || "" : "";
     if (!a.file) throw new ReplyError(`No delivered batch matches this ticket: your delivery was taken back, finished or handed on. Nothing was written. Run \`${PRODUCT.bin} poll <file>\` again.`, { exit: APPLY_EXIT.write_refused, body: { code: "stale_batch" } });
+  }
+  // an agent Onionskin started: its own input first (only its one reply file, content-free checks), then its binding to its one file,
+  // refused before that file is looked at, in the same words whether it exists or is open
+  const bg = !deps.holder && isAgentHolder(envHolder);
+  const ticketRequired = () => new ReplyError(`--lease <ticket> is required: it is the lease_ticket of the batch (\`${PRODUCT.bin} status <file> --ticket\` prints it again)`);
+  let input;
+  if (bg) {
+    if (!ticketOfArgs) throw ticketRequired();
+    checkBackgroundInput(a, process.env[`${PRODUCT.envPrefix}_AGENT_DIR`], ticketOfArgs.batch_id);
+    input = await readInput(a, deps.readStdin, { quiet: true });
+    if (!agentMayUse(envHolder, a.file)) throw notYours();
   }
   let real;
   try {
@@ -292,19 +312,26 @@ export async function replyCommand(rest, deps) {
   } catch {
     throw new ReplyError(`File not found: ${JSON.stringify(a.file.slice(0, 200))}`, { exit: APPLY_EXIT.error });
   }
-  if (!FORMATS[path.extname(real).toLowerCase().slice(1)]) throw new ReplyError("Only .docx, .xlsx and .pptx files are supported");
-  const ticket = parseTicket(a.lease);
-  if (!ticket) throw new ReplyError(`--lease <ticket> is required: it is the lease_ticket of the batch (\`${PRODUCT.bin} status <file> --ticket\` prints it again)`);
-  const bg = !deps.holder && isAgentHolder(process.env[`${PRODUCT.envPrefix}_HOLDER`]);
-  if (bg) checkBackgroundInput(a, process.env[`${PRODUCT.envPrefix}_AGENT_DIR`], ticket.batch_id);
-  const input = await readInput(a, deps.readStdin, { quiet: bg });
+  if (!formatOfPath(real)) throw new ReplyError("Only .docx, .xlsx, .pptx, .html and .htm files are supported");
+  const ticket = ticketOfArgs;
+  if (!ticket) throw ticketRequired();
+  if (!bg) input = await readInput(a, deps.readStdin, { quiet: false });
 
-  // the batch the session holds for this delivery: the only source of anchors and hashes
+  // authorization first: the server hands out the batch the session holds for this delivery (the only source of anchors and hashes) only
+  // to this ticket's holder, checked before the reply is planned or run against the file
   if (!(await server.healthy())) throw new ReplyError(`the ${PRODUCT.name} server is not running, so the delivery named by --lease cannot be checked. Nothing was written.`, { exit: APPLY_EXIT.write_refused });
-  const r = await server.req({ method: "GET", path: `/cli/batch?file=${encodeURIComponent(real)}` });
-  const held = r.status === 200 ? server.json(r.text).batch : null;
-  if (!held) throw new ReplyError(`No batch is delivered for this file, so the ticket is void. Nothing was written. Run \`${PRODUCT.bin} poll\` and wait for the user's Send.`, { exit: APPLY_EXIT.write_refused, body: { code: "no_batch" } });
-  if (held.batch_id !== ticket.batch_id) throw new ReplyError(`The ticket belongs to batch ${ticket.batch_id}, but the delivered batch is ${held.batch_id}: your delivery was taken back, finished or handed on. Nothing was written. Run \`${PRODUCT.bin} poll\` again.`, { exit: APPLY_EXIT.write_refused, body: { code: "stale_batch" } });
+  const r = await server.req({ method: "GET", path: `/cli/batch?file=${encodeURIComponent(real)}&holder=${encodeURIComponent(holder)}&batch_id=${encodeURIComponent(ticket.batch_id)}&lease_token=${encodeURIComponent(ticket.token)}` });
+  let refused = null;
+  try {
+    refused = r.status === 200 ? null : server.json(r.text);
+  } catch {
+    refused = {};
+  }
+  if (refused?.code === "not_your_file") throw notYours();
+  if (refused?.code === "no_batch") throw new ReplyError(`No batch is delivered for this file, so the ticket is void. Nothing was written. Run \`${PRODUCT.bin} poll\` and wait for the user's Send.`, { exit: APPLY_EXIT.write_refused, body: { code: "no_batch" } });
+  if (refused) throw new ReplyError(`This ticket is not the delivery the session holds: your delivery was taken back, finished or handed on, or the ticket is wrong. Nothing was written. Run \`${PRODUCT.bin} poll\` again.`, { exit: APPLY_EXIT.write_refused, body: { code: refused.code === "not_lease_holder" ? "not_lease_holder" : "stale_batch" } });
+  const held = server.json(r.text).batch;
+  if (!held || held.batch_id !== ticket.batch_id) throw new ReplyError(`This ticket is not the delivery the session holds. Nothing was written. Run \`${PRODUCT.bin} poll\` again.`, { exit: APPLY_EXIT.write_refused, body: { code: "stale_batch" } });
 
   const plan = planReplies(held, input, { partial: a.partial });
   if (plan.errors.length) throw new ReplyError("the reply cannot be applied; nothing was written and the batch is still open", { body: { code: "bad_reply", lease_kept: true, problems: plan.errors } });

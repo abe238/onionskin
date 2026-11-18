@@ -781,3 +781,70 @@ test("quick preview: not a quick note is null; nothing found, and the file chang
   assert.ok(!texts(f).join("|").includes("areas"));
   assert.equal(s.quickConfirm, undefined);
 });
+
+// ---- HIGH B (an outside review on 415860f): a quick change on a document at the readers' caps never holds the server's thread -------
+// The review's file: 12,538 bytes, one paragraph of "İ " 4 million times (8 million characters, under the cap). Counting its matches
+// rebuilt millions of match records on the server's thread (4.1 s there, 2.3 s here). The count, the plan's count and the change now
+// run in a worker thread with a time limit (src/ops-worker.js); measured here as the CPU time of this thread alone.
+const REVIEW_FILE = () => docxBytes(["İ ".repeat(4_000_000)]);
+const threadMs = async (fn) => {
+  const u = process.threadCpuUsage();
+  const out = await fn();
+  const d = process.threadCpuUsage(u);
+  return { out, ms: (d.user + d.system) / 1000 };
+};
+
+test("HIGH B: the quick preview of the review's 8-million-character paragraph counts 2,000,000 matches off the server's thread", async () => {
+  const bytes = REVIEW_FILE();
+  assert.equal(bytes.length, 12538, "the file of the review");
+  const s = srv.sessions.open(write(bytes));
+  const { out, ms } = await threadMs(() => quickPreview(s, 'Replace "İ İ" with "Q"'));
+  assert.equal(out.match?.count, 2_000_000, JSON.stringify(out));
+  // what is left on this thread: the file read within the readers' caps (about 0.35 s), never the engine's count (2 to 4 s)
+  assert.ok(ms < 1200, `the server's thread spent ${Math.round(ms)} ms of CPU`);
+});
+
+test("HIGH B: the confirmed quick change of all 1,000,000 matches (the most a quick change takes) is made in a worker; the server's thread stays free", async () => {
+  const f = write(REVIEW_FILE());
+  const s = srv.sessions.open(f);
+  const pv = (await quickPreview(s, 'Replace "İ İ İ İ" with "Q"')).match;
+  assert.equal(pv.count, 1_000_000);
+  // the plan counts again in the worker (about 2.4 s at this size); on a heavily loaded Mac that passes the planner's 5 s, and then the
+  // agent gets the note (nothing written). This test is about the server's thread, so the planner has the worker's own time here.
+  srv.local.planMs = 120_000;
+  const ran = nextRun();
+  const { out, ms } = await threadMs(async () => {
+    srv.sessions.send(s.key, { baseSha: s.baseSha, comments: [], note: 'Replace "İ İ İ İ" with "Q"', quick: { command: pv.command, count: pv.count } });
+    return (await ran).done;
+  });
+  srv.local.planMs = 5000;
+  assert.equal(out, "done");
+  assert.equal(readDocxParagraphs(fs.readFileSync(f))[0].text, "Q ".repeat(1_000_000));
+  // this thread read the file within the caps twice and took the written bytes (the engine's change took 2.3 s on its own)
+  assert.ok(ms < 2500, `the server's thread spent ${Math.round(ms)} ms of CPU`);
+});
+
+test("HIGH B: a count or a change that runs out of time shows no button and writes nothing; the agent gets the note", async () => {
+  const { runOpsOffThread } = await import("../src/offload.js");
+  process.env.ONIONSKIN_TEST_OPS_DELAY_MS = "5000";
+  process.env.ONIONSKIN_OPS_TIMEOUT_MS = "300";
+  try {
+    const f = write();
+    const disk = fs.readFileSync(f);
+    const s = srv.sessions.open(f);
+    assert.deepEqual(await quickPreview(s, "Replace Paragraph with Line"), { match: null }, "no count, no promise");
+    const r = await runOpsOffThread({ bytes: disk, format: "docx", name: "t.docx", ops: [{ op: "replace_all_text", find: "Paragraph", replace: "Line", expect: { count: 6 } }] });
+    assert.equal(r.bytes, null);
+    assert.match(r.results[0].reason, /did not finish: it took longer than 1 second; nothing was written/);
+    const poll = srv.sessions.poll(s.key, { holder: "H1" });
+    const ran = nextRun();
+    srv.sessions.send(s.key, { baseSha: s.baseSha, comments: [], note: "Replace Paragraph with Line", quick: { command: "Replace Paragraph with Line", count: 6 } });
+    assert.equal(await (await ran).done, "handed_back");
+    assert.equal((await poll.promise).lease.holder, "H1");
+    assert.deepEqual(fs.readFileSync(f), disk);
+    srv.sessions.takeBack(s.key);
+  } finally {
+    delete process.env.ONIONSKIN_TEST_OPS_DELAY_MS;
+    delete process.env.ONIONSKIN_OPS_TIMEOUT_MS;
+  }
+});

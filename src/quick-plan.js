@@ -5,10 +5,15 @@
 // binds that number as `expect.count`, so a file that changed since the preview, or a tampered number, fails the count check and nothing
 // is written (the batch then goes to the agent unchanged).
 //
-// Ceiling: previews run the engine on the server's main thread (as the merge does); a large file pauses other requests while one runs.
-// The page asks 600 ms after typing stops, and answers are cached by file hash and command. Upgrade path: a worker.
+// The engine's count runs in a worker thread with a time limit (src/offload.js previewOffThread), as the change itself does (src/local.js):
+// a document of one paragraph of 8 million characters held the server's thread for 4 s in an outside review. A count that does not
+// finish is no count: the page shows no button and the agent gets the note. The page asks 600 ms after typing stops, and answers are
+// cached by file hash and command. The bytes are read whole within the readers' caps first (readChecked), so a file swapped on disk
+// past a cap is refused in plain words before the engine reads it.
 
 import { checkRegularOwned, readDoc, sha256 } from "./fsutil.js";
+import { readChecked } from "./session.js";
+import { previewOffThread } from "./offload.js";
 import { recognize, refusalFor, wordsFor } from "./quick.js";
 import { userText } from "./sanitize.js";
 
@@ -30,8 +35,7 @@ function ridesAlong(s) {
 }
 
 async function previewOf(bytes, format, q) {
-  const { previewAll } = await import("./ops/run.js"); // pulls in the engine: loaded on first use
-  const p = await previewAll(bytes, format, q.op);
+  const p = await previewOffThread(bytes, format, q.op); // throws when the worker did not finish: no count, nothing shown or written
   const count = p.ok ? p.count : 0;
   const skipped = p.ok ? p.protected || 0 : 0;
   let why = refusalFor(q.kind, p, q.find);
@@ -56,9 +60,11 @@ export async function quickPreview(s, note) {
   } catch {
     return { match: null };
   }
-  const key = `${sha256(bytes)}\0${s.format}\0${q.command}`;
+  const sha = sha256(bytes);
+  const key = `${sha}\0${s.format}\0${q.command}`;
   let match = cache.get(key);
   if (!match) {
+    readChecked(s.format, bytes, { sha }); // past a reader's cap: refused with the reason (422), the engine never sees it
     try {
       const { count, skipped, why } = await previewOf(bytes, s.format, q);
       match = { action: q.kind, command: q.command, count, protectedCount: skipped, local: !why, why: why || null, ...wordsFor(q, count, skipped) };
@@ -96,10 +102,11 @@ export const quickPlanner = {
     try {
       checkRegularOwned(s.file);
       bytes = readDoc(s.file);
+      if (sha256(bytes) !== batch.base_sha256) return null; // the file moved since the Send
+      readChecked(s.format, bytes, { sha: batch.base_sha256 }); // within the readers' caps before the engine reads it
     } catch {
       return null;
     }
-    if (sha256(bytes) !== batch.base_sha256) return null; // the file moved since the Send
     const { count, skipped, why } = await previewOf(bytes, batch.format, q);
     if (why || count !== confirmed.count) return null; // not what the person saw
     return { reply: { summary: wordsFor(q, count, skipped).summary, replies: [], ops: [{ ...q.op, expect: { count } }] } };

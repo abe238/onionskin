@@ -1,5 +1,6 @@
 // The voice guide's sections on the page. Pure. SECTIONS mirrors src/voice-guide.js (test/voice-guide-web.test.js checks both lists
 // stay the same). The page never trusts the server's text for a heading: every heading the person reads comes from this table.
+import { nfc } from "../../src/nfc.js"; // pure, no imports: the server normalizes with the same function
 
 export const SECTIONS = [
   { id: "short", title: "In short", max: 700 },
@@ -35,7 +36,7 @@ export function parseGuide(text) {
   let title = false;
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const t = line.trimEnd();
-    if (/^\s*#/u.test(t.normalize("NFKC"))) {
+    if (/^\s*#/u.test(nfc(t, "NFKC"))) {
       if (!cur && !title && t === "# My voice guide") {
         title = true;
         continue;
@@ -69,7 +70,7 @@ export function composeGuide(texts, ticks, saved = []) {
 }
 
 /** True when a line of a section's text starts with # (it would be read as a heading or break the layout). */
-export const hasHeadingLine = (body) => String(body ?? "").split("\n").some((l) => /^\s*#/u.test(l.normalize("NFKC")));
+export const hasHeadingLine = (body) => String(body ?? "").split("\n").some((l) => /^\s*#/u.test(nfc(l, "NFKC")));
 
 /**
  * A line diff of two texts: [{t: "same" | "add" | "del", text}], the shortest edit by longest common subsequence. A text over 400 lines

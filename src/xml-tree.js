@@ -1,4 +1,4 @@
-import { decodeEntities } from "./xml.js";
+import { CapError, MAX_ATTRS_PER_TAG, decodeEntities, tooDeep } from "./xml.js";
 
 // A lossless element tree for one OOXML part: every node keeps its raw source text, so serialize(parse(x)) === x exactly and a builder
 // can rewrite a few elements while every other byte stays as the writer left it. Refuses DTDs and entity declarations; depth 256.
@@ -67,7 +67,7 @@ export function parse(xml) {
         const el = add({ t: "el", name: m[1], open: tag, close: "", kids: [] });
         if (!self) {
           stack.push(el);
-          if (stack.length - 1 > MAX_DEPTH) throw new Error("XML nesting too deep");
+          if (stack.length - 1 > MAX_DEPTH) throw tooDeep();
         }
       }
     }
@@ -96,7 +96,10 @@ export function attrs(el) {
   const re = /\s([^\s=/>]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
   const body = el.open.slice(1 + el.name.length);
   let m;
-  while ((m = re.exec(body))) out.push([m[1], decodeEntities(m[3] ?? m[4])]);
+  while ((m = re.exec(body))) {
+    if (out.length >= MAX_ATTRS_PER_TAG) throw new CapError(`a tag in this file has more than ${MAX_ATTRS_PER_TAG} attributes, more than Onionskin can read. The file may be damaged, or made to stall programs that read it: if Word, Excel or PowerPoint opens it, save a copy there and open the copy`, "attributes per tag");
+    out.push([m[1], decodeEntities(m[3] ?? m[4])]);
+  }
   return out;
 }
 export const attr = (el, name) => attrs(el).find((a) => a[0] === name)?.[1];

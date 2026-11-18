@@ -31,21 +31,42 @@ export function loadLaunchToken(sid) {
 /** Identifies this page load to the server: one tab per file may edit; the others open read-only (see Sessions.claimEditor). */
 export const TAB = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
-export async function api(path, { method = "GET", body, raw = false, keepalive = false } = {}) {
-  const res = await fetch(path, {
-    method,
-    keepalive, // a page that is going away can still finish a small request
-    credentials: "same-origin",
-    headers: { "x-onionskin-token": token, "x-onionskin-tab": TAB, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (raw) {
-    if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
-    return { buf: await res.arrayBuffer(), sha: res.headers.get("x-sha256") };
+/**
+ * How long the page waits for an answer before it treats the request as unanswered (as a dropped connection: no `status`). Longer than the
+ * server can take on purpose: a draft save or a page load waits for a Send of the file in flight (Sessions.settled: twice the anchor worker's
+ * 60 s limit, plus 5 s). A Send (and a file download) gets more: it can carry a document of up to 200 MB and plan its worker job twice.
+ */
+export const REQUEST_MS = 150_000;
+export const SEND_MS = 300_000;
+
+export async function api(path, { method = "GET", body, raw = false, keepalive = false, timeout = REQUEST_MS } = {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const res = await fetch(path, {
+      method,
+      keepalive, // a page that is going away can still finish a small request
+      credentials: "same-origin",
+      headers: { "x-onionskin-token": token, "x-onionskin-tab": TAB, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: ctl.signal,
+    });
+    if (raw) {
+      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+      return { buf: await res.arrayBuffer(), sha: res.headers.get("x-sha256") };
+    }
+    const json = await res.json().catch((err) => {
+      if (ctl.signal.aborted) throw err;
+      return {};
+    });
+    if (!res.ok) throw Object.assign(new Error(json.error || `HTTP ${res.status}`), { status: res.status, ...json });
+    return json;
+  } catch (err) {
+    if (ctl.signal.aborted) throw new Error("Failed to fetch: no answer in time"); // no status: the caller treats it as a lost answer
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(json.error || `HTTP ${res.status}`), { status: res.status, ...json });
-  return json;
 }
 
 export const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -120,6 +141,9 @@ export function labelFor(format, loc, ctx = {}) {
     return parts.join(", ");
   }
   if (format === "xlsx") return `${loc.sheetName || `Sheet ${loc.sheetIndex + 1}`}!${loc.range || ""}`.replace(/!$/, "");
+  // HTML: the words of the element (the server's text once re-resolved), under its heading
+  if (format === "html") return [ctx.heading ? `Under "${words(ctx.heading, 5, 32)}"` : null, ctx.text ? `"${words(ctx.text)}"` : "A part of the page"].filter(Boolean).join(", ");
+  if (format !== "pptx") return "unknown place"; // a format this page does not know: no deck words for it
   const cell = loc.cell ? `, row ${loc.cell.row + 1} col ${loc.cell.col + 1}` : "";
   return `Slide ${loc.slideIndex + 1}${loc.shapeId != null ? `, shape ${loc.shapeName ? `"${loc.shapeName}"` : loc.shapeId}` : ""}${cell}`;
 }
@@ -133,8 +157,10 @@ export function locFromResolved(format, a) {
 }
 
 const locKey = (format, loc) => {
+  if (format === "html") return `${loc?.nodeId}`; // one source text node: typing in it is one change
   if (format === "docx") return JSON.stringify(loc.blockPath);
   if (format === "xlsx") return `${loc.sheetIndex}:${loc.range}`;
+  if (format !== "pptx") return `?:${JSON.stringify(loc ?? null)}`; // a format this page does not know: the place as it came
   return `${loc.slideIndex}:${loc.shapeId ?? ""}:${loc.cell ? loc.cell.row + "," + loc.cell.col : ""}`;
 };
 

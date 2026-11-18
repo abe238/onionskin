@@ -224,7 +224,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
         {handover && (
           <div className="banner info glass" role="status" data-testid="banner-agent-handover">
             <Icon name="panel" size={16} />
-            <span>The agent is open in Terminal. It keeps working from there.</span>
+            <span>The agent is open in Terminal. If Claude Code asks whether you trust the folder, choose Yes: it is Onionskin's own folder for this file. The agent then keeps working from there.</span>
           </div>
         )}
         {s === "listening" && !failed && !starting && !handover && (
@@ -241,7 +241,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
                 <strong data-testid="banner-stage">{stageOf(session).text || "Agent is working"}</strong>
                 {!session.local && <Elapsed batch={session.deliveredBatchId || session.pendingBatchId} />}
               </span>
-              <span data-testid="banner-lock-line">{session.local ? "Keep editing. What you type is merged with this change when it finishes." : "Keep editing. What you type is merged with the agent's changes when it finishes."}</span>
+              <span data-testid="banner-lock-line">{session.format === "html" ? "Comment now, and fix text when it is done. An HTML page is read only while the agent works." : session.local ? "Keep editing. What you type is merged with this change when it finishes." : "Keep editing. What you type is merged with the agent's changes when it finishes."}</span>
               {progress && <span data-testid="banner-progress-line">{progress}</span>}
             </span>
             <span className="banner-actions">
@@ -305,7 +305,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
             <span className="banner-text">
               <strong>Someone changed this file outside Onionskin</strong>
               {/* while the agent works, a reload would replace what the person typed during the run (it is merged only when the agent finishes) */}
-              <span>{session.locked ? "Your original file was left untouched. Your edits are merged when the agent finishes." : "Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it."}</span>
+              <span>{session.locked ? "Your original file was left untouched. Your edits are merged when the agent finishes." : session.format === "html" ? "Your original file was left untouched. Your unsent text edits stay in this page: reload, and they are placed on the changed file where their text still is." : "Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it."}</span>
             </span>
             {!session.locked && (
               <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-early">
@@ -347,7 +347,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           <div className="banner err glass" role="alert" data-testid="banner-error">
             <Icon name="alert" size={18} />
             <span className="banner-text">{problem.message}</span>
-            {problem.stream && onCopyComments && (
+            {(problem.stream || problem.copy) && onCopyComments && (
               <button type="button" className="btn" onClick={onCopyComments} data-testid="copy-comments">
                 Copy my comments
               </button>

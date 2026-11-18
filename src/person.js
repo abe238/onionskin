@@ -3,7 +3,8 @@
 import { PRODUCT } from "./constants.js";
 
 const BIN = PRODUCT.bin;
-const DOC_EXT = /\.(docx|xlsx|pptx)$/i;
+// the formats Onionskin opens, and the web files it refuses with a sentence (src/constants.js REFUSED_PAGES): `onionskin page.mhtml` says why
+const DOC_EXT = /\.(docx|xlsx|pptx|html|htm|mhtml|mht|webarchive|xhtml|svg)$/i;
 export const GET_CLAUDE_CODE = "https://claude.com/product/claude-code";
 
 /**

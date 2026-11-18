@@ -4,7 +4,8 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import tty from "node:tty";
-import { spawn } from "node:child_process";
+import os from "node:os";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PRODUCT, SERVER_PROTOCOL } from "./constants.js";
 import { holderFor, loadHolder, loadTicketRecord, parseTicket, saveHolder } from "./lease.js";
@@ -14,14 +15,14 @@ import { ReplyError, replyCommand } from "./reply.js";
 import { setupChecker } from "./checker.js";
 import { runSetup } from "./setup.js";
 import { expandShortcut, personOpenText, personPollText, pickAudience, shellQuote } from "./person.js";
-import { findClaude, findCodex, isAgentHolder } from "./agent-detect.js";
+import { NOT_YOUR_FILE, agentMayUse, findClaude, findCodex, isAgentHolder } from "./agent-detect.js";
 import { BG_PRESETS, DEFAULT_BACKGROUND, MAX_IMAGE_BYTES, SettingsError, describeBackground, readSettings, saveCustomImage, writeBackground } from "./settings.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BIN = PRODUCT.bin;
 const HELP = `${PRODUCT.name}
 
-  ${BIN} open <file.docx|xlsx|pptx> [--no-open] [--no-agent|--agent]   Open the file in the browser editor (also: ${BIN} <file>). At a terminal it also starts Claude Code on it in the background; --no-agent only opens the page, --agent prints the agent's output
+  ${BIN} open <file.docx|xlsx|pptx|html|htm> [--no-open] [--no-agent|--agent]   Open the file in the browser editor (also: ${BIN} <file>). At a terminal it also starts Claude Code on it in the background; --no-agent only opens the page, --agent prints the agent's output
   ${BIN} poll <file> [--ack] [--full] [--timeout <secs>] [--agent]   Block until the user hits Send, print the batch as JSON (--full: the complete batch even when you already have the rules)
   ${BIN} status <file> [--ticket]                 Print session state without blocking (--ticket: re-read your delivery's ticket)
   ${BIN} apply <file> --ops <ops.json> --lease <ticket> [--dry-run] [--partial] [--summary] [--batch <batch.json>]
@@ -35,6 +36,10 @@ const HELP = `${PRODUCT.name}
   ${BIN} setup-checker                            Create the Python venv for the deeper checks at \`done\` (uses the network once)
   ${BIN} setup-rewriter [--remove]                 Turn on quick fixes on this Mac: quick spelling and grammar fixes on one sentence, with Apple's built-in model (macOS 26 or later, Apple Intelligence on; nothing is downloaded); --remove turns them off
   ${BIN} doctor [--json] [--verbose]               Check the install (OK / MISSING / NOTE per line, fix command on each failure); exit 1 if a required check fails
+  ${BIN} update [--check] [--yes] [--force]        Bring this copy to the latest release, the way it was installed (checks for a new version only when you run it)
+                                                  --check: print this version and the latest one, change nothing. An npm copy gets the two npm commands (--yes runs them).
+                                                  Refuses while a session has unsent edits, draft comments or a batch in flight (--force updates anyway)
+  ${BIN} utf8-copy <file.html|htm>                Write a UTF-8 copy of a page saved as windows-1252 or ISO-8859-1 next to it (<name>.utf8.html, only when that name is free); the file itself is not changed
   ${BIN} shapes <file.pptx> [--slide <slide id>]   List the shapes of a slide (id, name, placeholder, text preview) as JSON; read-only
   ${BIN} config background <${BG_PRESETS.join("|")}|default>      Choose the background behind the editing UI (this machine)
   ${BIN} config background --image <file> [--strength 0-100] [--no-blur]   Use your own PNG, JPEG or WebP (max 15 MB, scaled by the page)
@@ -56,7 +61,9 @@ export const FLAGS = {
   "setup-checker": [],
   "setup-rewriter": ["--model", "--remove", "--clean-old"],
   doctor: ["--json", "--verbose"],
+  update: ["--check", "--yes", "--force"],
   shapes: ["--slide"],
+  "utf8-copy": [],
   config: ["--image", "--strength", "--no-blur"],
   stop: [],
 };
@@ -90,10 +97,21 @@ function req(options, body) {
     });
     r.on("error", reject);
     if (options.signal) options.signal.addEventListener("abort", () => r.destroy(new Error("aborted")), { once: true });
+    // `deadline` (ms): the whole request, answer included, or it ends with `deadlineError`
+    if (options.deadline) {
+      const t = setTimeout(() => r.destroy(new Error(options.deadlineError || "the server did not answer in time")), options.deadline);
+      r.on("close", () => clearTimeout(t));
+    }
     if (body) r.write(JSON.stringify(body));
     r.end();
   });
 }
+// Opening reads the file in a worker first: up to 60 s waiting for a free reader and 60 s reading (src/offload.js), so the CLI waits longer.
+// ONIONSKIN_CLI_OPEN_DEADLINE_MS shortens it in tests.
+const openRequest = (body) => {
+  const ms = Number(process.env[`${PRODUCT.envPrefix}_CLI_OPEN_DEADLINE_MS`]) || 150_000;
+  return req({ method: "POST", path: "/cli/open", deadline: ms, deadlineError: `Onionskin did not finish opening ${path.basename(String(body.file))} within ${Math.round(ms / 1000)} seconds. It may be very large or damaged, or this Mac is very busy. Try again, or open a smaller file` }, body);
+};
 const json = (t) => {
   try {
     return JSON.parse(t);
@@ -158,6 +176,25 @@ async function removeStaleSocket() {
   } catch {
     return false;
   }
+}
+
+/** `stop` (and `update`): asks a running server to stop, waits for its process to end, then removes a leftover socket. */
+async function stopServer() {
+  if (await healthy()) {
+    const pid = json((await req({ method: "GET", path: "/health", timeout: 1500 }).catch(() => ({ text: "" }))).text).pid;
+    await req({ method: "POST", path: "/cli/stop" }, {});
+    // the server answers first and exits a moment later: "stopped" is printed only once its process is gone (waits at most 5 s)
+    const gone = () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    for (let i = 0; i < 100 && Number.isInteger(pid) && !gone(); i++) await new Promise((r) => setTimeout(r, 50));
+  }
+  await removeStaleSocket(); // a socket file nothing answers on is no use to anyone, and `doctor` would keep reporting it
 }
 
 /** Starts the detached server and waits (event-based) for its "ready" line. */
@@ -257,6 +294,8 @@ const realOrSame = (file) => {
  * a = {ack, full, compact, timeout}; `quiet` skips the human line on STDERR.
  */
 async function pollFor(file, a, { quiet = false } = {}) {
+  // an agent Onionskin started is bound to its one file: refused before anything about another file is asked
+  if (!agentMayUse(process.env[`${PRODUCT.envPrefix}_HOLDER`], file)) throw new Error(NOT_YOUR_FILE);
   // an agent Onionskin started (in the background or in Terminal) never starts a server, and never reconnects to one: a server that stopped means its review ended
   const bg = isAgentHolder(process.env[`${PRODUCT.envPrefix}_HOLDER`]); // the background agent, or the same agent opened in Terminal
   const serverGone = { status: "closed", reason: "the server stopped" };
@@ -286,14 +325,14 @@ async function pollFor(file, a, { quiet = false } = {}) {
     } catch (err) {
       clearTimeout(timer);
       if (ac.signal.aborted) continue; // deadline reached: loop returns the timeout
-      if (/not found|no such session/i.test(err.message)) throw err;
+      if (/not found|no such session/i.test(err.message) || err.message === NOT_YOUR_FILE) throw err;
       if (bg) return serverGone;
       if (++failures > 5) throw err;
       process.stderr.write(`Lost the connection (${err.message}); reconnecting.\n`);
       await new Promise((r) => setTimeout(r, 1000 * failures));
       await ensureServer();
       // the session lives in the server's state dir; re-open it so the poll can register
-      await req({ method: "POST", path: "/cli/open" }, { file });
+      await openRequest({ file });
       ack = false;
     }
   }
@@ -301,13 +340,15 @@ async function pollFor(file, a, { quiet = false } = {}) {
 
 /** `done`: reports `results` for the delivery named by `lease` (a ticket string) and returns the server's answer. Shared by `done` and `reply`. */
 async function finishBatch(file, results, lease) {
+  const envHolder = process.env[`${PRODUCT.envPrefix}_HOLDER`];
+  if (!agentMayUse(envHolder, file)) throw new Error(NOT_YOUR_FILE);
   if (!(await healthy())) throw new Error(`the ${PRODUCT.name} server is not running`);
   const realFile = realOrSame(file);
   // the only credential is the ticket printed in the batch's `done` command; a delivery without it is refused, with no per-file fallback
   const ticket = parseTicket(lease);
-  const st = json((await req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(realFile)}` })).text);
+  const st = json((await req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(realFile)}${envHolder ? `&holder=${encodeURIComponent(envHolder)}` : ""}` })).text);
   if (!ticket && st.delivered_batch) throw new Error(`a batch is delivered for this file: pass --lease <ticket> (it is printed in the batch's done command; run \`${BIN} status <file> --ticket\` if you lost it, only the agent that polled gets it back)`);
-  const claim = ticket ? { holder: process.env[`${PRODUCT.envPrefix}_HOLDER`] || loadTicketRecord(ticket.batch_id)?.holder, lease_token: ticket.token, batch_id: ticket.batch_id } : {};
+  const claim = ticket ? { holder: envHolder || loadTicketRecord(ticket.batch_id)?.holder, lease_token: ticket.token, batch_id: ticket.batch_id } : envHolder ? { holder: envHolder } : {};
   const r = await req({ method: "POST", path: "/cli/done" }, { file, results, ...claim });
   const j = json(r.text);
   if (r.status !== 200) throw new Error(j.error || "done failed");
@@ -339,6 +380,7 @@ export function parseArgs(argv) {
     }
     else if (x === "--json" || x === "--verbose") a[x.slice(2)] = true; // doctor
     else if (x === "--remove") a.remove = true; // setup-rewriter
+    else if (x === "--check" || x === "--yes" || x === "--force") a[x.slice(2)] = true; // update
     else if (x === "--clean-old") a.cleanOld = true; // setup-rewriter, from install.sh: only removes what the older Granite download left
     else if (x === "--model" || x.startsWith("--model=")) a.model = x.includes("=") ? x.split("=")[1] : rest[++i]; // setup-rewriter
     else if (x === "--timeout" || x.startsWith("--timeout=")) {
@@ -355,7 +397,7 @@ export function parseArgs(argv) {
     else if (!a.file) a.file = x;
     else throw new Error(`unexpected argument ${x}`);
   }
-  if (["open", "poll", "status", "done", "shapes"].includes(cmd) && !a.file) throw new Error(`Usage: ${BIN} ${cmd} <file>`);
+  if (["open", "poll", "status", "done", "shapes", "utf8-copy"].includes(cmd) && !a.file) throw new Error(`Usage: ${BIN} ${cmd} <file>`);
   if (cmd === "done" && !a.results) throw new Error(`Usage: ${BIN} done <file> --results <results.json>`);
   return a;
 }
@@ -399,6 +441,31 @@ async function main() {
     await out(a.json ? JSON.stringify(r, null, 2) + "\n" : formatDoctor(r));
     process.exit(r.ok ? 0 : 1);
   }
+  if (argv[0] === "update") {
+    const a = parseArgs(argv);
+    if (a.file) throw new Error(`unexpected argument ${a.file}`);
+    // everything update needs is loaded before the installer runs: install.sh deletes the app folder this process runs from
+    const { updateCommand, runGetShDefault } = await import("./update.js");
+    const appRoot = path.resolve(here, "..");
+    const home = os.homedir();
+    const versionOf = (cmd, args) => {
+      const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "ignore"] });
+      return r.status === 0 ? r.stdout.trim().split("\n")[0] || null : null;
+    };
+    const code = await updateCommand(argv.slice(1), {
+      version: JSON.parse(fs.readFileSync(path.join(appRoot, "package.json"), "utf8")).version,
+      appRoot,
+      home,
+      env: process.env,
+      print: (line) => process.stdout.write(line + "\n"),
+      server: { healthy, openWork: async () => { const r = await req({ method: "GET", path: "/cli/open-work", timeout: 3000 }); return { status: r.status, body: json(r.text) }; } },
+      stop: stopServer,
+      runGetSh: (base) => runGetShDefault(base),
+      launcherVersion: (route, root) => (route === "npm" ? versionOf(process.execPath, [path.join(root, "src", "cli.js"), "--version"]) : versionOf(path.join(home, ".local", "bin", BIN), ["--version"])),
+      run: (cmd, args) => spawnSync(cmd, args, { stdio: ["ignore", "inherit", "inherit"] }).status ?? 1,
+    });
+    process.exit(code);
+  }
   if (argv[0] === "reply") {
     // JSON on STDOUT only (also for failures), so an agent parses one stream; the exit code says whether the batch was finished
     let r;
@@ -434,6 +501,12 @@ async function main() {
     if (path.extname(real).toLowerCase() !== ".pptx") throw new Error("shapes reads a .pptx file");
     return out(JSON.stringify({ file: path.basename(real), slides: listShapes(parseDeck(readDoc(real)), a.slide ?? null) }, null, 2) + "\n");
   }
+  if (a.cmd === "utf8-copy") {
+    const { writeUtf8Copy } = await import("./html-utf8.js");
+    const r = writeUtf8Copy(file);
+    if (!r.ok) throw new Error(r.reason);
+    return out(`Wrote a UTF-8 copy of ${a.file}:\n  ${r.path}\nThe file itself is not changed. Open the copy with:\n  ${BIN} open ${shellQuote(r.path)}\n`);
+  }
   if (a.cmd === "poll" && aud.person) {
     await out(personPollText(file));
     process.exit(2);
@@ -441,8 +514,13 @@ async function main() {
   if (a.cmd === "open") {
     await ensureServer();
     // a person at a terminal (not --no-agent): the server starts its background agent on the file
-    const r = await req({ method: "POST", path: "/cli/open" }, aud.offer ? { file, agent: "background" } : { file });
+    const r = await openRequest(aud.offer ? { file, agent: "background" } : { file });
     const j = json(r.text);
+    if (r.status !== 200 && j.code === "not_utf8" && /\.html?$/i.test(file)) {
+      // a page saved as windows-1252 or ISO-8859-1: the fixed sentence (R18) and the command that makes the copy it offers
+      const { copyable, openRefusal } = await import("./html-utf8.js");
+      if (copyable(fs.readFileSync(file))) throw new Error(openRefusal(BIN, file, shellQuote));
+    }
     if (r.status !== 200) throw new Error(j.error || "could not open that file");
     const realPath = fs.realpathSync(file);
     if (!a.noOpen) openBrowser(j.url);
@@ -452,8 +530,10 @@ async function main() {
   } else if (a.cmd === "poll") {
     return out(JSON.stringify(await pollFor(file, a), null, 2) + "\n");
   } else if (a.cmd === "status") {
+    const envHolder = process.env[`${PRODUCT.envPrefix}_HOLDER`];
+    if (!agentMayUse(envHolder, file)) throw new Error(NOT_YOUR_FILE); // the same words whether that file is open or not
     if (!(await healthy())) return out(JSON.stringify({ state: "no-server" }, null, 2) + "\n");
-    const r = await req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(file)}` });
+    const r = await req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(file)}${envHolder ? `&holder=${encodeURIComponent(envHolder)}` : ""}` });
     if (r.status !== 200) throw new Error(json(r.text).error || "no such session");
     const st = json(r.text);
     if (a.ticket) {
@@ -477,21 +557,7 @@ async function main() {
     if (a.summary) return out(JSON.stringify({ ok: !!j.ok, flags: (j.flags || []).map((f) => ({ code: f.code, severity: f.severity })), ...(j.checks?.notice ? { checks_notice: j.checks.notice } : {}) }) + "\n");
     return out(JSON.stringify(j, null, 2) + "\n");
   } else if (a.cmd === "stop") {
-    if (await healthy()) {
-      const pid = json((await req({ method: "GET", path: "/health", timeout: 1500 }).catch(() => ({ text: "" }))).text).pid;
-      await req({ method: "POST", path: "/cli/stop" }, {});
-      // the server answers first and exits a moment later: "stopped" is printed only once its process is gone (waits at most 5 s)
-      const gone = () => {
-        try {
-          process.kill(pid, 0);
-          return false;
-        } catch {
-          return true;
-        }
-      };
-      for (let i = 0; i < 100 && Number.isInteger(pid) && !gone(); i++) await new Promise((r) => setTimeout(r, 50));
-    }
-    await removeStaleSocket(); // a socket file nothing answers on is no use to anyone, and `doctor` would keep reporting it
+    await stopServer();
     return out("stopped\n");
   } else throw new Error(`unknown command ${a.cmd}\n${HELP}`);
 }

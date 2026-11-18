@@ -275,3 +275,25 @@ test("a lease that expires after the agent wrote keeps that run Revert-able; the
   S.tick();
   assert.equal(u.activity.filter((x) => x.kind === "agent").length, 0);
 });
+
+test("round 8: every path on the server's thread that makes or resolves anchors spends inside a request budget (Send, a comment queued during a run, done, resolve)", async () => {
+  const { watchBudget } = await import("../src/text.js");
+  const outside = [];
+  let inside = 0;
+  watchBudget((n, _ok, out) => (out ? outside.push(new Error().stack.split("\n").slice(2, 6).join(" | ")) : inside++));
+  try {
+    const S = new Sessions();
+    const f = write("budget-entry.docx");
+    const s = S.open(f);
+    const poll = S.poll(s.key, { holder: "A", ack: true });
+    S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1), { id: "c3", kind: "text", text: "word", anchor: { location: { blockPath: [2], start: 0, end: 9 }, quote: "Paragraph", prefix: "", suffix: " 3" } }], note: "n" }); // Send
+    await poll.promise;
+    S.send(s.key, { baseSha: s.baseSha, comments: [comment("c1", 1), comment("c2", 4, "later")], note: "" }); // queued during the run
+    S.done(s.key, { summary: "s", results: [{ comment_id: "c1", status: "done" }] }); // re-anchors the queued comment
+    S.resolveAll(s.key);
+    assert.deepEqual(outside, [], "spends outside any budget");
+    assert.ok(inside > 0, "the probe sees the spends (a check that can fail)");
+  } finally {
+    watchBudget(null);
+  }
+});

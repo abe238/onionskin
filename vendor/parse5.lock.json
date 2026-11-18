@@ -1,0 +1,23 @@
+{
+  "parse5": {
+    "version": "8.1.1",
+    "license": "MIT",
+    "tarball": "https://registry.npmjs.org/parse5/-/parse5-8.1.1.tgz",
+    "integrity": "sha512-EcR/6WDcU7b2N3vQSxKALCk9lXGtUMQxXio008OEMBE0kavu/7JLfBEeFPzi43nMqVDSbEn3QCK+BMCc9zO//w=="
+  },
+  "entities": {
+    "version": "9.0.0",
+    "license": "BSD-2-Clause",
+    "tarball": "https://registry.npmjs.org/entities/-/entities-9.0.0.tgz",
+    "integrity": "sha512-oJFNDJg3kTPwAD1cNn2+WmUq4wFoo09npc3Ydf1D7ED4smRiWrsKnaLxykrTWgyGEcusc87P5dxlAleol9kpkg=="
+  },
+  "bundler": "rolldown 1.2.18, platform neutral, tree-shaken, one ESM chunk",
+  "banner": "// parse5 8.1.1 (MIT) + entities 9.0.0 (BSD-2-Clause), bundled for Onionskin spike S2.\n",
+  "entry": "parse5.mjs",
+  "bytes": 278659,
+  "exports": ["ErrorCodes", "InsertionMode", "Parser", "Token", "Tokenizer", "TokenizerMode", "defaultTreeAdapter", "foreignContent", "html", "parse", "parseFragment", "serialize", "serializeOuter"],
+  "files": {
+    "parse5.mjs": "f46ee02cebff7a0e908ee6870d7709fb9f45ee4770e15638ec4f6775a9d3d781",
+    "LICENSE.txt": "6bd3288c229db1b25fdd2723828dffea6229a56c70a77fa0135ce3a513913d74"
+  }
+}

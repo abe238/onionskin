@@ -3,6 +3,7 @@ import { Icon } from "./Icons.jsx";
 import { MOD } from "./keys.js";
 import { Stamps } from "./Stamps.jsx";
 import { Suggestion } from "./Suggestion.jsx";
+import { COMMENT_TEXT_MAX } from "../../src/retain.js"; // the comment it makes takes no more
 
 /**
  * The Quick ask composer: a small glass box at the selection. Cmd/Ctrl+Enter sends the comment and the batch in one gesture, Enter adds a line
@@ -56,7 +57,7 @@ export function QuickAsk({ q, at, onText, onSubmit, onClose, stamps }) {
       ) : (
         stamps && <Stamps own={stamps.own} save={stamps.save} disabled={!!q.blocked} onStamp={sug?.onStamp || onSubmit} suggest={sug} />
       )}
-      <textarea ref={ta} rows={2} value={q.text} disabled={!!q.blocked} onChange={(e) => onText(e.target.value)} placeholder="What should change here?" aria-label="What should change here?" data-testid="quick-ask-text" />
+      <textarea ref={ta} rows={2} value={q.text} disabled={!!q.blocked} maxLength={COMMENT_TEXT_MAX} onChange={(e) => onText(e.target.value)} placeholder="What should change here?" aria-label="What should change here?" data-testid="quick-ask-text" />
       <p className="qa-hint" id="qa-hint" role="status" data-testid="quick-ask-hint" data-tone={q.blocked || q.nudge ? "warn" : "info"}>
         {q.blocked ? (
           <>

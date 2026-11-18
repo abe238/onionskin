@@ -20,6 +20,7 @@ const chars = (s) => [...s].length;
  */
 export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
   const xlsx = session.format === "xlsx";
+  const html = session.format === "html"; // PLAN-html D9: an HTML page is never a writing sample, and the choice is not shown
   const [openFile, setOpenFile] = useState(false);
   const [edits, setEdits] = useState(false);
   const [comments, setComments] = useState(true);
@@ -59,7 +60,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
     try {
       await api(`/api/voice/build?s=${sid}`, {
         method: "POST",
-        body: { open_file: openFile && !xlsx, edits: edits && examples > 0, comments, improve: improve && saved, texts: hasPaste ? [paste] : [], files: files.map((f) => ({ format: f.format, bytesB64: f.bytesB64 })) },
+        body: { open_file: openFile && !xlsx && !html, edits: edits && examples > 0, comments, improve: improve && saved, texts: hasPaste ? [paste] : [], files: files.map((f) => ({ format: f.format, bytesB64: f.bytesB64 })) },
       });
       onSent();
     } catch (e) {
@@ -72,7 +73,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
     <VoiceDialog title="Build my voice guide" testid="voice-build" onClose={onClose}>
       <p>The agent reads samples of your writing and drafts a guide to how you write. You read and edit every word before anything is saved.</p>
       <div className="vb-body">
-        <div className="vb-group">
+        {!html && <div className="vb-group">
           <label className="vc-check">
             <input type="checkbox" checked={openFile && !xlsx} disabled={xlsx} data-testid="voice-build-open-file" onChange={(e) => setOpenFile(e.target.checked)} />
             <span>This file is my own writing</span>
@@ -80,7 +81,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
           <p className="vc-hint" data-testid="voice-build-open-help">
             {xlsx ? "Excel files are not used as writing samples." : "Only tick this if you wrote it. Text the agent added here is left out. Uses the last saved version of this file."}
           </p>
-        </div>
+        </div>}
         <div className="vb-group">
           <h3 className="vb-h">Add more of my writing</h3>
           <div className="vb-row">

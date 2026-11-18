@@ -196,3 +196,79 @@ describe("formatting and moves while the agent works (DOCX)", () => {
     assert.deepEqual(br.log.errors, []);
   });
 });
+
+// A merge that runs out of time (here: the merge worker is held for 20 s and the limit is 1 s): nothing is written, the error banner says
+// so with the copy's name, Download my edits is offered, and the typed edit is still in the page. The server answers throughout.
+describe("a merge past its time limit (DOCX)", () => {
+  let w, br;
+  before(async () => {
+    w = makeWorld({ ONIONSKIN_MERGE_TIMEOUT_MS: "1000", ONIONSKIN_TEST_MERGE_DELAY_MS: "20000" });
+    br = await launch();
+  });
+  after(async () => {
+    await br?.close();
+    await w?.cleanup();
+  });
+
+  test("the banner says nothing was written and where the copy is, offers the download, and the typed edit stays in the page", async () => {
+    const file = w.doc("long.docx");
+    const poll = w.spawnCli(["poll", file]);
+    const page = await br.page();
+    await page.goto(await w.open(file));
+    await waitDoc(page);
+    await page.locator(q("banner-listening")).waitFor({ timeout: 20000 });
+    await page.locator(q("overall-note")).fill("Please update.");
+    await page.locator(q("send")).click();
+    const res = await Promise.race([poll.done, new Promise((r) => setTimeout(() => r(null), 25000))]);
+    assert.ok(res && res.code === 0, res?.stderr || "poll timed out");
+    await page.locator(q("banner-working")).waitFor();
+    // the person types while the agent works
+    const p = await scrollToPara(page, "Paragraph 030:", 0.1);
+    const b = await boxOf(p);
+    await page.mouse.click(b.x + b.width - 40, b.y + b.height - 10);
+    await page.keyboard.press(LINE_END);
+    await page.keyboard.type(" TYPED-WHILE-WORKING");
+    agentEdit([file, "replace", "regional leads", "regional heads", "Paragraph 020:"]);
+    const results = w.doc("results.json");
+    fs.writeFileSync(results, JSON.stringify({ summary: "Updated.", results: [] }));
+    const agentDisk = fs.readFileSync(file);
+    const done = await w.cli(["done", file, "--results", results]);
+    assert.equal(done.code, 0, done.stderr);
+    const banner = page.locator(q("banner-error"));
+    await banner.waitFor({ timeout: 30000 });
+    assert.match(await banner.textContent(), /could not be merged into its version \(it took longer than 1 second; nothing was written, and a copy of your version was saved as long \(.+\)\.docx next to the file\)\. Your edits are still in this page/);
+    assert.equal(await page.locator(q("error-download")).count(), 1, "Download my edits is offered");
+    assert.ok(await page.locator(".de-p", { hasText: "TYPED-WHILE-WORKING" }).count(), "the typed edit is still in the page");
+    assert.deepEqual(fs.readFileSync(file), agentDisk, "the file is the agent's version, untouched");
+    const copies = fs.readdirSync(w.docs).filter((n) => /^long \(.+\)\.docx$/.test(n));
+    assert.equal(copies.length, 1, `one copy next to the file (${fs.readdirSync(w.docs).join(", ")})`);
+    const { readDocxParagraphs } = await srcModule("docx.js");
+    assert.ok(readDocxParagraphs(fs.readFileSync(`${w.docs}/${copies[0]}`)).some((x) => x.text.includes("TYPED-WHILE-WORKING")), "the copy holds the typed edit");
+    // the server kept answering while the worker was held
+    const st = await w.cli(["status", file]);
+    assert.equal(st.code, 0, st.stderr);
+    await page.close();
+  });
+
+  test("the page's saved file keeps Word's paragraph ids, which the merge places the person's edits by", async () => {
+    const { docxBytes } = await import("../test/helpers/zipbuild.js");
+    const { readDocxParagraphs } = await srcModule("docx.js");
+    const file = `${w.docs}/ids.docx`;
+    const texts = Array.from({ length: 6 }, (_, i) => `Paragraph ${String(i + 1).padStart(3, "0")}: a sentence long enough to type into.`);
+    fs.writeFileSync(file, docxBytes(texts.map((text, i) => ({ text, paraId: (0x1000 + i).toString(16).toUpperCase().padStart(8, "0") }))));
+    const page = await br.page();
+    await page.goto(await w.open(file));
+    await waitDoc(page);
+    const p = page.locator(".de-p", { hasText: "Paragraph 003:" }).first();
+    const b = await boxOf(p);
+    await page.mouse.click(b.x + b.width - 40, b.y + b.height - 10);
+    await page.keyboard.press(LINE_END);
+    await page.keyboard.type(" TYPED");
+    await page.locator(q("overall-note")).fill("Look at this.");
+    await page.locator(q("send")).click();
+    await until(() => readDocxParagraphs(fs.readFileSync(file)).some((x) => x.text.includes("TYPED")), "the page's version to be written at Send");
+    const ids = readDocxParagraphs(fs.readFileSync(file)).map((x) => [x.paraId, x.text.includes("TYPED")]);
+    assert.deepEqual(ids, texts.map((_, i) => [(0x1000 + i).toString(16).toUpperCase().padStart(8, "0"), i === 2]));
+    await page.close();
+  });
+});

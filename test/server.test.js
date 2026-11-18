@@ -336,3 +336,33 @@ test("background settings routes: token, Origin and JSON are required; the image
   assert.equal((await get("/api/background")).status, 404, "nothing was stored");
   await post("/api/settings", { background: { kind: "preset", name: "paper", strength: 60, blur: true } });
 });
+
+test("GET /cli/open-work counts a session whose page is open, and one whose tab went away lately, until Close session", async () => {
+  const work = async () => (await viaSocket("GET", "/cli/open-work")).json;
+  const before = await work(); // the first file's page spoke in the tests above
+  const doc2 = path.join(root, "open-work.docx");
+  fs.writeFileSync(doc2, docxBytes(["Another file."]));
+  const o = await viaSocket("POST", "/cli/open", { file: doc2 });
+  const opened = await work();
+  assert.deepEqual([opened.sessions, opened.open_sessions], [before.sessions + 1, before.open_sessions], `opened, no page yet: ${JSON.stringify(opened)}`);
+  const base0 = before.open_sessions;
+  // the page's event stream (the token in the query, as EventSource sends it)
+  const stream = await new Promise((resolve, reject) => {
+    const r = http.request({ ...base(), path: `/api/events?s=${o.json.key}&tab=tabOPENWORK&t=${encodeURIComponent(token)}`, method: "GET", headers: { cookie, "sec-fetch-site": "same-origin" } }, (res) => {
+      assert.equal(res.statusCode, 200);
+      res.once("data", () => resolve({ r, res }));
+    });
+    r.on("error", reject);
+    r.end();
+  });
+  assert.equal((await work()).open_sessions, base0 + 1, "a tab is open");
+  const closed = new Promise((resolve) => stream.res.on("close", resolve));
+  stream.r.destroy();
+  await closed;
+  await new Promise((resolve) => setTimeout(resolve, 100)); // the server sees the stream end
+  assert.equal((await work()).open_sessions, base0 + 1, "the tab went away a moment ago: it may come back with unsent edits");
+  // Close session in the page
+  const close = await req({ path: "/api/close?s=" + o.json.key, method: "POST", headers: { cookie, "x-onionskin-token": token, origin: `http://127.0.0.1:${srv.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-onionskin-tab": "tabOPENWORK" } }, "{}");
+  assert.equal(close.status, 200, close.text);
+  assert.equal((await work()).open_sessions, base0, "a closed session holds nothing back");
+});

@@ -7,8 +7,8 @@
 // system reused is never signaled. A server that starts stops the groups its crashed predecessor left (reapOrphans).
 //
 // Lifecycle: started by an open from a person's terminal, by a Send that nobody took (at once for such a file, after a 20 s grace for any
-// other), or by the page's Start button. Stopped on Close session, server stop, 20 minutes without a tab, or when an agent of the person's
-// own polls the file (it supersedes the background one). A crash hands the batch back at once (Sessions.releaseAgent) and restarts with
+// other and for any file open in Terminal), or by the page's Start button. Stopped on Close session, server stop, 20 minutes without a tab,
+// or when an agent of the person's own polls the file (it supersedes the background one). A crash hands the batch back at once (Sessions.releaseAgent) and restarts with
 // backoff 2, 4, 8, 16, 32 s, resuming the conversation; at most 5 starts per document per rolling hour. A sign-in, usage-limit or refusal
 // failure never restarts by itself. At most 3 agents run at once (a ceiling, not a design limit: raise it when someone asks); a 4th waits.
 //
@@ -23,7 +23,7 @@ import { env as cfg } from "./constants.js";
 import { stateDir, sub, writeStateFile } from "./paths.js";
 import * as settings from "./settings.js";
 import { DEFAULT_MODEL, POLL_TIMEOUT, agentsDisabled, bgHolder, buildArgv, cleanEnv, findClaude, findCodex, isBgHolder, preflight } from "./agent-detect.js";
-import { backgroundPrompt, readSkill, refDir } from "./agent-prompt.js";
+import { backgroundPrompt, readSkill, refDir, resumePrompt } from "./agent-prompt.js";
 
 const cliJs = path.join(path.dirname(fileURLToPath(import.meta.url)), "cli.js");
 
@@ -444,7 +444,12 @@ export function agentRunner(sessions, deps = {}) {
   // ---- what the server tells it ------------------------------------------------------------------------------
   sessions.on("stranded", (s) => {
     const e = entry(s.key);
-    if (e.state === "handover") e.state = "none"; // the Terminal session ended: the background agent may start again
+    // open in Terminal: its agent may still be starting (Claude Code, then its first poll) or be between two polls, so a background agent
+    // started now would run beside it. The grace first; if the Terminal agent never polls (its window was closed), tick() starts one.
+    if (e.state === "handover") {
+      if (!e.strandedAt) e.strandedAt = now();
+      return;
+    }
     if (s.openedFor === "background" || e.resumeNext) return ensure(s.key); // after a Stop, our own agent was the one working: no grace
     if (!e.strandedAt) e.strandedAt = now(); // someone's own agent may be between two polls: wait the grace first (tick)
   });
@@ -514,6 +519,7 @@ export function agentRunner(sessions, deps = {}) {
         if (s.pollers.length || sessions.state(s) !== "stranded") e.strandedAt = 0;
         else if (now() - e.strandedAt >= L.graceMs) {
           e.strandedAt = 0;
+          if (e.state === "handover") e.state = "none"; // the Terminal agent did not poll in time: the background agent may start again
           ensure(e.key);
         }
       }
@@ -576,12 +582,17 @@ export function agentRunner(sessions, deps = {}) {
     const resume = !!(e.sessionId && e.resumable);
     if (!resume) e.sessionId = crypto.randomUUID();
     const model = settings.readSettings?.().agent?.model || DEFAULT_MODEL;
-    const argv = buildArgv({ skill: readSkill(), model, sessionId: e.sessionId, resume, workDir, refDir: refDir(), print: false });
+    // its first message: the background prompt for a new conversation, a short "go on" for a resumed one (it already holds that prompt)
+    const prompt = resume ? resumePrompt({ file: s.file, timeout: POLL_TIMEOUT }) : backgroundPrompt({ file: s.file, workDir, timeout: POLL_TIMEOUT });
+    const argv = buildArgv({ prompt, skill: readSkill(), model, sessionId: e.sessionId, resume, workDir, refDir: refDir(), print: false });
     const q = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`;
     const f = path.join(workDir, "open-agent.command");
     writeStateFile(f, `#!/bin/sh\ncd ${q(workDir)} || exit 1\nexec /usr/bin/env -i ${Object.entries(childEnv).map(([k, v]) => q(`${k}=${v}`)).join(" ")} ${q(bin)} ${argv.map(q).join(" ")}\n`);
     fs.chmodSync(f, 0o700);
     (deps.open || openInTerminal)(f);
+    // a batch already waiting (the stopped agent handed it back): the Terminal agent takes it with its first poll; the grace keeps the
+    // fallback for a Terminal that never polls (tick)
+    if (sessions.state(s) === "stranded" && !s.pollers.length) e.strandedAt = now();
     notify(s.key);
   }
 

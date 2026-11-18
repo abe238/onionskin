@@ -95,6 +95,12 @@ const bad = await exec("/bin/sh", [path.join(root, "scripts", "get.sh")], { env:
 say(bad.out);
 check("wrong checksum: exit 1 and HOME untouched", bad.status === 1 && fs.readdirSync(H1b).length === 0, bad.out);
 fs.writeFileSync(path.join(rel, "onionskin.zip.sha256"), `${sha}  ${path.basename(zip)}\n`);
+// a URL whose user name hides another host, and a look-alike host: refused before anything is downloaded
+for (const u of [`${base}@evil.invalid/onionskin.zip`, `http://127.0.0.1.evil.invalid:${server.address().port}/onionskin.zip`]) {
+  const H1c = fs.mkdtempSync(path.join(tmp, "home1c-"));
+  const r = await exec("/bin/sh", [path.join(root, "scripts", "get.sh")], { env: envFor(H1c, { ONIONSKIN_ZIP_URL: u }) });
+  check(`refused URL ${u.replace(String(server.address().port), "<port>")}: exit 1, nothing downloaded, HOME untouched`, r.status === 1 && /refusing the URL/.test(r.out) && fs.readdirSync(H1c).length === 0, r.out);
+}
 // update path: run again
 const again = await exec("/bin/sh", [path.join(root, "scripts", "get.sh"), "--no-checker"], { env: envFor(H1, { ONIONSKIN_ZIP_URL: `${base}/onionskin.zip` }) });
 check("running it again (update path) exits 0", again.status === 0, again.out);

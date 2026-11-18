@@ -1,5 +1,105 @@
 # Changelog
 
+## 0.0.5 (2026-11-17)
+
+### Added
+- HTML files. Onionskin now opens `.html` and `.htm` pages: `onionskin page.html`, or "open page.html in Onionskin" in your agent. Select text or click a part of the page to comment, drop pins, fix text directly and press Send. The agent changes the real file, History shows what changed, and Revert undoes a run. Your text fixes and the agent's edits made with Onionskin's ops leave everything outside them byte for byte as it was.
+  - The view is a still picture of the page. Scripts never run in it, and nothing loads from the internet. Pictures and styles in the page's folder (or up to 3 folders below) are shown.
+  - You edit text; structure changes go to the agent as comments. The view is read-only while the agent works.
+  - Onionskin never lets an agent add code that runs in a browser (scripts, event handlers, frames, forms, anything loaded from the internet). Such a change is refused whole: "The agent tried to add code that runs in a browser, so nothing was written." Changed link and picture targets are listed in History.
+  - Limits: 10 MB and 200,000 elements per page, UTF-8 only. `.mhtml`, `.webarchive`, `.xhtml` and `.svg` are refused with a sentence that says what to do.
+  - The full picture is in docs/GUIDE.md, "HTML files".
+
+### Fixed
+- A crafted file inside the size limits could still hold Onionskin for seconds, and every other open document waited (the three cases listed under Known issues in 0.0.4). Placing comments and reading the document for a Send (also a comment sent while the agent works), the end of a run, Revert, placing your comments after a reload, and quick fixes now run in a separate worker with a time limit. Other documents no longer wait. When that work does not finish in time, every comment still goes to the agent, with a rougher place: the cell address in Excel, or "unresolved location" with your selected words in Word and PowerPoint.
+  - Using a quick fix on a sentence repeated thousands of times in its paragraph took 8 seconds before saying it could not be used there. It now says so at once.
+  - Excel: comments on cells with a very long custom number format could make the saved session hundreds of MB (323 MB for one Send of 500 comments). A comment now keeps the first 100 characters of each number format.
+  - A draft save of 50 comments, each quoting a paragraph of 7.9 million characters, wrote a 395 MB session. It now writes about 1 MB.
+- Stored comment data has size caps. A page could store large amounts of extra data with a comment's place, a pin, a typed edit or the view. Only the fields Onionskin reads are kept now, each to a fixed size, and very long selections, comment words, typed edits and view states are cut where they are stored.
+- Sending twice before the agent picked up the first batch lost the first batch's note. The agent now gets both notes, in order, with the comments of both.
+- Words you type are no longer lost or replaced by older words:
+  - Words typed while a Send is on its way are kept. The comments and note that Send carries cannot be changed until it is through; you can still add comments, and they are saved once it is through. If the Send fails, everything it carried is an editable draft again. A page reloaded during a Send opens once it is through, so the note is not sent twice.
+  - A note typed just after a Send and then Take back pressed at once lost the new words. Take back now saves what you typed first and puts the returned note before it.
+  - When an agent stopped answering with a note queued behind its batch, the note came back to the box but the page's next save emptied it. It now stays.
+  - A save made as you switched tabs right after pressing Send could make that Send go out without its note. Fixed.
+  - Words typed in one window and not saved yet are handed to the other window when it takes over with "Edit here instead". If that cannot reach Onionskin, they stay on the first window's page with Copy my comments.
+  - Closing a page whose last words were not confirmed as saved now asks first, also while a save is still on its way.
+  - A Send whose answer was lost while the connection was down unlocked its comments, and a correction typed then was replaced by the sent words. The comments now stay locked until Onionskin answers, and words typed into a comment that turns out to be sent are kept as a new comment. A Send whose answer never arrives no longer keeps its comments locked once Onionskin shows it went through, and no request waits forever.
+  - Notes handed between windows or given back by the server are no longer merged in twice.
+- Limits that used to cut without a word now refuse with a message, and nothing is saved in part:
+  - A refused Send, draft save or quick fix (too many comments, a note too long, a file too large) changes nothing, and your comments stay in the page.
+  - A 501st comment on a file says "This file has 500 comments waiting; send or delete some before adding more." Before, comments past 500 were dropped when saved.
+  - The overall note box takes up to 20,000 characters and a comment box 5,000. Notes that add up to more than 20,000 characters for one batch are refused with a message instead of being cut, and the agent now gets a waiting note whole (it was cut at 5,000).
+  - A draft larger than 32 MB is refused with a message that says what to do. Before, the connection was cut and the page tried again forever.
+- A pin's position could be saved as empty. It is now always a number within the place it was dropped on.
+- Excel: in a Send with dozens of large ranges of longer labels (1,000 x 20 cells of 30 characters or more), every range now keeps its check, so an edit deep in such a range shows as changed. Before, some did not, and the edit was missed.
+
+### Changed
+- A comment on its way to the agent cannot be deleted (it came back after a reload). Use Take back to change it.
+- Take back, Stop, Revert and Close do not run while a Send is on its way: the page says "Wait a moment: what you just pressed is still on its way. Then try again." They first save what you typed, and while one of them is on its way the note cannot be changed and a Send does not go out.
+- A Send that takes more than a moment shows "Sending..." on the Send button and on the cards it carries. A Send whose answer was lost shows "Checking whether this was sent..." until Onionskin answers.
+- A selection of more than 20,000 characters becomes a comment on its whole paragraph or shape.
+- A Send whose comments, note and typed edits together are larger than 32 MB is refused with a message. Nothing is sent, and your comments are kept.
+
+### Known issues
+- With three or more windows open on one file and notes handed between them, a sentence can appear twice in the note box (5 of 300,000 random test sequences). Nothing is lost, and the repeat is visible in the box before you send.
+- HTML files: a whole-file edit by an agent can move an existing script or event handler to the next element of the same kind in the same place; it cannot add or change one. On a very large element (more than 400 text parts), the first keystroke right after a click can be missed.
+- HTML files, not in this version: sites of several files (a linked stylesheet or script is never edited), pages built by scripts (they show "This page is built by scripts, which Onionskin never runs, so there is nothing to show."), inline SVG and MathML (shown as placeholders), and Review first, stamps, quick fixes and the tracked-changes copy. Chrome is the tested browser; Safari has not been tested with HTML files.
+- On very long Word files that carry no paragraph ids (some exports from other editors), a comment whose paragraph moved and whose surrounding words were also edited can show as "moved or removed" more often than in 0.0.3. The comment is kept.
+- HTML: if a page with unsent text fixes is changed outside Onionskin into an encoding Onionskin refuses, the unsent fixes are dropped when the refusal is shown. Send your fixes before changing a page's encoding in another program.
+
+## 0.0.4 (2026-11-17)
+
+### Security
+- In 0.0.3 and older, a background agent that Onionskin started for one document could read excerpts of another document open in Onionskin at the same time. With a wrong or made-up ticket, `onionskin reply` and `onionskin status` on the other file printed excerpts of its text, its comment ids, its batch id and its state, because those diagnostics ran before the lease check. The agent could not write to the other document. Fixed: every agent command is now bound to the file its agent was started for and refuses any other file before it reads anything of it, and `reply` and `apply` have the server check the ticket before they read the file. Found by an outside review.
+- In 0.0.3 and older, a small crafted Office file could freeze Onionskin for many seconds: a Word file of 1,666 bytes stopped it for 10 to 20 seconds, and every other open document waited. Other crafted files did the same through ordinary use after they were opened (a Review, a Send, a merge, placing comments). Fixed:
+  - XML is read in time linear in its size. A closing tag with nothing open is refused, and names such as `&toString;` are no longer read as entities.
+  - A file past the size limits (see Changed) is refused whole, with the reason, and never read in part. Sending the same bytes again is refused again.
+  - Opening a file and merging your edits run in a worker thread with a time and a memory limit (60 seconds to open, two minutes to merge), so a slow file no longer holds up other documents. Quick changes run in a worker too.
+  - Placing comments, finding comments whose text moved and searching very long text run under a work budget per request that counts every character read, in any script. Lookups that scanned the whole file once per cell, shape or comment now use an index built once.
+
+Anyone on 0.0.3 or older should update.
+
+- The installer's release URL rule could be fooled by an address with a user name before the host, such as `http://127.0.0.1:80@evil.example/release`. `get.sh` and `onionskin update` now read release URLs by one strict rule, and downloads use plain http only for 127.0.0.1.
+
+### Added
+- `onionskin update` brings your copy to the latest release, the way it was installed. A Terminal or zip install runs the release's `get.sh` with the same SHA-256 check as the install, and prints the old and new version. An npm copy prints the two npm commands (`--yes` runs them). A source checkout is told to use git. `onionskin update --check` shows this version and the latest one and changes nothing.
+  - It makes one request, for a small `version.txt` in the release, and sends nothing about you or your files. Onionskin never checks for updates by itself, and `doctor` does not use the network.
+  - While a file is open in a browser tab (or its tab was open in the last 20 minutes), or has draft comments or a batch the agent has not finished, it refuses and says what to do, because the update restarts Onionskin and edits typed in an open tab and not sent would be lost. `--force` updates anyway.
+  - It keeps snapshots and settings, needs no sudo and asks nothing.
+  - 0.0.3 has no `onionskin update`. To get 0.0.4 from 0.0.3, install again as README.md, "Stay up to date", describes.
+
+### Changed
+- Size limits. Onionskin now refuses a file it could not read quickly, and says the number and what to do. The headline limits: Word 50,000 paragraphs (about 1,600 pages), Excel 1,000,000 cells, PowerPoint 50,000 shapes, any file 200 MB. The full table, with the reason for each limit, is in docs/GUIDE.md, "Size limits". The Word limit is lower than what 0.0.3 would open: 0.0.3 opened Word files of 200,000 paragraphs, the largest tried, though such a file kept everything else waiting for seconds. A file that grows past a limit after it was opened is refused at Send, and nothing is written.
+- After every merge of what you typed while the agent worked, Onionskin checks the result against the whole file: text, headers, footers, footnotes, comments, pictures, styles, lists, tables, a shape's position, size and order, a cell's formatting, merged cells and column widths. A change of yours the merge cannot carry is handed back in plain words ("You changed the header. That change could not be merged; it is still in your copy."), with your version saved next to the file. When it cannot account for every one of your edits, it refuses the merge: it writes nothing, keeps your edits in the page and saves a copy of your version. A merge that runs past its time limit does the same.
+- Some formatting you set while the agent works is not merged: in Excel, bold, fill, number format and alignment; in PowerPoint, bold, size and color; in Word, hyperlinks. Each is handed back once, with a copy of your version. In 0.0.3 some of these changes were dropped without a word.
+- When placing or finding a comment would cost more than one request's budget, the comment still goes to the agent with its place and context, and the agent is asked for a full change instead of a one-word answer. A moved comment that cannot be found within the budget shows as moved or removed. The comment is kept.
+- At most two files are opened at a time. Others wait their turn for up to a minute, or are told "Onionskin is busy opening other files". `onionskin open` gives up after 150 seconds with a plain message.
+
+### Fixed
+- A merge could write your edit into the wrong paragraph of a Word file, when the agent rewrote the paragraph you edited and gave its old text to another paragraph. Your edit now goes only into the paragraph with the same paragraph id, follows it if the agent moved it, and is handed back with a Copy button if the agent changed, split, merged or removed it.
+- A merge could drop your edit without a word: when your new text happened to appear in another paragraph of the agent's version; when you retyped a paragraph to read like the next one and also edited the next one; when you moved a paragraph and edited it (the move was lost); and for a line break, tab or extra space you typed, or new formatting on text you added. Each is now carried or handed back.
+- More merge fixes: a new paragraph next to one the agent rewrote no longer lands on the wrong side of it; a table row you deleted no longer comes back as a row of empty cells that Word reports as damaged; and changes such as the reading (furigana) of a Japanese name in Excel, a shape moved into another group or a sheet made very hidden are handed back instead of dropped.
+- A word made bold in another program (bold for Latin text only, or written as `w:val="true"`) no longer makes an ordinary merge fail.
+- Two Word paragraph styles both marked as the default, reversed by you while the agent edited elsewhere, were merged as if nothing had changed. Their order is now compared.
+- After more than 2,000 edits in a workbook, a merge no longer relies on the page's list of them, which was cut there. It writes nothing instead.
+- Replace with match case off could change the wrong characters in text with a letter that gets longer in lowercase, such as the Turkish İ: replacing "a" with "Z" in "İ ab" also removed the "b". Matches are now found and replaced exactly where they are, in Word, Excel and PowerPoint.
+- Open in Terminal: the agent in the Terminal window now starts listening on your file right away, as the page says, instead of waiting at its prompt while a Send started a second, background agent. The page also says to choose Yes if Claude Code asks whether you trust the folder.
+- Placing a comment again on a selection of repeated text that started partway into a repeat (two letters of "aaaaaa", from the second) froze Onionskin for good. Fixed.
+- A Word paragraph or a slide's text of one letter followed by millions of accent marks made Send, History and the tracked-changes copy fail with "Maximum call stack size exceeded". Such text is now read like any other.
+- On Node 26, a background worker stopped at its time limit (the checks at the end of a run, History, the tracked-changes copy) could take the whole server down. Every worker now loads its code before it can be stopped.
+- Excel: of 50 comments on large ranges in one Send, the last could go out without the check of its whole text, so a later edit under it was not flagged as changed. Checking a range now costs about a quarter of what it did, and all 50 keep the check for ranges of ordinary cells. See Known issues for ranges of long text.
+- A paragraph handed back cut at 2,000 characters now always keeps a copy of your version.
+
+### Known issues
+- A crafted file can still hold Onionskin for a few seconds in three cases. No data is lost and no document is exposed:
+  - using a quick-fix suggestion on about 3 million characters of repeated text: 8 to 9 seconds;
+  - 500 comments on cells with a very long custom number format: 2.6 to 4.5 seconds, and a session file of hundreds of MB;
+  - saving 50 draft comments that each quote a whole paragraph of millions of characters: 1.3 to 1.4 seconds, and about 400 MB.
+  A structural fix for this group is planned for 0.0.5.
+- On very long Word files that carry no paragraph ids (some exports from other editors), a comment whose paragraph moved and whose surrounding words were also edited can show as "moved or removed" more often than in 0.0.3. The comment is kept.
+- In a Send with dozens of very large Excel ranges of long text cells, a range can lose its "changed" tag for an edit deep in the range.
+
 ## 0.0.3 (2026-11-15)
 
 ### Added

@@ -49,6 +49,8 @@ function verify() {
   console.log(`vendor/engine OK (${Object.keys(now).length} files, engine ${lock.engineCommit.slice(0, 10)})`);
   // the Node build used by `apply` is locked in the same file ("node" section) and must be at the same engine commit
   execFileSync(process.execPath, [path.join(root, "scripts", "build-engine-node.mjs"), "--verify"], { stdio: "inherit" });
+  // the HTML parser (vendor/parse5) has its own lock file, vendor/parse5.lock.json
+  execFileSync(process.execPath, [path.join(root, "scripts", "vendor-parse5.mjs"), "--verify"], { stdio: "inherit" });
 }
 
 if (process.argv.includes("--verify")) {

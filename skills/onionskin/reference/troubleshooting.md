@@ -60,6 +60,37 @@ LibreOffice (a conversion check) is a separate optional install; do not raise it
 
 The file is not a package of that type (wrong extension, truncated, or a different format saved under that name). Tell the user; do not try to repair it.
 
+## An HTML page will not open
+
+Tell the user the sentence Onionskin printed; do not convert or repair the file yourself.
+
+- "Onionskin cannot open this kind of saved page; in Chrome choose Save As, Webpage, Complete." (`.mhtml`, `.mht`, `.webarchive`), "Onionskin cannot open .xhtml pages; save the page as .html and open that.", "Onionskin cannot open .svg pictures; it opens .html and .htm pages.": these kinds are refused by design.
+- "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." (a page that declares windows-1252, ISO-8859-1 or US-ASCII; `onionskin open` also prints the command `onionskin utf8-copy <file>`, which writes `<name>.utf8.html` next to the page, only if that name is free, and leaves the original unchanged: run it, then open the copy) and "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." (a page that declares another encoding, or holds bytes that are not valid UTF-8): only UTF-8 pages open.
+- "This file could not be opened: this page is 10.5 MB, more than the 10 MB Onionskin can read. Split it into smaller pages and open those." The same form names the other limits: 200,000 elements, 400,000 attributes, 8 million characters of text, 512 levels of nesting, 1 MB for one attribute value.
+
+## HTML op codes
+
+Each comes with `status: "refused"` and a `reason`. Nothing of the batch was written in atomic mode.
+
+- `active_content`: the write would add or change code that runs in a browser (`reasons` names the kinds: `script`, `event_handler`, `frame`, `form`, `element`, `attribute`, `link_url`, `load_url`, `css`, `template`), or the target is a `script` or `style` element. Do not retry with another spelling of the same thing. Decline that comment and say in one plain line of the `summary` that Onionskin does not let an agent add code that runs in a browser.
+- `spans_markup`: the `find` text, or the element's text, runs across an element's edge (a link, bold text). Use `replace_element` with the element's new markup.
+- `not_addressable`: the element or text is not written as such in the source (the parser implied it, moved it, or the tag holds an attribute twice). Target its nearest written ancestor, usually with `replace_element`.
+- `not_well_formed`: the markup does not read back the same in that place (an unclosed or misplaced tag, a NUL character). Fix the markup.
+- `proof_failed`: after the change the page would also read differently somewhere else. Use a smaller change, or `replace_element` on the parent.
+- `overlapping_edit`: two ops of the file change the same place. Give one op per place, or one `replace_element`.
+- `charset_needs_head`: the page does not declare UTF-8 and has no place near its top to add the declaration. Write the characters as references (`&eacute;`) or decline.
+- `too_large`, `not_utf8`: the page is past a limit or is not UTF-8. Decline and tell the user the reason.
+
+## The HTML view is empty, plain or missing pictures
+
+These are what the user sees; explain them in a sentence if they ask.
+
+- "This page is built by scripts, which Onionskin never runs, so there is nothing to show.": the page has no text without its scripts. It cannot be reviewed in Onionskin.
+- "This page's styles are too heavy to show; the text is shown plain.": its styles are past 2 MB, 20,000 rules or 200 `:has(` selectors.
+- A sentence ending "so it is shown as plain text.": the page could not be shown safely as it is. Comments still work; typing is off.
+- "Pictures and styles next to this page are not shown, because the page is in your home folder or at the top of a disk.": move the page and its files into a folder of their own.
+- "Review first is not available for HTML files in this version. Comment on the page and press Send.": by design.
+
 ## poll returns superseded or closed
 
 `superseded`: a newer poll of yours took over; stop this one. `closed`: the user ended the review; stop.

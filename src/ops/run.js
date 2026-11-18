@@ -1,9 +1,13 @@
 import { nodeChecks } from "../package.js";
+import { byFormat } from "../constants.js";
+import { parserLoaded } from "../html.js";
+import { previewOffThread, runOpsOffThread } from "../offload.js";
 import * as docx from "./docx.js";
+import * as html from "./html.js";
 import * as pptx from "./pptx.js";
 import * as xlsx from "./xlsx.js";
 
-const DRIVERS = { docx, xlsx, pptx };
+const DRIVERS = { docx, xlsx, pptx, html };
 // ops whose job is to remove or rewrite content: a lower count of drawings/links/bookmarks is then expected, not damage
 const REWRITES = new Set(["delete_paragraph", "set_table_cell_text", "set_shape_text", "delete_rows", "delete_columns", "delete_table_row", "delete_table_column", "delete_slide"]);
 const BLOCKING = new Set(["invalid_package", "part_removed", "relationship_target_missing"]);
@@ -21,6 +25,13 @@ export function demote(results, reason) {
 }
 const notApplied = (i, op, why) => ({ index: i, op: op.op, ...(op.id ? { id: op.id } : {}), status: "not_applied", reason: why });
 
+// The engine's calls resolve as promises, so a run of many ops (a merge of every paragraph of a long document) would hold the thread
+// from its first op to its last: the loops below give the event loop a turn once TURN_MS have passed since the last one.
+const TURN_MS = 40;
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+let since = 0;
+const maybeTurn = () => (performance.now() - since > TURN_MS ? turn().then(() => (since = performance.now())) : null);
+
 /**
  * Runs `ops` against `bytes`. Phase 1 binds every op (anchor + expect) against the untouched file; phase 2 executes in order.
  * The engine cannot roll back, so nothing is saved unless the set is acceptable: atomic mode stops at the first op that
@@ -28,14 +39,18 @@ const notApplied = (i, op, why) => ({ index: i, op: op.op, ...(op.id ? { id: op.
  * Returns {results, bytes (null = nothing to write), warnings, blocked}.
  */
 export async function runOps({ bytes, format, name, ops, partial = false, anchors = new Map() }) {
-  const driver = DRIVERS[format];
+  // an HTML file is parsed in worker threads only (test/html-parser-thread.test.js): this runs again in the ops worker unless the parser is here
+  if (format === "html" && !parserLoaded()) return runOpsOffThread({ bytes, format, name, ops, partial, anchors });
+  const driver = byFormat(DRIVERS, format, "runOps");
   const excluded = new Map();
   for (let pass = 0; pass <= ops.length; pass++) {
     const st = await driver.open({ bytes, name, anchors });
     try {
+      await turn();
       const results = new Array(ops.length);
       const bound = new Array(ops.length);
       for (const [i, op] of ops.entries()) {
+        await maybeTurn();
         if (excluded.has(i)) results[i] = shape(i, op, excluded.get(i));
         else {
           const b = await driver.bind(st, op);
@@ -47,6 +62,7 @@ export async function runOps({ bytes, format, name, ops, partial = false, anchor
       let stop = bindFailed && !partial;
       let restart = false;
       for (let i = 0; i < ops.length && !restart; i++) {
+        await maybeTurn();
         if (!bound[i]) continue;
         if (stop) {
           results[i] = notApplied(i, ops[i], "atomic mode: another op did not apply, so nothing was written");
@@ -70,7 +86,10 @@ export async function runOps({ bytes, format, name, ops, partial = false, anchor
       }
       const applied = results.filter((r) => r.status === "applied").length;
       if (!applied) return { results, bytes: null, warnings: [], blocked: null };
+      // HTML has no engine and no package: its driver applies the splices at once and runs its own proof and write check (src/ops/html.js)
+      if (driver.finish) return await driver.finish(st, results, { partial });
       const out = await driver.save(st);
+      await turn();
       // the writer is checked before anything leaves this function: a lossy save blocks the whole write
       const flags = nodeChecks(bytes, out, format);
       const rewrites = ops.some((op, i) => results[i].status === "applied" && (REWRITES.has(op.op) || (op.op === "replace_text" && "text" in op)));
@@ -93,7 +112,8 @@ export async function runOps({ bytes, format, name, ops, partial = false, anchor
  * `partial_words` (replace_all_text) is the number of matches that sit inside a longer word; `in_formulas` (XLSX) the number inside a formula.
  */
 export async function previewAll(bytes, format, op, { name = `preview.${format}`, anchors = new Map() } = {}) {
-  const driver = DRIVERS[format];
+  if (format === "html" && !parserLoaded()) return previewOffThread(bytes, format, op);
+  const driver = Object.hasOwn(DRIVERS, format) ? DRIVERS[format] : null;
   if (!driver) return { ok: false, status: "refused", reason: `unsupported format ${format}` };
   if (op?.op !== "replace_all_text" && op?.op !== "format_all") return { ok: false, status: "refused", reason: `${op?.op} is not a document-wide op` };
   const st = await driver.open({ bytes, name, anchors });

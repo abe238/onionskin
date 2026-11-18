@@ -4,6 +4,8 @@
 // Fails (exit 1, no zip left behind) when the zip would hold a home-directory path, a secret pattern, an internal file name,
 // a file over 5 MB, or more than 45 MB in total, and when the helper for Apple's model cannot be built (no swiftc, or the build fails).
 // Uses /usr/bin/zip and swiftc (scripts/build-apple-helper.mjs); no dependencies.
+// Also writes dist-zip/version.txt (the version, one line). A release uploads it beside get.sh, onionskin.zip and onionskin.zip.sha256:
+// `onionskin update` reads it to tell whether an update exists (without it, `update --check` says it cannot tell).
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -45,7 +47,7 @@ if (!fs.existsSync(path.join(root, "web", "dist", "index.html"))) die("web/dist/
 // ---- 2. stage ----------------------------------------------------------------------------------------------------
 fs.mkdirSync(OUT, { recursive: true });
 fs.rmSync(STAGE, { recursive: true, force: true });
-for (const n of fs.readdirSync(OUT)) if (/^onionskin-.*\.zip(\.sha256)?$/.test(n) || n === "MANIFEST.txt") fs.rmSync(path.join(OUT, n)); // keeps the rehearsal logs
+for (const n of fs.readdirSync(OUT)) if (/^onionskin-.*\.zip(\.sha256)?$/.test(n) || n === "MANIFEST.txt" || n === "version.txt") fs.rmSync(path.join(OUT, n)); // keeps the rehearsal logs
 const top = path.join(STAGE, TOP);
 fs.mkdirSync(top, { recursive: true });
 
@@ -79,6 +81,8 @@ copy("web/dist");
 copy("vendor/engine");
 copy("vendor/engine-node");
 copy("vendor/engine.lock.json");
+copy("vendor/parse5"); // the HTML parser, loaded in worker threads only (src/html-parser.js)
+copy("vendor/parse5.lock.json");
 copy("skills/onionskin", { filter: (n) => !(forPublic && n === "voice.md") }); // voice.md is the maintainer's own voice guide (like a .env): in his own zip, never in a --public one
 copy("scripts/checker");
 copy("scripts/rewriter", { filter: (n) => !/^onionskin-fm(\.json|\.building)?$/.test(n) }); // the Swift source of the helper for Apple's model (the built helper is added below); the benchmark and its MLX lab tooling, scripts/rewriter-eval, are never copied
@@ -109,9 +113,16 @@ for (const f of ["sample.docx", "sample.xlsx", "sample.pptx"]) {
   fs.mkdirSync(path.join(top, "samples"), { recursive: true });
   fs.copyFileSync(s, path.join(top, "samples", f));
 }
+// the HTML sample is Onionskin's own (test/fixtures/sample): a small page with a local image in a sibling folder and one script
+for (const f of ["sample.html", path.join("images", "onion.png")]) {
+  const s = path.join(root, "test", "fixtures", "sample", f);
+  if (!fs.existsSync(s)) die(`sample missing: ${s}`);
+  fs.mkdirSync(path.dirname(path.join(top, "samples", f)), { recursive: true });
+  fs.copyFileSync(s, path.join(top, "samples", f));
+}
 fs.writeFileSync(
   path.join(top, "samples", "README.txt"),
-  "sample.docx, sample.xlsx and sample.pptx are the sample documents of the office-engine playground (MIT, see NOTICE), copied unchanged.\nOpen one with: onionskin samples/sample.docx\n",
+  "sample.docx, sample.xlsx and sample.pptx are the sample documents of the office-engine playground (MIT, see NOTICE), copied unchanged.\nsample.html (with images/onion.png) is Onionskin's own sample page.\nOpen one with: onionskin samples/sample.docx\n",
 );
 
 // package.json: only what running needs. There are no run-time dependencies (React is bundled into web/dist).
@@ -173,7 +184,7 @@ for (const f of files) {
 }
 const total = files.reduce((n, f) => n + f.size, 0);
 if (total > MAX_TOTAL) problems.push(`total unpacked size ${(total / 1048576).toFixed(1)} MB is over 45 MB`);
-const required = ["src/cli.js", "web/dist/index.html", "vendor/engine/index.js", "vendor/engine-node/engine-node.mjs", "skills/onionskin/SKILL.md", "install.sh", "INSTALL.md", "LICENSE", "NOTICE", "samples/sample.docx", "docs/contracts/ops.schema.json", "scripts/rewriter/apple/onionskin-fm", "scripts/rewriter/apple/onionskin-fm.json"];
+const required = ["src/cli.js", "web/dist/index.html", "vendor/engine/index.js", "vendor/engine-node/engine-node.mjs", "vendor/parse5/parse5.mjs", "vendor/parse5/LICENSE.txt", "skills/onionskin/SKILL.md", "install.sh", "INSTALL.md", "LICENSE", "NOTICE", "samples/sample.docx", "samples/sample.html", "samples/images/onion.png", "docs/contracts/ops.schema.json", "scripts/rewriter/apple/onionskin-fm", "scripts/rewriter/apple/onionskin-fm.json"];
 for (const r of required) if (!files.some((f) => f.rel === `${TOP}/${r}`)) problems.push(`missing from the zip: ${r}`);
 if (problems.length) {
   fs.rmSync(STAGE, { recursive: true, force: true });
@@ -212,5 +223,7 @@ const manifest = [
 ].join("\n");
 fs.writeFileSync(path.join(OUT, "MANIFEST.txt"), manifest);
 fs.writeFileSync(path.join(OUT, `${zipName}.sha256`), `${digest}  ${zipName}\n`);
+fs.writeFileSync(path.join(OUT, "version.txt"), `${pkg.version}\n`);
 console.log(manifest.split("\nall files:")[0]);
-console.log(`wrote ${path.relative(root, zipPath)}, dist-zip/MANIFEST.txt and ${zipName}.sha256`);
+console.log(`wrote ${path.relative(root, zipPath)}, dist-zip/MANIFEST.txt, ${zipName}.sha256 and dist-zip/version.txt`);
+console.log("release assets: get.sh (scripts/get.sh), onionskin.zip (this zip), onionskin.zip.sha256 and version.txt (needed by onionskin update)");

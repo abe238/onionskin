@@ -35,7 +35,29 @@ describe("smoke: the linked onionskin binary, a real Word file, a real browser",
   });
   after(async () => {
     await br?.close();
-    await w?.cleanup();
+    // The server was started by the linked binary, so the test stops it the way a person would: `onionskin stop` with the same state,
+    // then the process the server record names must be gone, before the world (and its state folder) is cleaned up. The harness check
+    // for a server that outlived the cleanup stays as it is.
+    if (w) {
+      if (poll && poll.exitCode === null) poll.kill("SIGKILL");
+      const record = path.join(w.env.ONIONSKIN_STATE_DIR, "server.json");
+      const pid = fs.existsSync(record) ? JSON.parse(fs.readFileSync(record, "utf8")).pid : null;
+      const stop = await cli(["stop"]);
+      const gone = () => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      };
+      try {
+        assert.equal(stop.code, 0, stop.stderr);
+        if (Number.isInteger(pid)) await until(gone, `the server (pid ${pid}) stopped`, 15000);
+      } finally {
+        await w.cleanup();
+      }
+    }
   });
 
   test("onionskin --version answers and `open --no-open` prints the URL and the poll command", async () => {

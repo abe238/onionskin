@@ -13,6 +13,7 @@ import { Question } from "./Question.jsx";
 import { QuickChange } from "./QuickChange.jsx";
 import { ReviewDropped, ReviewRow, Suggestions } from "./Suggestions.jsx";
 import { ShieldChip, ShieldNote } from "./Shield.jsx";
+import { COMMENT_TEXT_MAX, NOTE_MAX } from "../../src/retain.js"; // pure: the boxes take what the server keeps, so nothing typed is cut
 
 // A comment's own state: Waiting once the batch is out, then a check mark or a declined mark the moment its result is known.
 const STATUS = { draft: "Draft", sent: "Waiting", queued: "Queued", done: "Done", declined: "Declined", asked: "Needs your answer" };
@@ -44,7 +45,7 @@ function Num({ n, pin, done }) {
   );
 }
 
-function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, onDelete, onGoto, onBack, onAnswer, format, activeSheet, open, canFold, onToggle }) {
+function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus, onFocused, onText, onDelete, onGoto, onBack, onAnswer, format, activeSheet, open, canFold, onToggle }) {
   const ta = useRef(null);
   const li = useRef(null);
   useEffect(() => {
@@ -65,7 +66,8 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
   const otherSheet = format === "xlsx" && !!loc?.sheetName && !!activeSheet && loc.sheetName !== activeSheet;
   // A comment on selected words inside a PPTX shape: the host reports only the shape box, so the card quotes the words and says the outline is the whole shape.
   const inShape = format === "pptx" && c.kind === "text" && !!c.anchor?.quote && loc?.shapeId != null;
-  const preview = inShape ? c.anchor.quote : rz && format !== "docx" ? rz.text : c.anchor?.quote;
+  const unitText = format === "xlsx" || format === "pptx"; // the card quotes the server's text of the cell or shape (another format: the page's own quote)
+  const preview = inShape ? c.anchor.quote : rz && unitText ? rz.text : c.anchor?.quote;
   return (
     <li
       ref={li}
@@ -85,6 +87,7 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
       data-shape={loc?.shapeId ?? undefined}
       data-changed={rz?.changed ? "1" : undefined}
       data-open={open ? "1" : "0"}
+      data-held={held ? "1" : undefined}
     >
       <div className="card-h">
         <Num n={n} pin={pin} />
@@ -114,7 +117,7 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
           {c.status === "done" && <Icon name="check" size={11} />}
           {c.status === "declined" && <Icon name="close" size={11} />}
           {(c.status === "sent" || c.status === "queued") && live && <span className="wait-dot" aria-hidden="true" />}
-          {c.status === "sent" && !live ? "No answer" : STATUS[c.status] || c.status}
+          {held && checking ? "Checking whether this was sent..." : held && slow ? "Sending..." : c.status === "sent" && !live ? "No answer" : STATUS[c.status] || c.status}
         </span>
         {canFold && open && (
           <button type="button" className="iconbtn sm" data-testid="card-fold" aria-expanded="true" onClick={onToggle} aria-label={`${pin ? "Pin" : "Comment"} ${n}: fold it`} title="Fold">
@@ -124,9 +127,9 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
       </div>
       <div className="card-b" hidden={!open}>
       {moved && <p className="moved-note">This place is no longer in the file. Your comment is still sent.</p>}
-      {((!pin && c.anchor?.quote) || (format !== "docx" && preview)) && !moved && (
+      {((!pin && c.anchor?.quote) || (unitText && preview)) && !moved && (
         <blockquote data-testid="card-preview" data-in-shape={inShape ? "1" : undefined}>
-          <span>{String(format !== "docx" ? preview : c.anchor.quote).slice(0, 140)}</span>
+          <span>{String(unitText ? preview : c.anchor.quote).slice(0, 140)}</span>
         </blockquote>
       )}
       {inShape && !moved && (
@@ -140,6 +143,8 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
         value={c.text}
         placeholder={c.retry ? "Say what you meant, then send." : pin ? "What should change here?" : "Write a comment"}
         disabled={!editable}
+        readOnly={held} // a Send in flight carried it: the words stay as sent until its answer (no visual change, so a quick one does not flicker)
+        maxLength={COMMENT_TEXT_MAX}
         onChange={(e) => onText(c.id, e.target.value)}
         onKeyDown={(e) => {
           // Esc: back to the document at this comment's place (the caret goes there; nothing is lost, the text is kept)
@@ -168,7 +173,7 @@ function Card({ ack, live, mac, readOnly, c, n, rz, focus, onFocused, onText, on
             {ack === "saved" ? <Icon name="check" size={11} /> : <Icon name="alert" size={11} />} {ack === "saved" ? "Saved" : "Not saved"}
           </span>
         )}
-        <button type="button" className="iconbtn sm danger" onClick={() => onDelete(c.id)} data-testid="delete-comment" disabled={readOnly} aria-label={`Delete ${pin ? "pin" : "comment"} ${n}`} title="Delete">
+        <button type="button" className="iconbtn sm danger" onClick={() => onDelete(c.id)} data-testid="delete-comment" disabled={readOnly || c.status === "sent" || c.status === "queued"} aria-label={`Delete ${pin ? "pin" : "comment"} ${n}`} title={c.status === "sent" || c.status === "queued" ? "On its way to the agent: Take back to change it" : "Delete"}>
           <Icon name="trash" size={14} />
         </button>
       </div>
@@ -487,7 +492,7 @@ export function Sidebar(p) {
   useEffect(() => {
     if (open) setSnap("half"); // the sheet always opens at half height
   }, [open]);
-  const label = p.sending ? "Sending..." : working ? "Queue for the agent" : p.quickLabel || "Send to Agent";
+  const label = p.held?.checking ? "Checking..." : p.sending ? "Sending..." : working ? "Queue for the agent" : p.quickLabel || "Send to Agent";
   const canSend = !(p.sending || closed || p.readOnly || p.pendingSend === 0);
   // Cmd+Enter (Mac) or Ctrl+Enter (Windows, Linux) in any comment, pin or note box sends the batch, the same as the Send button.
   const sendKey = (e) => {
@@ -546,7 +551,7 @@ export function Sidebar(p) {
           <ul className="list stack" data-testid="panel-stack" aria-label="Your edits and comments and the agent's answers, oldest first">
             {stack.map((it) =>
               it.t === "comment" ? (
-                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
+                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} held={!!p.held?.ids.has(it.c.id)} checking={!!p.held?.checking} slow={p.sending} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
               ) : it.t === "edit" ? (
                 <li key={it.key} className="change" data-testid="change-item" data-kind={it.e.kind}>
                   <div className="change-h">
@@ -586,12 +591,12 @@ export function Sidebar(p) {
         </div>
         </div>
         <div className="pane composer">
-          <ReviewRow why={closed ? "This session is closed." : waitingBatch ? "Wait for the agent to finish, then try again." : p.counts.edits > 0 ? "Send your edits first, so the agent reads your latest text." : null} readOnly={p.readOnly} resetOn={`${session.seq}`} onReview={p.onReview} />
+          {session.format !== "html" && <ReviewRow why={closed ? "This session is closed." : waitingBatch ? "Wait for the agent to finish, then try again." : p.counts.edits > 0 ? "Send your edits first, so the agent reads your latest text." : null} readOnly={p.readOnly} resetOn={`${session.seq}`} onReview={p.onReview} />}
           <label htmlFor="overall">Overall instructions</label>
-          <textarea id="overall" data-testid="overall-note" rows={3} value={p.note} disabled={p.readOnly} onChange={(e) => p.onNote(e.target.value)} placeholder="Anything the agent should know about this whole batch" />
+          <textarea id="overall" data-testid="overall-note" rows={3} value={p.note} disabled={p.readOnly} readOnly={!!p.held?.note || !!p.rewriting} maxLength={NOTE_MAX} onChange={(e) => p.onNote(e.target.value)} placeholder="Anything the agent should know about this whole batch" />
           <QuickChange match={p.quickMatch} agent={p.quickAgent} onAgent={p.onQuickAgent} />
           <StylePrefs sid={p.sid} session={session} readOnly={p.readOnly} />
-          <button type="button" className="btn primary send" data-testid="send" disabled={!canSend} onClick={p.onSend} title={`${label} (${MOD}+Enter)`} aria-keyshortcuts="Meta+Enter Control+Enter" aria-describedby="send-hint" data-busy={p.sending ? "1" : "0"}>
+          <button type="button" className="btn primary send" data-testid="send" disabled={!canSend} onClick={p.onSend} title={`${label} (${MOD}+Enter)`} aria-keyshortcuts="Meta+Enter Control+Enter" aria-describedby="send-hint" data-busy={p.busy ? "1" : "0"} data-slow={p.sending ? "1" : "0"}>
             <Icon name="send" size={16} />
             <span className="send-label">{label}</span>
             {parts.length > 0 && <span className="send-counts">{parts.join(", ")}</span>}

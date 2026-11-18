@@ -1,3 +1,4 @@
+import { nfc } from "../nfc.js";
 import { exactHash, normText, textHash } from "../text.js";
 import { untrusted } from "../sanitize.js";
 
@@ -21,7 +22,7 @@ export function checkExpect(expect, text, mode = "contains") {
   const exact = mode === "exact";
   const hash = exact ? exactHash(text) : textHash(text);
   if ("quote" in expect) {
-    const ok = exact ? text.normalize("NFC") === expect.quote.normalize("NFC") : normText(text).includes(normText(expect.quote));
+    const ok = exact ? nfc(text) === nfc(expect.quote) : normText(text).includes(normText(expect.quote));
     if (!ok) return fail("expect_mismatch", "the target no longer says what `expect.quote` says", { actual_excerpt: excerpt(text) });
   }
   if ("text_hash" in expect && expect.text_hash !== hash) return fail("expect_mismatch", "the target's text hash differs from `expect.text_hash`", { actual_excerpt: excerpt(text), actual_text_hash: hash });

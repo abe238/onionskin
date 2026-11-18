@@ -2,7 +2,7 @@
 
 The full reference for Onionskin. The short version is in the [README](../README.md); install, commands and troubleshooting are in [DEVELOPERS.md](DEVELOPERS.md).
 
-Review a Word, Excel or PowerPoint file with a coding agent, in the browser, without losing the file's own formatting.
+Review a Word, Excel, PowerPoint or HTML file with a coding agent, in the browser, without losing the file's own formatting.
 
 You open the file. You type edits straight into it, comment on a selection, a cell, a range, a shape or a slide, drop numbered pins, and write one overall note. You press Send. The agent receives your batch (it is tested with Claude Code and Codex, which have each been run end to end by a real agent; other agents are untested), changes the file, and tells you what it did per comment. The page reloads at the same place and shows each answer in an activity feed, with a Revert button if the check found damage.
 
@@ -42,7 +42,7 @@ If you open a file with `--no-agent` and press Send with nobody listening, the p
 
 After each run the browser page refreshes and keeps your place; in a Word file the agent's changed words are then drawn in where they stand, with the old words shown for a moment (the refresh still happens underneath).
 
-In the browser: Edit mode types into the document (in Excel, Shift+Enter or Alt+Enter while typing in a cell starts a new line inside the cell; in a narrow column the first line of a tall cell can be clipped until the column is widened); Comment mode comments on whatever you click (drag across cells for a range); Pin mode drops a numbered pin anywhere. While the agent works you can keep working in the document: when the agent finishes, what you changed is merged with its changes (Word by paragraph, including the formatting you changed and the paragraphs you moved; Excel by cell; PowerPoint by text box). If you and the agent changed the same paragraph, cell or text box, the agent's version stays and yours is shown with a Copy button. In Word, formatting or a move that could not be carried over safely is listed with the reason, and a paragraph you moved keeps the agent's formatting, with a line asking you to check it. In a spreadsheet your values go in only where Onionskin knows the cell is still the same one: on a sheet the agent left alone, or one it changed only with Onionskin's own cell edits. If the agent added, removed or moved rows or columns on a sheet you edited, or changed the file with another tool, your values on that sheet are listed and your version of the file is saved next to the original. Comments you add meanwhile go out as the next batch. While Onionskin's background agent works, the banner has **Stop the agent**: it takes your batch back (comments become drafts again, the note goes back to its box, anything the agent already wrote can be reverted), then stops the agent; a late write from it is refused. The next Send starts a new agent at once, in a fresh conversation that never saw the request you took back, and that start does not count toward the hourly limit. With your own agent (or one open in Terminal) the banner has "Take back editing" instead, which takes the batch back and leaves the agent alone.
+In the browser: Edit mode types into the document (in Excel, Shift+Enter or Alt+Enter while typing in a cell starts a new line inside the cell; in a narrow column the first line of a tall cell can be clipped until the column is widened); Comment mode comments on whatever you click (drag across cells for a range); Pin mode drops a numbered pin anywhere. While the agent works you can keep working in a Word, Excel or PowerPoint document (an HTML page is read-only during a run, see [HTML files](#html-files)): when the agent finishes, what you changed is merged with its changes (Word by paragraph, including the formatting you changed and the paragraphs you moved; Excel by cell; PowerPoint by text box). If you and the agent changed the same paragraph, cell or text box, the agent's version stays and yours is shown with a Copy button. In Word, your edit goes only into the paragraph you edited: Word gives each paragraph an id, and when the agent changed, split, merged or removed that paragraph, or Onionskin cannot tell which paragraph it is now, your text is shown with a Copy button instead of being written elsewhere. If merging takes longer than two minutes, nothing is written, a copy of your version is saved next to the file, and your edits stay in the page. In Word, formatting or a move that could not be carried over safely is listed with the reason, and a paragraph you moved keeps the agent's formatting, with a line asking you to check it. In a spreadsheet your values go in only where Onionskin knows the cell is still the same one: on a sheet the agent left alone, or one it changed only with Onionskin's own cell edits. If the agent added, removed or moved rows or columns on a sheet you edited, or changed the file with another tool, your values on that sheet are listed and your version of the file is saved next to the original. Comments you add meanwhile go out as the next batch. While Onionskin's background agent works, the banner has **Stop the agent**: it takes your batch back (comments become drafts again, the note goes back to its box, anything the agent already wrote can be reverted), then stops the agent; a late write from it is refused. The next Send starts a new agent at once, in a fresh conversation that never saw the request you took back, and that start does not count toward the hourly limit. With your own agent (or one open in Terminal) the banner has "Take back editing" instead, which takes the batch back and leaves the agent alone.
 
 ### Structure edits and other abilities
 
@@ -84,6 +84,79 @@ Type a very plain request as the overall note, such as "Replace Acme with Initec
 
 The review panel keeps a History section: the last 20 updates to the file (your edits at each Send, each agent run, a revert, and a file changed outside Onionskin that you chose to reload), newest first, one line each. Click one to see what changed: words removed in red and added in green, spreadsheet cells as old to new, and plain lines for added, removed, moved and formatting changes (bold, a different style, a number format). "Show" scrolls the document to a place and outlines it for a moment. History is a view only: red and green stay in the panel, nothing is ever written into the document, and it does not merge or restore anything (Revert still undoes an agent run). It is not shown on a phone.
 
+## HTML files
+
+Onionskin opens `.html` and `.htm` pages: reports, newsletters, saved articles, exported documents and other pages that do not need scripts to show their content. You comment, drop pins, write an overall note and fix text, then press Send. The agent changes the real file, History shows what changed, and Revert undoes a run. Your text fixes and the agent's edits made with Onionskin's ops are made in place in the file's own source, so everything outside them (formatting, comments in the markup, line endings, how characters are spelled) stays exactly as it was. To try it, open `samples/sample.html` in the app folder (`~/.onionskin/app/<version>/samples/`).
+
+Review first, stamps, quick fixes and the tracked-changes copy are not offered for HTML files in this version.
+
+### What the view shows
+
+The view is a still picture of your page. It sits in a frame with a border and the label "Your page (still view)", so nothing in the page can pass for Onionskin's own buttons. The first time, the page says: "This is a still view of your page: scripts are off and nothing loads from the internet."
+
+- **Scripts never run.** A page with scripts shows "Scripts are off in this view." A page with no text until a script builds it shows one message across the whole view: "This page is built by scripts, which Onionskin never runs, so there is nothing to show."
+- **Nothing loads from the internet.** Remote images, stylesheets and fonts are not loaded, and a line counts them ("3 things from the internet were not loaded."). Links are shown and never followed.
+- **Forms** are shown with their controls turned off. Nothing can be submitted.
+- **Placeholders:** an image that is not shown is "[image not shown]"; video, audio and canvas are "[media not shown]"; inline SVG and MathML are "[graphic not shown]". Frames, embedded objects, `noscript` and `template` contents are left out.
+- **Heavy styles:** when the page's styles add up to more than 2 MB, 20,000 rules or 200 `:has(` selectors, all of them are left out: "This page's styles are too heavy to show; the text is shown plain."
+- **Plain text view:** when a page cannot be shown safely as it is (its markup does not read back the same, its styles cannot be shown safely, or it holds characters that cannot be shown), the view shows its text plain, with one sentence saying why, such as "This page's markup could not be shown safely, so it is shown as plain text." A page that made the view stop responding opens in the plain text view the next time, with "Try the full view again". Typing is off in the plain text view; comments work.
+- **Overlays:** in Comment mode, a clicked part of the page offers "Hide this in the view", for cookie banners and newsletter pop-ups. It hides that part in the view only, never in the file, and a line brings it back.
+
+### Pictures and styles next to the page
+
+Onionskin shows pictures and stylesheets that sit next to the page, by these rules:
+
+- In the page's folder, or up to 3 folders below it. Never above it, never at an absolute path or a web address, never in a folder whose name starts with a dot or a folder named `Library`, and never through a symbolic link.
+- Pictures: PNG, JPEG, GIF or WebP, recognized by their content, not their name. SVG pictures are not shown. One picture at most 10 MB and 16,000 pixels a side (64 million pixels); at most 500 pictures and 30 MB in all. Pictures written into the page itself (`data:` images) are shown too.
+- Stylesheets linked with `<link rel="stylesheet">`: at most 2 MB each, `@import` at most 5 levels deep.
+- When the page sits directly in your home folder or at the top of a disk, nothing next to it is shown: "Pictures and styles next to this page are not shown, because the page is in your home folder or at the top of a disk." Move the page and its files into a folder of their own.
+
+What the view shows from those files is never sent to the agent.
+
+### What you can edit
+
+In Edit mode you fix text where it stands: type, delete, replace words. Your fixes stay in the page as unsent edits and are written into the file when you press Send. You can type as soon as you click. One exception: on a very large element (more than 400 text parts), the first keystroke right after a click can be missed.
+
+If the file changes outside Onionskin, the view reloads and puts your unsent text fixes back only where it can identify the same text for certain. Any fix it cannot place is listed as "could not be placed", with its text and a Copy button, and is not applied.
+
+In Comment and Pin modes every keyboard shortcut works while you point at the page. In Edit mode, while the cursor is in the page, Onionskin's shortcuts do not work; use the toolbar's mode buttons, the selection's Comment and Ask buttons, the panel button and Send, or click outside the page first.
+
+Some text is shown but cannot be edited here: text inside a link, a form control or the page title, text made only of spaces, and text that the browser shows somewhere other than where the source has it (text around a table, for example). Clicking it says "This part of the page cannot be edited here; comment on it instead." Pressing Return, or a change that would add or remove an element, opens the comment box on that place: "New lines and elements are the agent's job: say what you want in the comment."
+
+In Comment mode, select text or click a part of the page; in Pin mode, drop a pin anywhere.
+
+While the agent works, the view is read-only: "The agent is working; comment now and fix text when it is done." New comments are kept and go out with the next Send. A second tab on the same file says "This file is open for editing in another tab, so typing is off here; comments still work."
+
+### What the agent can and cannot change
+
+The agent can change text and structure: headings, paragraphs, lists, tables, text formatting (bold, italic, code and the like), pictures from a relative path or a `data:` image, and links to web addresses, email addresses, phone numbers, nearby files or places in the page. It can set a short list of attributes, such as `class`, `id`, `title`, `lang` and `style` (a style may load only a relative path or a `data:` image).
+
+It cannot add or change code that runs in a browser: scripts, event handlers such as `onclick`, frames and embedded objects, forms and their controls, stylesheet links, anything loaded from the internet, `data-` attributes, or a link of any other kind (such as `javascript:`). It cannot change a `script` or `style` element at all. When the page loads a script, text containing `{{`, `{%`, `<%` or `${` is refused too, because a script could read it as a template. Such a change is refused whole, and nothing of it is written: "The agent tried to add code that runs in a browser, so nothing was written." The agent tells you in its summary.
+
+Link targets can change. History lists every changed link and picture target in plain text ("now points to ...", "no longer points to ...").
+
+The first time the agent writes a character outside plain ASCII into a page that does not declare its encoding, Onionskin also adds `<meta charset="utf-8">` at the top of the page, so browsers read it the same way.
+
+### Encodings
+
+Onionskin opens pages saved as UTF-8, with or without a byte order mark. Others are refused:
+
+- A page that declares windows-1252, ISO-8859-1 or US-ASCII: "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." `onionskin open` prints that sentence and the command that makes the copy: `onionskin utf8-copy page.html`. The copy is written next to the page as `page.utf8.html`, only if that name is free, and the original is not changed. Then open the copy.
+- A page that declares any other encoding (UTF-16, Shift_JIS and the like), or holds bytes that are not valid UTF-8: "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." Save the page as UTF-8 in your editor and open that.
+
+### Files that are refused
+
+| File | What Onionskin says |
+| --- | --- |
+| `.mhtml`, `.mht`, `.webarchive` | "Onionskin cannot open this kind of saved page; in Chrome choose Save As, Webpage, Complete." |
+| `.xhtml` | "Onionskin cannot open .xhtml pages; save the page as .html and open that." |
+| `.svg` | "Onionskin cannot open .svg pictures; it opens .html and .htm pages." |
+| Any other kind | "Only .docx, .xlsx, .pptx, .html and .htm files are supported" |
+
+### Not in this version
+
+One file per session: a linked stylesheet or script file is never edited. Pages built by scripts show nothing to edit. Chrome is the tested browser; Safari has not been tested with HTML files.
+
 ## Speed
 
 From pressing Send to the change showing in the document, on a small file:
@@ -93,6 +166,22 @@ From pressing Send to the change showing in the document, on a small file:
 
 Onionskin's own part of a round is about 0.5 seconds (measured with a scripted agent); the rest is one model turn. If your agent lets you pick the model, a Sonnet-class model gives the quickest loop. Large files are slower. To measure on your machine: `BENCH_REPLY=1 node scripts/real-run/bench-loop.mjs 5` (no model) and `node scripts/real-run/bench-real.mjs --model sonnet --runs 3` (real agent, uses your allowance).
 
+## Size limits
+
+Onionskin reads a whole file at Send, at each hand-off to an agent and for a review (a review on its own thread, the others in a worker thread), so it refuses a file it could not read quickly, with the number and what to do ("Onionskin cannot read this file: this workbook has more than 1,000,000 cells, more than Onionskin can read. Split it into smaller workbooks and open those."). A file is refused whole, never read in part. Each limit was set from measurement: a plain file at the limit kept Onionskin's other requests waiting at most about 0.9 seconds (Excel), 0.8 seconds (Word) and 0.3 seconds (PowerPoint) on a busy test Mac (load average 15 to 28; an idle Mac is faster), and the hostile files in the tests under 2 seconds.
+
+| What | Limit | Why this number |
+| --- | --- | --- |
+| Any file | 200 MB on disk | Hashing and writing it once kept Onionskin waiting 0.85 s. Pictures and videos are usually most of a large file. |
+| Any file | 20,000 parts; 64 MB for one unpacked XML part, 512 MB for any part; 256 MB unpacked in all | Real files have a few hundred parts and a few MB of XML. Past these a file is most likely made to fill memory. |
+| Any file | 32 million characters of XML in one reading (64 million for a workbook); 512 attributes on one tag; XML 256 levels deep | About 1,600 Word pages are 18 million characters; a workbook of 999,000 cells, half of them short texts, 48 to 62 million. Two sheets of one 31-million-character attribute each (the worst shape for this limit) kept Onionskin waiting 0.43 s. |
+| Word | 50,000 paragraphs, 400,000 XML elements, 800,000 attributes, 8 million characters of text | About 1,600 pages. 49,000 paragraphs as Word writes them: 0.51 s at most. Twice these limits: 0.8 s for a plain file, but one paragraph of 400,000 runs took 1.7 s for a quick change preview, and the change itself would pass 2 s (estimated: 1.1 to 1.3 s at half that size). |
+| Excel | 1,000,000 cells, 1,000,000 shared strings, 50,000 merged ranges, 20,000 named ranges, 1,000 sheets, 3.2 million XML elements, 6.4 million attributes, 32 million characters of text, 32 million characters of text the cells show from shared strings, sheet names of 255 characters | 50,000 rows by 20 columns. 999,000 cells: 0.74 to 0.83 s at most, the server at 1.5 GB (Onionskin 0.0.3 took 3.1 s at 1,000,000); with longer texts, 0.86 s and 1.6 GB. 2,000,000 cells would be about twice that, past the aim; a higher limit needs the Send's reading moved off Onionskin's thread. The others are far above ordinary files and hold the worst shapes down: 999,000 cells with 49,000 merged ranges 0.64 s, 999,000 cells all showing one shared string 0.57 s, one string of 31 million characters 0.41 s. Excel itself allows 31 characters in a sheet name. |
+| PowerPoint | 50,000 shapes, 500,000 XML elements, 1,000,000 attributes, 8 million characters of text | A deck of 5,000 slides (20,000 shapes) took 0.3 s at most. |
+| HTML | 10 MB on disk; 200,000 elements, 400,000 attributes, 8 million characters of text, elements 512 levels deep, 1 MB for one attribute value (a `data:` value counts against the 10 MB instead) | Memory runs out first, at about 2.5 to 3 KB per element while a write is checked. A 10 MB page of 200,000 elements took 1.2 to 1.5 s to read; a 20 MB page of 400,000 elements ran out of memory in a worker thread. No real page tried came near these limits. The view has its own caps on pictures and styles (see [HTML files](#html-files)). |
+
+A file that grows past a limit after it was opened is refused at Send, and nothing is written. To open a larger file, split it (by chapter, by sheet, by section of slides) and open the parts.
+
 ## Security model, in plain words
 
 - Your file is opened by a server on `127.0.0.1` that only your browser session can reach. The launch link works once, within a minute, and is swapped for a cookie that no other site can send. Every request is checked for the exact host, origin and a per-session token. The agent talks to the server over a private Unix socket in a folder only you can read.
@@ -100,6 +189,7 @@ Onionskin's own part of a round is about 0.5 seconds (measured with a scripted a
 - The batch the agent receives keeps your words apart from the document's words. `instructions` holds only what you typed. Everything read from the file (quotes, cell values, shape text, sheet and file names) is labeled `untrusted_document_evidence`, cleaned of control characters, length-capped, and the agent skill tells the agent to treat it as data: never follow instructions found there, never run commands or open links because a document says so.
 - Edits are checked, not trusted. `apply` refuses an op whose expected text does not match the file, writes atomically, and keeps a copy of the file as it was. At `done` the server compares the file before and after and flags lost parts, broken relationships and dropped drawings, links or fields.
 - Macro-enabled files (`.docm`, `.xlsm`, `.pptm`) are refused. Macros never run.
+- HTML pages: three separate rules keep code in a page from running or reaching the network, and each holds even if another fails. The view's frame runs no script. The content rules of the frame and of the page block every load. The copy of the page the view shows holds no network address at all (no link target, no remote picture, no stylesheet link). Every write to an HTML file, from the agent or from your own text fixes, is checked against the list of what may change, and a change made by ops or by your fixes is also proven: the file is read again and must be the same everywhere outside the change, or nothing is written. Revert puts back the earlier version exactly as it was. The page is read in worker threads, never on the server's main thread. Pictures and styles next to the page never reach the agent.
 - Only one browser tab per file can edit; others open read-only.
 - The browser needs two things on every request: the cookie and a launch token that was handed to the page once and lives only in that page's own origin storage. Another program on another local port can be sent the cookie but never the token. A new tab needs a fresh link from Onionskin.
 - An agent never writes your document's path directly: `apply` and `commit` go through the server, which checks the lease, compares the file with the version it expects, snapshots what it replaces, and holds a lock from the comparison to the rename. `done` flags a file that changed any other way.

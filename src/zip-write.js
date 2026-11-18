@@ -1,4 +1,5 @@
 import zlib from "node:zlib";
+import { gated } from "./stop-gate.js";
 import { openZip, ZipError } from "./zip.js";
 
 // Rewrites one entry of a ZIP held in memory and copies every other entry as it is: same order, same compressed bytes, same CRC, same
@@ -17,7 +18,7 @@ export function replaceEntry(bytes, name, data) {
   const buf = zip.buf;
   if (!zip.entries.has(name)) throw new ZipError(`no entry ${JSON.stringify(name)} to replace`);
   const newData = Buffer.from(data);
-  const newComp = zlib.deflateRawSync(newData);
+  const newComp = gated(() => zlib.deflateRawSync(newData)); // never stopped inside zlib (src/stop-gate.js)
   const newCrc = zlib.crc32(newData) >>> 0;
   const parts = [];
   const central = [];

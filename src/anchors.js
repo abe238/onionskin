@@ -2,24 +2,59 @@ import { normText } from "./text.js";
 import { readDocxParagraphs, resolveDurable, durableFromEngine } from "./docx.js";
 import { parseDeck, pptxDurable, resolvePptx } from "./pptx.js";
 import { a1, a1Range, ch, parseWorkbook, resolveXlsx, sheetRows, xlsxDurable } from "./xlsx.js";
+import { capDurable } from "./retain.js";
+import { elementPath, htmlDurable, ownHash, pathString, readHtml, resolveHtml, visibleText } from "./html.js";
+import { unknownFormat } from "./constants.js";
 
 // One seam per format for the three things the server does with the bytes it holds: read the units, build a durable anchor from an
-// engine location (at Send) and re-resolve one against newer bytes (after `done`). DOCX lives in docx.js, XLSX in xlsx.js, PPTX in pptx.js.
+// engine location (at Send) and re-resolve one against newer bytes (after `done`). DOCX lives in docx.js, XLSX in xlsx.js, PPTX in pptx.js,
+// HTML in html.js (whose parser exists only in a worker thread: src/html-parser.js; on the server's thread reading an HTML file throws).
 
 export function readUnits(format, bytes) {
   if (format === "docx") return { format, paragraphs: readDocxParagraphs(bytes) };
   if (format === "xlsx") return { format, wb: parseWorkbook(bytes) };
   if (format === "pptx") return { format, deck: parseDeck(bytes) };
-  throw new Error(`unknown format ${format}`);
+  if (format === "html") return { format, read: readHtml(bytes) };
+  return unknownFormat(format, "readUnits");
 }
 
-/** The browser's captured anchor ({location, quote, prefix, suffix, paraText, hitKind}) -> durable anchor from the written bytes, or null. */
+/** Reads the lazy parts of `units` too (every slide, every sheet), so a version past a cap is refused now, not by a later reader. */
+export function readAll(units) {
+  if (units.format === "pptx") units.deck.ensure();
+  if (units.format === "xlsx") for (const sheet of units.wb.sheets) units.wb.sheetCells(sheet);
+  return units;
+}
+
+// The last version read, by its content hash: the server reads one version several times in a row (a Send, then the outline of the batch
+// it delivers; the end of a run, then the batch it queues and the page's next resolve), so it is read once. Consumers never change the
+// units (lazy caches on them are keyed by the same content). Dropped after KEEP_MS so a large file is not held in memory for nothing.
+// Ceiling: one entry; two sessions read in turn read each other's versions again.
+const KEEP_MS = 60_000;
+let kept = null;
+/** readUnits of the version whose sha256 is `sha`, reusing the last reading of it; `bytes` is the content or a function that returns it. */
+export function unitsFor(format, bytes, sha) {
+  if (kept && kept.format === format && kept.sha === sha) return kept.units;
+  const units = readUnits(format, typeof bytes === "function" ? bytes() : bytes);
+  if (kept) clearTimeout(kept.timer);
+  kept = { format, sha, units, timer: setTimeout(() => (kept = null), KEEP_MS) };
+  kept.timer.unref?.();
+  return units;
+}
+
+/**
+ * The browser's captured anchor ({location, quote, prefix, suffix, paraText, hitKind}) -> durable anchor from the written bytes, or null.
+ * A page anchor whose quote was cut where it was stored (src/retain.js, `cut`) is the paragraph or shape it sits in: a range of the cut
+ * text would point at a shorter one. What is built is cut to the stored caps (src/retain.js capDurable).
+ */
 export function buildDurable(units, anchor) {
   if (!anchor?.location) return null;
   const { format } = units;
-  if (format === "docx") return durableFromEngine(units.paragraphs, anchor.location, { quote: anchor.paraText ? "" : anchor.quote, prefix: anchor.prefix, suffix: anchor.suffix, paraText: anchor.paraText });
-  if (format === "xlsx") return xlsxDurable(units.wb, anchor.location);
-  return pptxDurable(units.deck, anchor.location, { quote: anchor.quote, prefix: anchor.prefix, suffix: anchor.suffix, text: anchor.quote, shapeWide: !!anchor.hitKind });
+  const whole = anchor.cut === true;
+  if (format === "docx") return capDurable(durableFromEngine(units.paragraphs, anchor.location, { quote: anchor.paraText || whole ? "" : anchor.quote, prefix: anchor.prefix, suffix: anchor.suffix, paraText: anchor.paraText }));
+  if (format === "xlsx") return capDurable(xlsxDurable(units.wb, anchor.location));
+  if (format === "pptx") return capDurable(pptxDurable(units.deck, anchor.location, { quote: anchor.quote, prefix: anchor.prefix, suffix: anchor.suffix, text: anchor.quote, shapeWide: !!anchor.hitKind || whole }));
+  if (format === "html") return capDurable(htmlDurable(units.read, anchor));
+  return unknownFormat(format, "buildDurable");
 }
 
 /** Re-resolve a stored durable anchor against new units. DOCX results keep their own shape (see docx.js). */
@@ -27,7 +62,9 @@ export function resolveDurableAny(units, durable) {
   if (!durable) return { method: "none" };
   if (units.format === "docx") return resolveDurable(units.paragraphs, durable);
   if (units.format === "xlsx") return resolveXlsx(units.wb, durable);
-  return resolvePptx(units.deck, durable);
+  if (units.format === "pptx") return resolvePptx(units.deck, durable);
+  if (units.format === "html") return resolveHtml(units.read, durable);
+  return unknownFormat(units.format, "resolveDurableAny");
 }
 
 /**
@@ -144,8 +181,10 @@ export function changedRegions(format, preBytes, postBytes) {
   } else if (format === "xlsx") {
     const A = parseWorkbook(preBytes);
     const B = parseWorkbook(postBytes);
+    const namesB = new Map(); // sheet name -> how many sheets of B have it
+    for (const y of B.sheets) namesB.set(y.name, (namesB.get(y.name) || 0) + 1);
     for (const sb of B.sheets) {
-      const sa = A.sheets.find((x) => x.name === sb.name) || A.sheets.find((x) => x.sheetId === sb.sheetId && !B.sheets.some((y) => y !== sb && y.name === x.name));
+      const sa = A.sheets.find((x) => x.name === sb.name) || A.sheets.find((x) => x.sheetId === sb.sheetId && !(namesB.get(x.name) > (x.name === sb.name ? 1 : 0)));
       const rowsB = sheetRows(B, sb);
       if (!sa) {
         for (const row of rowsB) push({ kind: "added", sheetId: sb.sheetId, sheetName: sb.name, range: a1Range({ r0: row.r, c0: row.cells[0].c, r1: row.r, c1: row.cells[row.cells.length - 1].c }) });
@@ -173,18 +212,29 @@ export function changedRegions(format, preBytes, postBytes) {
     const B = parseDeck(postBytes);
     A.ensure();
     B.ensure();
+    const slidesA = new Map();
+    for (const x of A.slides) if (!slidesA.has(x.id)) slidesA.set(x.id, x);
     for (const sb of B.slides) {
-      const sa = A.slides.find((x) => x.id === sb.id);
+      const sa = slidesA.get(sb.id);
       if (!sa) {
         push({ kind: "added", slideId: sb.id });
         continue;
       }
+      const inA = new Map(); // id#ordinal -> the first such shape of the slide before, built once per slide
+      for (const x of sa.shapes) if (!inA.has(`${x.id}#${x.ordinal}`)) inA.set(`${x.id}#${x.ordinal}`, x);
       for (const sh of sb.shapes) {
-        const old = sa.shapes.find((x) => x.id === sh.id && x.ordinal === sh.ordinal);
+        const old = inA.get(`${sh.id}#${sh.ordinal}`);
         if (!old) push({ kind: "added", slideId: sb.id, shapeId: sh.id });
         else if (old.hash !== sh.hash) push({ kind: "changed", slideId: sb.id, shapeId: sh.id });
       }
     }
-  }
+  } else if (format === "html") {
+    // elements that hold text (and images, other leaves) by tag and own text, in order: what is new or different in the post version
+    const A = readHtml(preBytes);
+    const B = readHtml(postBytes);
+    const key = (u) => `${u.tag}\u0000${ownHash(u.node)}`;
+    const { kind } = diffSeq(A.units.map(key), B.units.map(key));
+    B.units.forEach((u, i) => kind[i] !== "same" && push({ kind: kind[i], nodeId: u.nodeId, path: pathString(elementPath(u.node)), text: normText(visibleText(B, u.node)).slice(0, 160) }));
+  } else unknownFormat(format, "changedRegions");
   return { items, truncated: items.length >= MAX_CHANGES };
 }

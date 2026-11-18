@@ -12,17 +12,13 @@
 // Ceilings: one suggestion at a time per file here, and one at a time for the whole server in the worker (src/rewriter.js answers "busy").
 // The store is lost with the server (a reload after a restart shows no card; the stamp is tapped again).
 import crypto from "node:crypto";
-import { buildDurable, readUnits } from "./anchors.js";
 import { diffText } from "./diff.js";
-import { checkRegularOwned, readDoc } from "./fsutil.js";
 import { REWRITE_TASKS, checkRewrite, inputQualifies } from "./rewrite-check.js";
 import { APPLE_STATES, appleHelperState, appleStateLine, getRewriter, rewriterStatus } from "./rewriter.js";
 import { setupRewriter } from "./rewriter-setup.js";
 import { untrusted } from "./sanitize.js";
+import { anchorsOffThread } from "./offload.js";
 import { HttpError } from "./session.js";
-import { sentenceSpan } from "./sentence-span.js";
-import { placeOf } from "./suggest-reply.js";
-import { normText } from "./text.js";
 
 export { USE_NOTE, USE_SUMMARY, buildUseReply, changedMiddle, placeOf } from "./suggest-reply.js";
 
@@ -114,32 +110,21 @@ export async function suggest(sessions, key, body, opts = {}) {
   const picked = anchor.quote; // exactly what the page selected; the file is searched for this
   if (untrusted(picked.trim(), MAX_QUOTE + 100) !== picked.trim()) return no("selection"); // control, bidi or zero-width characters, a line break
 
-  // where it is in the file on disk now, read only. A sentence the page changed and has not sent yet is not found: that is checked again,
-  // on the bytes actually written, at Use
-  let place = null;
-  try {
-    checkRegularOwned(s.file);
-    const units = readUnits(s.format, readDoc(s.file));
-    place = placeOf(units, buildDurable(units, anchor), picked);
-  } catch {
-    place = null;
-  }
-  if (place?.code === "protected") return { state: "protected" };
-  if (place?.code === "not_eligible") return no("place");
+  // where it is in the file on disk now, read only, in the anchor worker (src/anchor-work.js; the paragraph's text stays there). A sentence
+  // the page changed and has not sent yet is not found: that is checked again, on the bytes actually written, at Use. Work that did not
+  // finish reads as not found.
   // The sentence is read from the paragraph itself, never from the page: a selection that is a sentence minus its end mark, closing quote or
   // bracket, or with spaces at its edges, means the whole sentence (src/sentence-span.js). The anchor Use will write on is the sentence's.
+  const r = await anchorsOffThread({ format: s.format, source: { path: s.file }, tasks: [{ op: "select", anchor, picked, limits: { context: CONTEXT, maxQuote: MAX_QUOTE } }] });
+  const place = r.ok && r.r.read.ok && r.r.results[0] && !r.r.results[0].error ? r.r.results[0] : null;
+  if (place?.code === "protected") return { state: "protected" };
+  if (place?.code === "not_eligible") return no("place");
+  if (place?.code === "selection") return no("selection");
   let quote = picked;
   let from = anchor;
-  if (place?.ok) {
-    const span = Number.isInteger(place.start) && Number.isInteger(place.end) ? sentenceSpan(place.text, place.start, place.end) : null;
-    if (span) {
-      quote = place.text.slice(span.start, span.end);
-      if (untrusted(quote, MAX_QUOTE + 100) !== quote || quote.length > MAX_QUOTE + 10) return no("selection");
-      const loc = Number.isInteger(anchor.location.start) && Number.isInteger(anchor.location.end) ? { ...anchor.location, start: span.start, end: span.end } : anchor.location;
-      from = { location: loc, quote, prefix: place.text.slice(Math.max(0, span.start - CONTEXT), span.start), suffix: place.text.slice(span.end, span.end + CONTEXT) };
-    }
-  } else if (untrusted(picked, MAX_QUOTE + 100) !== picked) return no("selection"); // edge spaces: nothing to read the sentence from
-  const wholeParagraph = place?.ok ? normText(place.text) === normText(quote) : body.wholeParagraph === true;
+  let wholeParagraph = body.wholeParagraph === true;
+  if (place?.ok) ({ quote, from, wholeParagraph } = place);
+  else if (untrusted(picked, MAX_QUOTE + 100) !== picked) return no("selection"); // edge spaces: nothing to read the sentence from
   const q = inputQualifies(quote, { wholeParagraph });
   if (!q.ok) return q.reasons.some((r) => r.code === "input_addresses_ai") ? { state: "addresses_ai" } : no("sentence");
 
@@ -192,12 +177,12 @@ export async function suggest(sessions, key, body, opts = {}) {
  * body: {id, commentId, comments, note?, baseSha, bytesB64?, edits?}. The record is looked up here by id; Sessions.useSuggestion checks the
  * rest and starts the local run. The record is used once: it is forgotten as soon as the run has started.
  */
-export function useSuggestion(sessions, key, body) {
+export async function useSuggestion(sessions, key, body) {
   const id = typeof body?.id === "string" ? body.id : "";
   const record = findSuggestion(sessions, key, id);
   if (!record) throw new HttpError(409, "This suggestion is out of date. Tap the stamp again.", { code: "expired" });
   const bytes = typeof body.bytesB64 === "string" ? Buffer.from(body.bytesB64, "base64") : null;
-  sessions.useSuggestion(key, { suggestion: record, commentId: body.commentId, comments: body.comments, note: body.note, baseSha: String(body.baseSha || ""), bytes, edits: body.edits });
+  await sessions.useSuggestionAsync(key, { suggestion: record, commentId: body.commentId, comments: body.comments, note: body.note, baseSha: String(body.baseSha || ""), bytes, edits: body.edits, rev: body.rev, seen: body.seen, noteSeen: body.noteSeen, tab: body.tab });
   forgetSuggestion(sessions, key, id);
   return sessions.get(key);
 }

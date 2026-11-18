@@ -1,12 +1,12 @@
 {
   "name": "onionskin",
-  "description": "Onionskin: edit Word, Excel and PowerPoint files in your browser and let your coding agent make the changes.",
+  "description": "Onionskin: edit Word, Excel, PowerPoint and HTML files in your browser and let your coding agent make the changes.",
   "owner": { "name": "abe238", "url": "https://github.com/abe238" },
   "plugins": [
     {
       "name": "onionskin",
       "source": "./skills/onionskin",
-      "description": "Open a Word, Excel or PowerPoint file in Onionskin, mark it up in the browser, and have the agent make the changes in the real file.",
+      "description": "Open a Word, Excel, PowerPoint or HTML file in Onionskin, mark it up in the browser, and have the agent make the changes in the real file.",
       "author": { "name": "abe238", "url": "https://github.com/abe238" },
       "homepage": "https://github.com/abe238/onionskin",
       "repository": "https://github.com/abe238/onionskin",

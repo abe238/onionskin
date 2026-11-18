@@ -4,7 +4,7 @@
 #   curl -fsSL <release url>/get.sh | sh
 #   curl -fsSL <release url>/get.sh | sh -s -- --no-checker      (anything after -- goes to install.sh: --no-checker, --rewriter)
 #   sh get.sh --dry-run     print what would happen; downloads nothing, changes nothing
-# Pin a release with variables (both are plain URLs; https only, or file:// and http://127.0.0.1 for local tests):
+# Pin a release with variables (plain URLs: https, or file:/// and http://127.0.0.1 for local tests; no user name in a URL):
 #   ONIONSKIN_BASE_URL     the folder both files are fetched from (default: the latest release; the zip is onionskin.zip in it)
 #   ONIONSKIN_ZIP_URL      the zip                      (default: the latest release's onionskin.zip)
 #   ONIONSKIN_SHA256_URL   its checksum file            (default: the zip URL plus .sha256; "<hash>" or "<hash>  <name>")
@@ -35,11 +35,30 @@ main() {
   NMAJ=$(node -v 2>/dev/null | sed 's/^v//; s/\..*//')
   [ "${NMAJ:-0}" -ge 22 ] 2>/dev/null || { die "Node.js $(node -v 2>/dev/null) is too old; 22 or newer is required. Update it from https://nodejs.org/en/download, open a new Terminal window, and run this again. Nothing was changed."; return 1; }
 
-  for u in "$ZIP_URL" "$SHA_URL"; do
-    case "$u" in
-      https://*|file:///*|http://127.0.0.1:*|http://127.0.0.1/*) ;;
-      *) die "refusing the URL $u (only https:// is accepted)"; return 1 ;;
+  # The one rule for a release URL (src/update.js baseUrlOk is the same rule): https://, file:///, or http:// to exactly 127.0.0.1 with
+  # an optional port; no white space anywhere and no "@" or backslash before the first "/" after the scheme, so a user name cannot
+  # hide the real host (http://127.0.0.1:80@evil.example/ is evil.example).
+  url_ok() {
+    case "$1" in *[[:space:]]*) return 1 ;; esac
+    case "$1" in
+      https://*) rest=${1#https://} ;;
+      file:///*) return 0 ;;
+      http://*) rest=${1#http://} ;;
+      *) return 1 ;;
     esac
+    auth=${rest%%/*}
+    case "$auth" in *@*|*\\*) return 1 ;; esac
+    case "$1" in http://*) ;; *) return 0 ;; esac
+    case "$auth" in
+      127.0.0.1) return 0 ;;
+      127.0.0.1:*) port=${auth#127.0.0.1:}; case "$port" in ""|*[!0-9]*) return 1 ;; esac; return 0 ;;
+    esac
+    return 1
+  }
+  # curl may use only the scheme the rule allowed: plain http only for 127.0.0.1, and a redirect only to https
+  proto() { case "$1" in http://*) printf '%s' "=https,file,http" ;; *) printf '%s' "=https,file" ;; esac; }
+  for u in "$ZIP_URL" "$SHA_URL"; do
+    url_ok "$u" || { die "refusing the URL $u (only https:// is accepted)"; return 1; }
   done
   if [ -n "$WANT" ]; then
     case "$WANT" in *[!0-9a-fA-F]*|"") die "ONIONSKIN_SHA256 must be 64 hex characters"; return 1 ;; esac
@@ -58,9 +77,9 @@ main() {
   trap 'rm -rf "$TMPD"' EXIT INT TERM HUP
   CURL="curl -fsSL --connect-timeout 20 --max-time 300 --proto-redir =https"
   say "Downloading"
-  $CURL -o "$TMPD/onionskin.zip" "$ZIP_URL" || { die "could not download $ZIP_URL"; return 1; }
+  $CURL --proto "$(proto "$ZIP_URL")" -o "$TMPD/onionskin.zip" "$ZIP_URL" || { die "could not download $ZIP_URL"; return 1; }
   if [ -z "$WANT" ]; then
-    $CURL -o "$TMPD/onionskin.zip.sha256" "$SHA_URL" || { die "could not download $SHA_URL"; return 1; }
+    $CURL --proto "$(proto "$SHA_URL")" -o "$TMPD/onionskin.zip.sha256" "$SHA_URL" || { die "could not download $SHA_URL"; return 1; }
     WANT=$(awk 'NR==1 {print $1}' "$TMPD/onionskin.zip.sha256")
     case "$WANT" in *[!0-9a-fA-F]*|"") die "the checksum file does not start with a SHA-256 hash"; return 1 ;; esac
     [ "${#WANT}" = 64 ] || { die "the checksum file does not start with a SHA-256 hash"; return 1; }

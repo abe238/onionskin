@@ -39,7 +39,13 @@
           { "$ref": "#/$defs/delete_slide" },
           { "$ref": "#/$defs/move_slide" },
           { "$ref": "#/$defs/replace_all_text" },
-          { "$ref": "#/$defs/format_all" }
+          { "$ref": "#/$defs/format_all" },
+          { "$ref": "#/$defs/set_text" },
+          { "$ref": "#/$defs/set_attribute" },
+          { "$ref": "#/$defs/remove_attribute" },
+          { "$ref": "#/$defs/insert_html" },
+          { "$ref": "#/$defs/replace_element" },
+          { "$ref": "#/$defs/delete_element" }
         ]
       }
     }
@@ -51,7 +57,7 @@
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
-      "description": "What the agent saw at the target. DOCX/PPTX text targets: `quote` must be contained in the target's text (whitespace collapsed, NFC), `text_hash` must equal the hash of the whole text (the batch `locator.text_hash`). XLSX targets: `quote` must EQUAL the text of the region (cells joined by TAB, rows by LF, each cell as typed: the formula if it has one, else the value; an empty region is the empty string), `text_hash` is the same hash of that text. `absent: true` (add_sheet) means the sheet name must not exist yet.",
+      "description": "What the agent saw at the target. HTML elements: `text_hash` must equal the hash of the element's own text (its direct text, the batch `locator.text_hash`), `quote` must be contained in its visible text. DOCX/PPTX text targets: `quote` must be contained in the target's text (whitespace collapsed, NFC), `text_hash` must equal the hash of the whole text (the batch `locator.text_hash`). XLSX targets: `quote` must EQUAL the text of the region (cells joined by TAB, rows by LF, each cell as typed: the formula if it has one, else the value; an empty region is the empty string), `text_hash` is the same hash of that text. `absent: true` (add_sheet) means the sheet name must not exist yet.",
       "properties": {
         "quote": { "type": "string", "maxLength": 20000 },
         "text_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
@@ -84,11 +90,11 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["op", "target", "expect"],
-      "description": "Inside one paragraph. Either `find` + `replace` (the find text must occur exactly once unless `occurrence` or `all` is given; run formatting is kept) or `text` (the whole paragraph text; refused when the paragraph holds images or other objects).",
+      "description": "Inside one paragraph (DOCX) or one element (HTML). Either `find` + `replace` (the find text must occur exactly once unless `occurrence` or `all` is given; run formatting is kept) or `text` (the whole paragraph text; refused when the paragraph holds images or other objects). HTML: each match must lie inside one text of the page (a match across an element's edge, such as a link or bold text, is refused as `spans_markup`); whitespace in `find` matches any run of whitespace in the source; `text` sets the element's text when it holds one text and nothing else.",
       "properties": {
         "op": { "const": "replace_text" },
         "id": { "$ref": "#/$defs/id" },
-        "target": { "$ref": "#/$defs/docx_target" },
+        "target": { "$ref": "#/$defs/text_target" },
         "expect": { "$ref": "#/$defs/expect" },
         "find": { "$ref": "#/$defs/find" },
         "replace": { "$ref": "#/$defs/text" },
@@ -505,11 +511,117 @@
         "where": { "$ref": "#/$defs/where" }
       }
     },
+    "html_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "An element of an HTML file: an anchor id from the batch, or the `path` (as /html[1]/body[1]/p[3]) or unique `element_id` the batch's locator or the outline's `at` gives. Exactly one of them. The element must be written in the source (not implied by the parser); script and style elements cannot be targets.",
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^a[0-9]+$" },
+        "path": { "$ref": "#/$defs/html_path" },
+        "element_id": { "$ref": "#/$defs/html_element_id" }
+      }
+    },
+    "text_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "replace_text's target: a DOCX paragraph (docx_target) or an HTML element (html_target). Which fields go together is checked by the validator: anchor_id alone, or the DOCX locator fields, or one of path and element_id.",
+      "properties": {
+        "anchor_id": { "type": "string", "pattern": "^a[0-9]+$" },
+        "para_id": { "type": "string", "pattern": "^[0-9A-Fa-f]{8}$" },
+        "body_path": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "integer", "minimum": 0 } },
+        "text_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "path": { "$ref": "#/$defs/html_path" },
+        "element_id": { "$ref": "#/$defs/html_element_id" }
+      }
+    },
+    "html_path": { "type": "string", "minLength": 2, "maxLength": 20000, "pattern": "^(/[a-z0-9-]{1,40}\\[[1-9][0-9]{0,6}\\])+$" },
+    "html_element_id": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
+    "markup": { "type": "string", "minLength": 1, "maxLength": 200000 },
+    "attribute_name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
+    "set_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "text"],
+      "description": "HTML only. The whole text of an element that holds one text and nothing else (or nothing at all); an element with other elements inside is refused as `spans_markup` (use replace_element). `expect.text_hash` is the hash of the element's own text (the batch's `locator.text_hash`).",
+      "properties": {
+        "op": { "const": "set_text" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "text": { "$ref": "#/$defs/text" }
+      }
+    },
+    "set_attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "name", "value"],
+      "description": "HTML only. Sets one attribute of an element (its quoting kept), or adds it after the last one. Only attributes that cannot run code are written: an event handler, a data- attribute, a new URL scheme other than http, https, mailto, tel or a relative path, and every attribute outside the allowlist refuse the whole write (`active_content`).",
+      "properties": {
+        "op": { "const": "set_attribute" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "name": { "$ref": "#/$defs/attribute_name" },
+        "value": { "type": "string", "maxLength": 1000000 }
+      }
+    },
+    "remove_attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "name"],
+      "description": "HTML only. Removes one attribute. Refused (`not_addressable`) on a start tag that holds an attribute more than once: removing the first would make the next one count.",
+      "properties": {
+        "op": { "const": "remove_attribute" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "name": { "$ref": "#/$defs/attribute_name" }
+      }
+    },
+    "insert_html": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "where", "html"],
+      "description": "HTML only. New markup before or after the target element, or as its first or last child. The markup is parsed in that place and must read back the same (`not_well_formed`) and stay where it is put (`proof_failed`). Code that runs in a browser (a script, an event handler, a frame, a form, a remote image, a stylesheet link, a data- attribute) refuses the whole write (`active_content`).",
+      "properties": {
+        "op": { "const": "insert_html" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "where": { "enum": ["before", "after", "first_child", "last_child"] },
+        "html": { "$ref": "#/$defs/markup" }
+      }
+    },
+    "replace_element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "html"],
+      "description": "HTML only. Replaces the target element (its tags and everything inside) with new markup, parsed in its place under the same rules as insert_html.",
+      "properties": {
+        "op": { "const": "replace_element" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" },
+        "html": { "$ref": "#/$defs/markup" }
+      }
+    },
+    "delete_element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect"],
+      "description": "HTML only. Removes the target element with everything inside it.",
+      "properties": {
+        "op": { "const": "delete_element" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": { "$ref": "#/$defs/html_target" },
+        "expect": { "$ref": "#/$defs/expect" }
+      }
+    },
     "replace_all_text": {
       "type": "object",
       "additionalProperties": false,
       "required": ["op", "find", "replace", "expect"],
-      "description": "Every occurrence in the document (DOCX paragraphs including table cells, XLSX cells as typed, PPTX shapes). Protected units that contain a match are skipped and reported. `expect.count` is the number of matches including the protected ones.",
+      "description": "Every occurrence in the document (DOCX paragraphs including table cells, XLSX cells as typed, PPTX shapes, HTML text: never a script or style body, never an attribute value; a match across an element's edge is not counted, and a count that misses carries `spans_markup`). Protected units that contain a match are skipped and reported. `expect.count` is the number of matches including the protected ones.",
       "properties": {
         "op": { "const": "replace_all_text" },
         "id": { "$ref": "#/$defs/id" },

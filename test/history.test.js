@@ -265,6 +265,36 @@ test("history docx: paragraph ids pair an edited paragraph even when its words c
   assert.equal(mapA[0], 0);
 });
 
+// outside review, final round: paragraph 1 retyped to read as paragraph 2, paragraph 2 edited. Text matching paired the new paragraph 1
+// with the old paragraph 2 and listed paragraph 1 as removed; by their ids both paragraphs were edited in place.
+test("history docx: ids decide identity: a paragraph retyped to read as its neighbor is changed in place, never removed and added", () => {
+  const S = ["The first paragraph opens the plan.", "The second paragraph states the goal.", "The third paragraph lists the steps.", "The fourth paragraph closes."];
+  const ids = (list) => docxBytes(list.map((text, i) => ({ text, paraId: String(i + 1).padStart(8, "0") })));
+  for (const [A, B] of [[["A", "B", "C", "D"], ["B", "B2", "C", "D"]], [S, [S[1], `${S[1]} Edited.`, S[2], S[3]]]]) {
+    const r = compareBytes("docx", ids(A), ids(B), { places: true });
+    assert.deepEqual(r.counts, { changed: 2, added: 0, removed: 0 }, JSON.stringify(r.places));
+    assert.deepEqual(r.places.map((p) => [p.change, p.locator.para_id]), [["modified", "00000001"], ["modified", "00000002"]]);
+  }
+});
+
+test("history docx: with ids, two paragraphs that changed places read as moved, short ones too; without ids as before", () => {
+  const withIds = (list) => docxBytes(list.map(([text, n]) => ({ text, paraId: String(n).padStart(8, "0") })));
+  const L = ["Opening paragraph of the report, long enough.", "Middle paragraph of the report, long enough too.", "Closing paragraph of the report, long enough."];
+  for (const T of [L, ["One", "Two", "Three"]]) {
+    const r = compareBytes("docx", withIds(T.map((t, i) => [t, i + 1])), withIds([[T[1], 2], [T[0], 1], [T[2], 3]]), { places: true });
+    assert.deepEqual(r.counts, { changed: 1, added: 0, removed: 0 }, JSON.stringify(r.places));
+    assert.equal(r.places[0].change, "moved");
+  }
+  const plain = compareBytes("docx", docxBytes(["One", "Two", "Three"]), docxBytes(["Two", "One", "Three"]), { places: true });
+  assert.deepEqual(plain.counts, { changed: 0, added: 0, removed: 0 }, "short texts without ids, as before: a move would be a coincidence, and the equal texts pair in place");
+});
+
+test("history docx: a re-save that gave every paragraph a new id, text unchanged, reads as no change (an id found on one side says nothing)", () => {
+  const T = ["Opening paragraph of the report, long enough.", "Short", "Closing paragraph of the report, long enough."];
+  const ids = (from) => docxBytes(T.map((text, i) => ({ text, paraId: String(from + i).padStart(8, "0") })));
+  assert.deepEqual(compareBytes("docx", ids(1), ids(101), { places: true }).counts, { changed: 0, added: 0, removed: 0 });
+});
+
 test("history docx: a spacing-only edit is formatting with no ops, blank paragraphs are ignored, identical files have zero counts", () => {
   const A = ["Alpha  beta gamma delta epsilon.", "Second paragraph that stays."];
   const B = ["Alpha beta gamma delta epsilon.", "Second paragraph that stays.", "", ""];

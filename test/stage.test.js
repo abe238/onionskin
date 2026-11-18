@@ -97,6 +97,18 @@ test("the page's words for a stage: a run on this Mac reads 'Doing this on your 
   assert.equal(stageOf({ state: "idle", stage: null }).text, "");
 });
 
+test("the top bar's line during a run: a Word file says to keep editing; an HTML file is read-only then, so it says to comment now", async () => {
+  const { lockedSyncText } = await import("../web/src/stage.js");
+  assert.equal(lockedSyncText({ state: "working", stage: "delivered", format: "docx", locked: true }), "The agent has your batch: keep editing");
+  assert.equal(lockedSyncText({ state: "working", stage: "writing", format: "docx", locked: true }), "Writing your changes: keep editing");
+  assert.equal(lockedSyncText({ state: "working", stage: "local", local: true, format: "xlsx", locked: true }), "Working on this Mac: keep editing");
+  for (const stage of ["delivered", "writing", "checking", "local", undefined]) {
+    const t = lockedSyncText({ state: "working", stage, local: stage === "local", format: "html", locked: true });
+    assert.equal(t, "Agent working: comment now, fix text after", String(stage));
+    assert.ok(!/keep editing/i.test(t));
+  }
+});
+
 test("the words for the wait: pending window, progress line of this batch only, counter, and when Stop shows", async () => {
   const { pendingWords, progressOf, elapsedText, stopKind } = await import("../web/src/stage.js");
   // the window after Send before an agent has the batch

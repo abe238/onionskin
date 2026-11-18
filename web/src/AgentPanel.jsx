@@ -54,7 +54,7 @@ export function AgentPanel({ agent, readOnly, onAct }) {
               <button type="button" className="btn sm" disabled={readOnly} onClick={() => onAct("terminal")} data-testid="agent-terminal">
                 Open in Terminal
               </button>
-              <p className="ap-note" data-testid="agent-terminal-hint">Opens this agent's conversation in Terminal, with the same limits. The background agent stops while it is open.</p>
+              <p className="ap-note" data-testid="agent-terminal-hint">Opens this agent's conversation in Terminal, with the same limits, where it keeps listening for your Send. Claude Code may first ask whether you trust the folder: choose Yes. The background agent stops while it is open.</p>
             </div>
           )}
         </>

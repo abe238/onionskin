@@ -10,6 +10,7 @@ import { execFile as nodeExecFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sessionKey } from "./paths.js";
 
 /** Every holder id the server's own background agents poll with starts with this; the rest of the id is the session key. */
 export const BG_PREFIX = "onionskin-bg-";
@@ -20,6 +21,27 @@ export const TERM_PREFIX = "onionskin-term-";
 export const termHolder = (key) => `${TERM_PREFIX}${key}`;
 /** A holder Onionskin itself gives to an agent it starts: the background one or its Terminal form. */
 export const isAgentHolder = (h) => isBgHolder(h) || (typeof h === "string" && h.startsWith(TERM_PREFIX));
+
+/** What every command refuses with when an agent Onionskin started names another file: the same words whether that file is open or not. */
+export const NOT_YOUR_FILE = "This agent works only on the file it was started for. Nothing was read or written.";
+
+/**
+ * May `holder` act on `file`? Any holder but an agent Onionskin started may (its lease is checked where it acts). An agent's holder carries
+ * the session key of its one file (onionskin-bg-<key>, onionskin-term-<key>): the file must resolve to that key. Decided from the path
+ * alone, before any session is looked up or the file is read, so the answer for another file never depends on that file being open.
+ * One check for the CLI (src/cli.js, src/reply.js, src/apply.js) and the server's /cli/* routes (src/local.js sessionFor).
+ */
+export function agentMayUse(holder, file) {
+  if (!isAgentHolder(holder)) return true;
+  const key = holder.slice(isBgHolder(holder) ? BG_PREFIX.length : TERM_PREFIX.length);
+  let real;
+  try {
+    real = fs.realpathSync(path.resolve(String(file || "")));
+  } catch {
+    return false;
+  }
+  return key !== "" && sessionKey(real) === key;
+}
 
 /** `--restricted` and the `//` rule forms need at least this Claude Code. An older one counts as not installed ("Update Claude Code"). */
 export const MIN_CLAUDE = "2.1.323";
@@ -126,11 +148,15 @@ export function cleanEnv({ binDir, stateDir, holder, workDir, env = process.env 
 /**
  * The exact command line (section 2.2 of the build spec, with the rule forms the real probe proved): returns the argv after the binary.
  * `resume` continues the crashed conversation (`--resume <id>`) instead of starting one (`--session-id <id>`). `print: false` is the
- * Terminal form (Open in Terminal): the same limits, without -p and the stream flags.
+ * Terminal form (Open in Terminal): the same limits, without -p and the stream flags; its `prompt` (when given) is the first message of the
+ * interactive session, so it starts polling at once instead of waiting at its prompt.
+ *
+ * The prompt is a positional argument and stays FIRST in both forms (`-p` takes no value, so it is a positional there too): `--add-dir`,
+ * `--tools` and `--allowedTools` take several values, and a prompt placed after one of them would be read as one more of its values.
  */
 export function buildArgv({ prompt, skill, model = DEFAULT_MODEL, sessionId, resume = false, workDir, refDir, print = true }) {
   return [
-    ...(print ? ["-p", prompt] : []),
+    ...(print ? ["-p", prompt] : prompt ? [prompt] : []),
     "--append-system-prompt", skill,
     "--model", model,
     resume ? "--resume" : "--session-id", sessionId,

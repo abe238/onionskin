@@ -2,7 +2,7 @@
 // A stand-in for the `claude` command, for the background agent's browser tests. Installed as `claude` in a temp folder (see fake-side.mjs).
 // It answers `--version` and `auth status --json`, and in `-p` mode prints Claude Code's stream-json lines while it runs the REAL `onionskin poll`
 // and `onionskin reply` (found on PATH), the way scripts/real-run/fake-agent.mjs does. It never reads a document's text as instructions: its one edit is fixed.
-// `purge <dir> --yes` is recorded in `purged`. The folder holding this file may hold `mode`: "signed_out" (auth fails), "crash" (exits 1 as soon as a batch arrives), "limit" (prints the plan-limit event when a batch arrives and exits), "outline" (sets the first outline unit to a fixed title), "outline-file" (finds a fixed sentence in the batch's outline file), "hold" (keeps the batch and waits; on a signal it records the signal in `signals`, tries a
+// `purge <dir> --yes` is recorded in `purged`. The folder holding this file may hold `mode`: "signed_out" (auth fails), "crash" (exits 1 as soon as a batch arrives), "limit" (prints the plan-limit event when a batch arrives and exits), "outline" (sets the first outline unit to a fixed title), "outline-file" (finds a fixed sentence in the batch's outline file), "html" (does what `html-op.json` says to an HTML file's first comment), "hold" (keeps the batch and waits; on a signal it records the signal in `signals`, tries a
 // late reply with its lease into `late.json`, then exits a second later), or empty. Every start appends its pid to `pids`, and "resume" or "fresh" to `starts`.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -91,17 +91,34 @@ for (;;) {
     emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "tur", name: "Read", input: { file_path: of } }] }, session_id: sessionId });
     unit = fs.readFileSync(of, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((x) => x.target && x.text.startsWith("The harbor office"));
   }
+  // "html": an HTML file's round. `html-op.json` next to this file says what to do with the first comment: {find, replace} (the reply
+  // shorthand: a replace_text in that comment's element), or {add: "<markup>"} (full ops: an insert_html after it, used to try adding a script)
+  const htmlWant = mode === "html" ? JSON.parse(fs.readFileSync(path.join(here, "html-op.json"), "utf8")) : null;
+  const htmlReply = (c) => {
+    const a = (j.untrusted_document_evidence?.anchors || []).find((x) => x.id === c.anchor_id);
+    if (!htmlWant.add) return { comment: c.id, find: htmlWant.find, replace: htmlWant.replace, note: "Changed." };
+    return { comment: c.id, ops: [{ op: "insert_html", id: "html1", target: { anchor_id: a.id }, expect: { text_hash: a.locator?.text_hash }, where: "after", html: htmlWant.add }], note: "Added it." };
+  };
   const reply =
-    mode === "outline-file"
+    mode === "html"
+      ? { summary: "Made the change you asked for.", replies: [] }
+      : mode === "outline-file"
       ? { summary: "Changed the month.", replies: [], ops: unit ? [{ op: "replace_text", id: "overall", target: unit.target, expect: unit.expect, find: "March", replace: "April" }] : [] }
       : mode === "outline"
       ? { summary: "Changed the title.", replies: [], ops: unit ? [{ op: "replace_text", id: "overall", target: unit.target, expect: unit.expect, text: "Quarterly review approved" }] : [] }
       : { summary: "Changed the paragraph number.", replies: [], ops: [{ op: "replace_all_text", id: "overall", find: "Paragraph 003:", replace: "Paragraph THREE:", expect: { count: 1 } }] };
-  for (const c of j.instructions.comments || []) reply.replies.push({ comment: c.id, decline: true, note: "The fake agent only changes the paragraph number." });
+  for (const [i, c] of (j.instructions.comments || []).entries()) reply.replies.push(mode === "html" ? (i === 0 ? htmlReply(c) : { comment: c.id, decline: true, note: "The fake agent changes the first comment only." }) : { comment: c.id, decline: true, note: "The fake agent only changes the paragraph number." });
   const rf = path.join(workDir, `reply-${j.batch_id}.json`);
   emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "tuw", name: "Write", input: { file_path: rf, content: "(reply)" } }] }, session_id: sessionId });
   fs.writeFileSync(rf, JSON.stringify(reply));
   const rid = bash(`onionskin reply --lease ${ticket} --file ${rf}`);
-  result(rid, run("reply", "--lease", ticket, "--file", rf).stdout);
+  const rr = run("reply", "--lease", ticket, "--file", rf);
+  result(rid, rr.stdout);
+  if (mode === "html" && rr.status !== 0) {
+    // refused (a script it tried to add): the batch is still its own; it declines, so the run ends with what Onionskin said
+    fs.writeFileSync(rf, JSON.stringify({ summary: "Onionskin refused the change.", replies: (j.instructions.comments || []).map((c) => ({ comment: c.id, decline: true, note: "Onionskin did not write it." })) }));
+    const id2 = bash(`onionskin reply --lease ${ticket} --file ${rf}`);
+    result(id2, run("reply", "--lease", ticket, "--file", rf).stdout);
+  }
 }
 emit({ type: "result", subtype: "success", is_error: false, permission_denials: [], session_id: sessionId });

@@ -19,7 +19,7 @@ export function checkRegularOwned(file) {
 /** Reads a document, refusing by size first (an oversized file is never pulled into memory). */
 export function readDoc(file, max = MAX_DOC_BYTES) {
   const st = fs.statSync(file);
-  if (st.size > max) throw Object.assign(new Error(`${path.basename(file)} is larger than ${Math.round(max / 1024 / 1024)} MB`), { code: "TOO_LARGE" });
+  if (st.size > max) throw Object.assign(new Error(`${path.basename(file)} is larger than ${Math.round(max / 1024 / 1024)} MB, more than Onionskin can read. Make it smaller (pictures and videos are often most of a file) or split it, and open that`), { code: "TOO_LARGE" });
   return fs.readFileSync(file);
 }
 

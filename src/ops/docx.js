@@ -4,7 +4,7 @@ import { replaceEntry } from "../zip-write.js";
 import { checkExpect, engineFailure, excerpt, fail, textHash, normText, refused } from "./common.js";
 import { TableError, tableEditor } from "./docx-table.js";
 import { loadEngine, openEngine } from "./engine.js";
-import { applySet, findAll, hasObjects, layout, partialWords, pickMatches, replaceRange, setAllText, splitForRange } from "./runs.js";
+import { applySet, applySets, countMatches, findRanges, hasObjects, layout, pickMatches, rangesOf, replaceRanges, setAllText, splitForRange, splitForRanges } from "./runs.js";
 
 /**
  * DOCX driver. Two phases per run (see run.js): bind() resolves anchors and checks `expect` against the file as it was before any
@@ -45,15 +45,17 @@ export async function open({ bytes, name, anchors }) {
   const ours = readDocxParagraphs(bytes);
   const group = (list) => {
     const m = new Map();
-    for (const x of list) m.set(x.hash, [...(m.get(x.hash) || []), x]);
+    for (const x of list) (m.get(x.hash) || m.set(x.hash, []).get(x.hash)).push(x); // a copy per paragraph was quadratic among equal texts
     return m;
   };
   const ourBy = group(ours);
+  const ourAt = new Map(); // a paragraph of ours -> its occurrence number among equal texts (indexOf per lookup was quadratic)
+  for (const list of ourBy.values()) list.forEach((x, i) => ourAt.set(x, i));
   const engBy = group(eng);
   const cur = new Map(); // pid -> current single-part Paragraph model
   for (const e of eng) if (e.pid !== undefined && e.parts.length === 1) cur.set(e.pid, e.parts[0]);
   // tableOps: the row and column edits, run on the engine's saved bytes (save); bound: the body paths other ops of this file edit
-  return { h, paraSpec, meta, styles: meta.styles || [], ours, eng, ourBy, engBy, cur, anchors: anchors || new Map(), newPid: NEW_PID_BASE, name, bytes, tableOps: [], bound: [], shadow: null };
+  return { h, paraSpec, meta, styles: meta.styles || [], ours, eng, ourBy, ourAt, engBy, cur, anchors: anchors || new Map(), newPid: NEW_PID_BASE, name, bytes, tableOps: [], bound: [], shadow: null };
 }
 
 /** the engine paragraph that is `o` (same text, same occurrence number among equal texts); null when the two readings of the file disagree */
@@ -61,7 +63,7 @@ function engineFor(st, o) {
   const a = st.ourBy.get(o.hash);
   const b = st.engBy.get(o.hash);
   if (!b || a.length !== b.length) return null;
-  return b[a.indexOf(o)];
+  return b[st.ourAt.get(o)];
 }
 
 function locatorOf(st, target) {
@@ -72,31 +74,52 @@ function locatorOf(st, target) {
   return { loc: a.locator, quote: a.quote };
 }
 
+const pathKey = (path) => (Array.isArray(path) && path.every(Number.isInteger) ? path.join(",") : null); // a body path is integers (anything else matches nothing)
+const NONE = [];
+/**
+ * The paragraphs of the file by w14:paraId, by body path and by text hash, built on first use: every op of a run looks its paragraph up
+ * instead of scanning them all (a scan per op made a merge of 8,000 edited paragraphs hold the server's thread for 1.4 s, 49,999 for 120 s).
+ */
+function lookup(st) {
+  if (st.lookup) return st.lookup;
+  const ix = { byId: new Map(), byPath: new Map(), byHash: new Map() };
+  const add = (m, k, p) => (m.get(k) || m.set(k, []).get(k)).push(p);
+  for (const p of st.ours) {
+    if (p.paraId) add(ix.byId, p.paraId, p);
+    if (p.path) add(ix.byPath, pathKey(p.path), p);
+    add(ix.byHash, p.hash, p);
+  }
+  return (st.lookup = ix);
+}
+
 /** durable locator -> one paragraph of the file. Exact matches only (paraId, path+hash, hash, quote): no fuzzy matching. */
 function resolveParagraph(st, target) {
   const { loc, quote, error } = locatorOf(st, target);
   if (error) return fail("anchor_not_found", error);
   const pid = loc.para_id || loc.paraId;
-  const path = loc.body_path || null;
+  const path = Array.isArray(loc.body_path) ? loc.body_path : null;
   const hash = loc.text_hash || null;
-  const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => v === b[i]);
+  const ix = lookup(st);
   const unique = (hits, how) => (hits.length === 1 ? { o: hits[0] } : hits.length > 1 ? fail("anchor_not_found", `ambiguous locator (${how} matches ${hits.length} paragraphs)`) : null);
   if (pid) {
-    const r = unique(st.ours.filter((p) => p.paraId === String(pid).toUpperCase()), "para_id");
+    const r = unique(ix.byId.get(String(pid).toUpperCase()) || NONE, "para_id");
     if (r) return r;
   }
+  const atPath = path ? ix.byPath.get(pathKey(path)) || NONE : NONE;
   if (path && hash) {
-    const r = unique(st.ours.filter((p) => same(p.path, path) && p.hash === hash), "body_path with text_hash");
+    const r = unique(atPath.filter((p) => p.hash === hash), "body_path with text_hash");
     if (r) return r;
   }
   if (hash) {
-    const r = unique(st.ours.filter((p) => p.hash === hash), "text_hash");
+    const r = unique(ix.byHash.get(hash) || NONE, "text_hash");
     if (r) return r;
   }
   if (path && !hash) {
-    const r = unique(st.ours.filter((p) => same(p.path, path)), "body_path");
+    const r = unique(atPath, "body_path");
     if (r) return r;
   }
+  // Ceiling: the quote is the last resort (no id, path or hash matched) and scans every paragraph; ops that reach it are rare (an agent's
+  // locator whose paragraph changed), and a batch carries at most its comments' anchors. Upgrade path: a substring index.
   const q = normText(quote || "");
   if (q.length >= 8) {
     const r = unique(st.ours.filter((p) => normText(p.text).includes(q)), "the anchor quote");
@@ -166,16 +189,18 @@ export function bind(st, op) {
     }
     case "set_table_cell_text": {
       const { table, row, col, paragraph = 0 } = op.target;
-      const o = st.ours.find((p) => p.path && p.path.length === 4 && p.path[0] === table && p.path[1] === row && p.path[2] === col && p.path[3] === paragraph);
+      const o = (lookup(st).byPath.get(pathKey([table, row, col, paragraph])) || NONE)[0];
       if (!o) return fail("anchor_not_found", `no paragraph ${paragraph} in cell (${row},${col}) of table ${table}`);
       const r = bindParagraph(st, { text_hash: o.hash, body_path: o.path }, op.expect);
       return r.ok ? { ...r, op } : r;
     }
     case "replace_all_text": {
-      const hits = st.ours.map((o) => ({ o, n: findAll(o.text, op.find, op.match_case !== false).length })).filter((x) => x.n);
+      // counted, not listed: one pass per paragraph for the count and the matches inside a longer word (a list of every match of 8
+      // million characters held the thread for seconds in an outside review)
+      const hits = st.ours.map((o) => ({ o, ...countMatches(o.text, op.find, op.match_case !== false) })).filter((x) => x.n);
       const total = hits.reduce((n, x) => n + x.n, 0);
       // what previewAll reports: matches inside a longer word, and matches in protected paragraphs (which the run skips)
-      const extra = { partial_words: hits.reduce((n, x) => n + partialWords(x.o.text, op.find, op.match_case !== false), 0), protected: hits.reduce((n, x) => n + (x.o.protected ? x.n : 0), 0) };
+      const extra = { partial_words: hits.reduce((n, x) => n + x.partial, 0), protected: hits.reduce((n, x) => n + (x.o.protected ? x.n : 0), 0) };
       if (total !== op.expect.count) return fail("expect_mismatch", `found ${total} occurrence(s), expected ${op.expect.count}`, { found: total, ...extra });
       return { ok: true, op, hits, total, ...extra };
     }
@@ -202,7 +227,7 @@ const docXml = (st) => (st.docXml ??= openZip(st.bytes).readText("word/document.
 /** cell paragraphs -> text: grouped by `key` (path index of the cell) in order, paragraphs joined by LF, groups by `sep` */
 function joined(paras, key, sep) {
   const groups = new Map();
-  for (const p of paras) groups.set(p.path[key], [...(groups.get(p.path[key]) || []), p.text]);
+  for (const p of paras) (groups.get(p.path[key]) || groups.set(p.path[key], []).get(p.path[key])).push(p.text);
   return [...groups.keys()].sort((a, b) => a - b).map((k) => groups.get(k).join("\n")).join(sep);
 }
 const tableSpec = (op, tableNo) => {
@@ -290,7 +315,11 @@ const after = (p, block, edited) => ({ ...block, edited, ...(p.pd ? { pd: p.pd }
 
 function matchesIn(p, find, matchCase, pick) {
   const { text } = layout(p.runs);
-  return pickMatches(findAll(text, find, matchCase !== false), pick);
+  const found = findRanges(text, find, matchCase !== false);
+  const m = pickMatches(found.map((_, i) => i), pick);
+  if (m.error) return m;
+  const chosen = m.starts.map((i) => found[i]);
+  return { starts: chosen.map((r) => r.start), lens: chosen.map((r) => r.end - r.start) }; // lens: with match_case off a match is not always find.length long
 }
 
 export async function exec(st, b) {
@@ -309,9 +338,7 @@ export async function exec(st, b) {
         }
         const m = matchesIn(p, op.find, op.match_case, op);
         if (m.error) return fail("anchor_not_found", m.error);
-        let runs = p.runs;
-        for (const s of [...m.starts].sort((a, c) => c - a)) runs = replaceRange(runs, s, s + op.find.length, op.replace); // right to left keeps offsets valid
-        await editRuns(st, b.pid, runs);
+        await editRuns(st, b.pid, replaceRanges(p.runs, m.starts, m.lens, op.replace));
         return { status: "applied", detail: { replaced: m.starts.length } };
       }
       case "format_text": {
@@ -320,12 +347,8 @@ export async function exec(st, b) {
         const m = matchesIn(p, op.find, op.match_case, op);
         if (m.error) return fail("anchor_not_found", m.error);
         const patch = runProps(op.set);
-        let runs = p.runs;
-        for (const s of [...m.starts].sort((a, c) => c - a)) {
-          const sp = splitForRange(runs, s, s + op.find.length);
-          runs = applySet(sp.runs, sp.covered, patch);
-        }
-        await editRuns(st, b.pid, runs);
+        const sp = splitForRanges(p.runs, rangesOf(m.starts, m.lens));
+        await editRuns(st, b.pid, applySet(sp.runs, sp.covered.flat(), patch));
         return { status: "applied", detail: { ranges: m.starts.length } };
       }
       case "insert_paragraph_after":
@@ -386,9 +409,15 @@ export async function exec(st, b) {
         if (op.runs?.length) {
           // offsets are those of the paragraph as the file has it: any difference in how the engine reads the text and nothing is formatted
           if (layout(runs).text !== b.o.text) return refused("text_read_differently", "the engine reads this paragraph's text differently; not formatted");
-          for (const r of [...op.runs].sort((x, y) => y.start - x.start)) {
-            const sp = splitForRange(runs, r.start, r.end);
-            runs = applySet(sp.runs, sp.covered, r.set);
+          const ranges = [...op.runs].sort((x, y) => x.start - y.start);
+          const sp = splitForRanges(runs, ranges);
+          if (sp) runs = applySets(sp.runs, sp.covered, ranges.map((r) => r.set));
+          else {
+            // ranges that overlap or are empty: one at a time, right to left (each a pass over the runs)
+            for (const r of ranges.reverse()) {
+              const one = splitForRange(runs, r.start, r.end);
+              runs = applySet(one.runs, one.covered, r.set);
+            }
           }
         }
         const spec = { ...st.paraSpec([{ ...p, edited: true, runs }]), ...(Object.keys(pd).length ? { pd } : {}) };
@@ -435,9 +464,9 @@ export async function exec(st, b) {
             skip(m.error ? "the text is no longer in the paragraph (changed by an earlier op of this file?)" : `the engine finds ${m.starts.length} of the ${expected} match(es)`);
             continue;
           }
-          let runs = p.runs;
+          let runs;
           try {
-            for (const s of [...m.starts].sort((a, c) => c - a)) runs = replaceRange(runs, s, s + op.find.length, op.replace);
+            runs = replaceRanges(p.runs, m.starts, m.lens, op.replace);
           } catch (err) {
             if (!(err instanceof RangeError)) throw err;
             skip(err.message);

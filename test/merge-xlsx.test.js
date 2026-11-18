@@ -66,7 +66,7 @@ test("both change the same cell: the agent's value stays and the user's value is
   const r = await merge(book(set({ B3: 4242 })), await sets(book(), { B3: 77 }));
   assert.equal(r.bytes, null, "nothing is written when nothing could be carried");
   assert.equal(r.merged, 0);
-  assert.deepEqual(r.unplaced, [{ label: "Budget!B3", text: "4242", why: "The agent changed Budget!B3 too. Its value is in the sheet; this is yours." }]);
+  assert.deepEqual(r.unplaced, [{ label: "Budget!B3", text: "4242", why: "The agent changed Budget!B3 too. Its value is in the sheet; this is yours.", of: ["c1 Budget!32769"] }]);
 });
 
 test("one cell in conflict does not stop the others; a cell both set to the same value is not a conflict", async () => {
@@ -194,7 +194,7 @@ test("a cell that takes its formula from a shared group is not an edit when only
 test("a value the engine reads differently than the file says is handed back; the agent's cell stays and the rest is merged", async () => {
   const r = await merge(book(set({ F2: "007", B4: 5 })), await sets(book(), { C7: 1400 }));
   assert.equal(r.merged, 1);
-  assert.deepEqual(r.unplaced, [{ label: "Budget!F2", text: "007", why: "Your value for Budget!F2 did not land as typed, so the agent's version was kept there." }]);
+  assert.deepEqual(r.unplaced, [{ label: "Budget!F2", text: "007", why: "Your value for Budget!F2 did not land as typed, so the agent's version was kept there.", of: ["c1 Budget!16389"] }]);
   const out = read(r.bytes);
   assert.deepEqual({ F2: out.F2, B4: out.B4, C7: out.C7 }, { F2: undefined, B4: "5", C7: "1400" });
 });
@@ -632,4 +632,30 @@ test("values that most rows share are no evidence for a row: rows that differ in
   // without a record nothing on a changed sheet is placed, whatever the cells say
   const unknown = planXlsxMerge(wb(base), wb({ ...base, F40: "note" }), wb(rows((r) => ({ [`A${r}`]: `Item ${r}`, [`B${r}`]: "Open", [`C${r}`]: "West", [`D${r}`]: r * 7 + 1 }))));
   assert.deepEqual([unknown.items, unknown.copy], [[], true]);
+});
+
+test("a value counts as already there only on the same cell: rows the agent swapped with set_cells do not hide the person's edit", async () => {
+  // the person set Line 3's Q1 to 40; the agent swapped rows 3 and 4 by setting their cells, so B3 now reads 40 for Line 4
+  const swap = { A3: "Line 4", B3: 40, C3: 400, A4: "Line 3", B4: 30, C4: 300 };
+  const r = await merge(book(set({ B3: 40 })), await sets(book(), swap));
+  assert.equal(r.merged, 0);
+  assert.deepEqual(r.unplaced.map((u) => u.text), ["B3: 40"], "the person's value is handed back (here with the whole sheet: the rows look moved)");
+  assert.equal(r.copy, true);
+});
+
+test("a cell text that spells out other cells is not read as them: two rows that swap places are seen as moved", () => {
+  // the line signature joins "position:value" with "|": a short value is written as itself, so one holding "|" and ":" could spell
+  // another row's cells (a row {A: "x", B: "y"} and a row {A: "x|1:=y"} read alike, and their swap looked like no change)
+  assert.equal(moved({ A1: "x", B1: "y", A2: "x|1:=y", A3: "end" }, { A1: "x|1:=y", A2: "x", B2: "y", A3: "end" }), true);
+  assert.equal(moved({ A1: "x", B1: "y", A2: "z", A3: "end" }, { A1: "x", B1: "y", A2: "z", A3: "end" }), false);
+});
+
+// The DOCX merge once paired a paragraph by text against its id (outside review, final round). A workbook pairs by cell address: the
+// person retypes A3 to read as A4 and edits A4, the agent edits A4 and A9. A3's edit lands in A3, A4's is handed back.
+test("addresses, the person's side: a cell retyped to read as its neighbor stays its own cell; the neighbor's edit is handed back", async () => {
+  const r = await merge(book(set({ A3: "Line 4", A4: "Line 4b" })), await sets(book(), { A4: "Line 4c", A9: "Line 9d" }));
+  const out = read(r.bytes);
+  assert.deepEqual({ A3: out.A3, A4: out.A4, A9: out.A9 }, { A3: "Line 4", A4: "Line 4c", A9: "Line 9d" });
+  assert.equal(r.merged, 1);
+  assert.deepEqual(r.unplaced.map((u) => [u.label, u.text]), [["Budget!A4", "Line 4b"]]);
 });

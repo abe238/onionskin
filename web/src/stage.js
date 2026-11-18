@@ -21,6 +21,16 @@ export function stageOf(session) {
   return { text: STAGES[i][1], step: i + 1, of: STAGES.length, key: STAGES[i][0] };
 }
 
+/**
+ * The top bar's line while a run holds the batch (session.locked). Word, Excel and PowerPoint take typing then, merged when the run ends:
+ * the stage's words and "keep editing". An HTML file is read-only during a run (comments still go in), so it says that instead.
+ */
+export function lockedSyncText(session) {
+  if (session?.format === "html") return "Agent working: comment now, fix text after";
+  const st = stageOf(session); // the banner's own words while an agent has the batch ("The agent has your batch")
+  return session?.local ? "Working on this Mac: keep editing" : `${["delivered", "writing", "checking"].includes(st.key) ? st.text : "Agent working"}: keep editing`;
+}
+
 // ---- the wait, in words (the banner, the top bar and the review panel read these) --------------------------------------
 
 /**
@@ -65,13 +75,5 @@ export function stopKind(session, readOnly) {
   return ["starting", "ready", "working"].includes(a) ? "stop" : null;
 }
 
-/** The note box after Stop: the withdrawn batch's note (the server joins its saved notes with blank lines), then a note typed and not saved yet. The typed
- *  note is dropped only when it is already there as whole paragraphs (the server sent it back), never because it is part of one. */
-export function noteAfterStop(back, mine) {
-  back = back || "";
-  const paras = (x) => x.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  const m = paras(mine || "");
-  if (!m.length) return back;
-  if (`\n\n${paras(back).join("\n\n")}\n\n`.includes(`\n\n${m.join("\n\n")}\n\n`)) return back;
-  return back ? `${back}\n\n${mine}` : mine;
-}
+/** The note box after Stop: the withdrawn batch's note, then a note typed and not saved yet, unless it is already there as whole paragraphs (src/notes.js). */
+export { joinNote as noteAfterStop } from "../../src/notes.js";

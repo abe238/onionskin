@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { baseUrlOk } from "../src/update.js";
 
 // scripts/get.sh is the one-line installer: it downloads a zip, checks its SHA-256, and runs the zip's install.sh. Here the "release" is a
 // local folder (file:// URLs) and the zip's install.sh is a stub that records how it was called. A temp TMPDIR and HOME only; no network.
@@ -135,4 +136,42 @@ test("package.json is ready for npm pack: bin, files whitelist without the voice
   assert.ok(p.files.includes("!skills/onionskin/voice.md"), "the maintainer's voice guide never goes into a tarball");
   assert.equal(p.scripts.prepack, "node scripts/prepack.mjs");
   assert.ok(!p.files.includes("test") && !p.files.includes("e2e") && !p.files.includes("scripts"), "no tests, no whole scripts folder");
+});
+
+// One rule for a release URL, in get.sh and in `onionskin update` (src/update.js baseUrlOk): https, file:///, or http to exactly
+// 127.0.0.1 with an optional port; no "@", white space or backslash before the first "/" after the scheme. Outside review:
+// http://127.0.0.1:80@evil.example/release passed both, and its host is evil.example.
+const URLS_OK = ["https://github.com/abe238/onionskin/releases/latest/download", "https://example.com/x?who=a@b", "file:///tmp/rel", "http://127.0.0.1/rel", "http://127.0.0.1:8080/rel", "http://127.0.0.1:8080"];
+const URLS_BAD = [
+  "http://127.0.0.1:80@evil.example/release", "http://127.0.0.1@evil.example/", "https://user:pw@127.0.0.1/x", "https://github.com\\@evil.example/x",
+  "http://127.0.0.1:80\\@evil.example/", "http://127.0.0.1.evil.example/", "http://127.0.0.1:/x", "http://127.0.0.1:8a/x", "http://127.0.0.1#@evil.example/",
+  "http://127.0.0.1?x=1", "http://localhost:80/", "http://example.com/onionskin.zip", "ftp://example.com/x.zip", "/etc/passwd", "https://a b/x", "https://a\tb/x",
+  "https://github.com/x\n", "file://evil.example/x", "HTTPS://github.com/x",
+];
+test("a release URL: get.sh and onionskin update accept and refuse the same ones, credentials and look-alike hosts refused", () => {
+  for (const u of [...URLS_OK, ...URLS_BAD]) {
+    const r = run(["--dry-run"], { ONIONSKIN_ZIP_URL: u, ONIONSKIN_SHA256_URL: u });
+    const shOk = r.status === 0 && /\[dry run\]/.test(r.stdout);
+    if (!shOk) assert.match(r.stderr, /refusing the URL/, JSON.stringify(u));
+    assert.equal(shOk, URLS_OK.includes(u), `get.sh on ${JSON.stringify(u)}`);
+    assert.equal(baseUrlOk(u), URLS_OK.includes(u), `baseUrlOk on ${JSON.stringify(u)}`);
+  }
+});
+
+test("get.sh asks curl for https and file only (http only for 127.0.0.1) and redirects to https only; a refused URL never reaches curl", () => {
+  const rel = release();
+  const log = path.join(tmp, `curl-${++n}.log`);
+  // a curl that records its arguments and then serves the release folder
+  const curl = shim("curl", `printf '%s\\n' "$*" >> "${log}"\nout=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\neval "last=\\\${$#}"\ncp "${rel}/$(basename "$last")" "$out"`);
+  const ok = run([], { ONIONSKIN_ZIP_URL: "http://127.0.0.1:9/onionskin.zip", ONIONSKIN_SHA256_URL: "https://example.invalid/onionskin.zip.sha256" }, { shimDir: curl });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const calls = fs.readFileSync(log, "utf8").trim().split("\n");
+  assert.equal(calls.length, 2);
+  const flags = (call) => [/ --proto (\S+)/.exec(call)?.[1], / --proto-redir (\S+)/.exec(call)?.[1], call.split(" ").at(-1)];
+  assert.deepEqual(flags(calls[0]), ["=https,file,http", "=https", "http://127.0.0.1:9/onionskin.zip"]);
+  assert.deepEqual(flags(calls[1]), ["=https,file", "=https", "https://example.invalid/onionskin.zip.sha256"]);
+  fs.rmSync(log);
+  const bad = run([], { ONIONSKIN_ZIP_URL: "http://127.0.0.1:80@evil.example/onionskin.zip" }, { shimDir: curl });
+  assert.equal(bad.status, 1);
+  assert.equal(fs.existsSync(log), false, "curl never ran");
 });

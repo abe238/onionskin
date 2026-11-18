@@ -2,7 +2,7 @@ import { partRels } from "../package.js";
 import { openZip } from "../zip.js";
 import { checkExpect, engineFailure, excerpt, fail, refused } from "./common.js";
 import { openEngine } from "./engine.js";
-import { findAll, partialWords, pickMatches } from "./runs.js";
+import { countMatches, findRanges, pickMatches, rangesOf } from "./runs.js";
 
 /**
  * PPTX driver (headless Engine: pptx.slide to read a slide model, pptx.setText to write one shape's paragraphs, pptx.slides to
@@ -44,7 +44,18 @@ async function slideModel(st, index) {
 }
 
 const slideText = (m) => shapesOf(m.els).map(shapeText).join("\n");
-const indexOf = (st, id) => st.slides.findIndex((s) => String(s.id) === String(id));
+/** The slide with p:sldId `id` (the first of that id) and its index (-1: none), through a map rebuilt whenever a slide op replaces st.slides (a search per op was quadratic). */
+function slideById(st, id) {
+  return st.slides[indexOf(st, id)];
+}
+function indexOf(st, id) {
+  if (st.byIdOf !== st.slides) {
+    st.byId = new Map();
+    st.slides.forEach((s, i) => st.byId.has(String(s.id)) || st.byId.set(String(s.id), i));
+    st.byIdOf = st.slides;
+  }
+  return st.byId.get(String(id)) ?? -1;
+}
 
 // ---- the package around a slide (read from the file as delivered: only slide ops change it, and they are checked here) ----------------
 // what a copy may share with the slide it was made from: its layout, pictures and links (notes and comments are not copied)
@@ -60,7 +71,7 @@ function deckRefusal(st) {
   return null;
 }
 function slidePart(st, id) {
-  return st.slides.find((s) => String(s.id) === String(id))?.path || null;
+  return slideById(st, id)?.path || null;
 }
 /** a part of the deck other than the presentation and the slide's own notes that links to the slide (a "go to slide" link, a summary zoom) */
 function linkedFrom(st, part) {
@@ -79,7 +90,7 @@ async function findShape(st, rawTarget) {
   const t = shapeTarget(st, rawTarget);
   if (t.error) return fail("anchor_not_found", t.error);
   const target = t.target;
-  const slide = st.slides.find((s) => String(s.id) === target.slide_id);
+  const slide = slideById(st, target.slide_id);
   if (!slide) return fail("anchor_not_found", `no slide with id ${target.slide_id}`);
   const m = await slideModel(st, slide.index);
   const hits = shapesOf(m.els).filter((e) => e.sid === target.shape_id);
@@ -107,13 +118,13 @@ export async function bind(st, op) {
         for (const el of shapesOf(m.els)) {
           el.text.paras.forEach((p, pi) => {
             const text = paraText(p);
-            const n = findAll(text, op.find, op.match_case !== false).length;
-            if (n) hits.push({ slideId: String(s.id), sid: el.sid, pi, n, ro: !!p.ro, text });
+            const { n, partial } = countMatches(text, op.find, op.match_case !== false);
+            if (n) hits.push({ slideId: String(s.id), sid: el.sid, pi, n, partial, ro: !!p.ro, text });
           });
         }
       }
       const total = hits.reduce((n, x) => n + x.n, 0);
-      const extra = { partial_words: hits.reduce((n, x) => n + partialWords(x.text, op.find, op.match_case !== false), 0), protected: hits.reduce((n, x) => n + (x.ro ? x.n : 0), 0) };
+      const extra = { partial_words: hits.reduce((n, x) => n + x.partial, 0), protected: hits.reduce((n, x) => n + (x.ro ? x.n : 0), 0) };
       if (total !== op.expect.count) return fail("expect_mismatch", `found ${total} occurrence(s), expected ${op.expect.count}`, { found: total, ...extra });
       return { ok: true, op, hits, total, ...extra };
     }
@@ -232,8 +243,39 @@ async function execSlide(st, op) {
   return { status: "applied", detail: { slide_id: copy } }; // the copy's id: its position may change with a later op of this file
 }
 
+/**
+ * replaceInRuns for every match at once (`starts`, non-overlapping, of `len` characters each: one number, or one length per start): the same result as replaceInRuns applied
+ * right to left, in one pass over the runs (a pass per match: one shape of 240,000 one-letter runs took minutes). Exported for its test.
+ */
+export function replaceAllInRuns(runs, starts, len, replacement) {
+  if (!starts.length) return runs.map((r) => ({ ...r }));
+  const at = rangesOf(starts, len);
+  const firstOf = new Array(at.length).fill(-1);
+  let pos = 0;
+  let k = 0;
+  const out = runs.map((r, i) => {
+    const a = pos;
+    const b = pos + r.text.length;
+    pos = b;
+    while (k < at.length && at[k].end <= a) k++;
+    let text = null;
+    let cur = 0;
+    for (let j = k; j < at.length && at[j].start < b; j++) {
+      const { start: s, end: e } = at[j];
+      if (e <= a) continue;
+      if (r.fld) throw new RangeError("the match is inside a field");
+      const put = firstOf[j] < 0;
+      if (put) firstOf[j] = i;
+      text = (text ?? "") + r.text.slice(cur, Math.max(0, s - a)) + (put ? replacement : "");
+      cur = Math.min(r.text.length, e - a);
+    }
+    return text === null ? { ...r } : { ...r, text: text + r.text.slice(cur) };
+  });
+  return out.filter((r, i) => r.text !== "" || i === firstOf[0] || r.fld);
+}
+
 /** replaces [s,e) of a paragraph's concatenated run texts; the first run in range carries the replacement and the formatting */
-function replaceInRuns(runs, s, e, replacement) {
+export function replaceInRuns(runs, s, e, replacement) {
   let pos = 0;
   const out = runs.map((r) => ({ ...r }));
   let first = -1;
@@ -269,19 +311,18 @@ export async function exec(st, b) {
       if (!f.el) return f;
       const slideIndex = f.slide.index;
       const hits = [];
-      f.el.text.paras.forEach((p, pi) => findAll(paraText(p), op.find, op.match_case !== false).forEach((at) => hits.push({ pi, at })));
+      f.el.text.paras.forEach((p, pi) => findRanges(paraText(p), op.find, op.match_case !== false).forEach(({ start, end }) => hits.push({ pi, at: start, len: end - start })));
       const pick = pickMatches(hits.map((_, i) => i), op);
       if (pick.error) return fail("anchor_not_found", pick.error);
       const chosen = pick.starts.map((i) => hits[i]);
       const blocked = chosen.filter((h) => f.el.text.paras[h.pi].ro);
       if (blocked.length) return fail("skipped_protected", "the match is in a protected paragraph", { detail: { skipped_protected: blocked.map((h) => ({ paragraph: h.pi, excerpt: excerpt(paraText(f.el.text.paras[h.pi])) })) } });
       const byPara = new Map();
-      for (const h of chosen) byPara.set(h.pi, [...(byPara.get(h.pi) || []), h.at]);
+      for (const h of chosen) (byPara.get(h.pi) || byPara.set(h.pi, []).get(h.pi)).push(h);
       const specs = specsOf(f.el, (pi, runs) => {
-        const ats = byPara.get(pi);
-        if (!ats) return null;
-        for (const at of [...ats].sort((x, y) => y - x)) runs = replaceInRuns(runs, at, at + op.find.length, op.replace);
-        return runs;
+        const hs = byPara.get(pi);
+        if (!hs) return null;
+        return replaceAllInRuns(runs, hs.map((h) => h.at), hs.map((h) => h.len), op.replace);
       });
       await st.h.engine.call("pptx.setText", [slideIndex, f.el.sid, specs]);
       return { status: "applied", detail: { replaced: chosen.length } };
@@ -291,12 +332,25 @@ export async function exec(st, b) {
       let n = 0;
       let skippedMatches = 0;
       const bySlide = new Map();
-      for (const h of b.hits) bySlide.set(`${h.slideId}:${h.sid}`, [...(bySlide.get(`${h.slideId}:${h.sid}`) || []), h]);
+      for (const h of b.hits) {
+        const k = `${h.slideId}:${h.sid}`;
+        (bySlide.get(k) || bySlide.set(k, []).get(k)).push(h);
+      }
+      // each slide's model is read once, its shapes by id (a model per shape, searched shape by shape, was quadratic on a slide of many
+      // shapes): this op writes one shape at a time, and a write never changes another shape's model
+      const models = new Map();
+      const shapeOn = async (slide, sid) => {
+        if (!models.has(slide)) {
+          const byId = new Map();
+          if (slide >= 0) for (const e of shapesOf((await slideModel(st, slide)).els)) if (!byId.has(e.sid)) byId.set(e.sid, e);
+          models.set(slide, byId);
+        }
+        return models.get(slide).get(sid);
+      };
       for (const [key, hs] of bySlide) {
         const [slideId, sid] = key.split(":");
         const slide = indexOf(st, slideId); // by id: an earlier slide op of this file may have moved or removed it
-        const m = slide >= 0 ? await slideModel(st, slide) : { els: [] };
-        const el = shapesOf(m.els).find((e) => e.sid === Number(sid));
+        const el = await shapeOn(slide, Number(sid));
         if (!el) {
           skippedMatches += hs.reduce((a, h) => a + h.n, 0);
           skipped.push({ slide: slideId, shape_id: Number(sid), reason: slide < 0 ? "the slide is gone" : "the shape is gone" });
@@ -310,10 +364,9 @@ export async function exec(st, b) {
         if (!todo.size) continue;
         const specs = specsOf(el, (pi, runs) => {
           if (!todo.has(pi)) return null;
-          const ats = findAll(runs.map((r) => r.text).join(""), op.find, op.match_case !== false);
-          for (const at of [...ats].sort((x, y) => y - x)) runs = replaceInRuns(runs, at, at + op.find.length, op.replace);
-          n += ats.length;
-          return runs;
+          const found = findRanges(runs.map((r) => r.text).join(""), op.find, op.match_case !== false);
+          n += found.length;
+          return replaceAllInRuns(runs, found.map((r) => r.start), found.map((r) => r.end - r.start), op.replace);
         });
         await st.h.engine.call("pptx.setText", [slide, Number(sid), specs]);
       }

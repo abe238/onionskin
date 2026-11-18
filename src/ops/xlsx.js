@@ -1,6 +1,6 @@
 import { checkExpect, colIndex, colLetters, engineFailure, fail, parseA1, refused } from "./common.js";
 import { openEngine } from "./engine.js";
-import { findAll, partialWords } from "./runs.js";
+import { countMatches, findRanges } from "./runs.js";
 import { a1Range, parseWorkbook } from "../xlsx.js";
 
 /**
@@ -105,7 +105,7 @@ export async function bind(st, op) {
     const hits = await allMatches(st, op);
     const total = hits.reduce((n, x) => n + x.n, 0);
     // `t` is the formula when a cell has one, so a hit whose text starts with "=" would rewrite a formula
-    const extra = { partial_words: hits.reduce((n, x) => n + partialWords(x.t, op.find, op.match_case !== false), 0), in_formulas: hits.reduce((n, x) => n + (x.t.startsWith("=") ? x.n : 0), 0) };
+    const extra = { partial_words: hits.reduce((n, x) => n + x.partial, 0), in_formulas: hits.reduce((n, x) => n + (x.t.startsWith("=") ? x.n : 0), 0) };
     if (total !== op.expect.count) return fail("expect_mismatch", `found ${total} occurrence(s), expected ${op.expect.count}`, { found: total, ...extra });
     Object.assign(b, extra);
     b.hits = hits;
@@ -135,8 +135,10 @@ function bindShape(st, op) {
       if (op.op === "set_cells") {
         // a merged range shows only its top-left cell: a value in any other cell of it is hidden from the person (an empty write is harmless)
         const flat = Array.isArray(op.values) ? op.values : [[op.values]];
+        const written = flat.flatMap((row, i) => row.map((v, j) => ({ r: rect.r0 + i, c: rect.c0 + j, v }))).filter((x) => input(x.v) !== ""); // once, not per range
         for (const m of mergesOf(st, target.sheet)) {
-          const hit = flat.flatMap((row, i) => row.map((v, j) => ({ r: rect.r0 + i, c: rect.c0 + j, v }))).find((x) => x.r >= m.r0 && x.r <= m.r1 && x.c >= m.c0 && x.c <= m.c1 && !(x.r === m.r0 && x.c === m.c0) && input(x.v) !== "");
+          if (m.r1 < rect.r0 || m.r0 > rect.r1 || m.c1 < rect.c0 || m.c0 > rect.c1) continue; // a range outside the write: nothing of it is hit
+          const hit = written.find((x) => x.r >= m.r0 && x.r <= m.r1 && x.c >= m.c0 && x.c <= m.c1 && !(x.r === m.r0 && x.c === m.c0));
           if (hit) return refused("merged_cell", `${colLetters(hit.c)}${hit.r + 1} is inside the merged range ${a1Range(m)}, which shows only its top-left cell ${colLetters(m.c0)}${m.r0 + 1}: write there, or pick a cell outside the range`);
         }
       }
@@ -199,8 +201,8 @@ async function allMatches(st, op) {
       for (const row of b.rows)
         for (const c of row.cells) {
           const t = await cellText(st, sh, row.r, c[0]);
-          const n = findAll(t, op.find, op.match_case !== false).length;
-          if (n) out.push({ sh, r: row.r, c: c[0], n, t });
+          const { n, partial } = countMatches(t, op.find, op.match_case !== false);
+          if (n) out.push({ sh, r: row.r, c: c[0], n, partial, t });
         }
     }
   }
@@ -215,8 +217,11 @@ export async function exec(st, b) {
       const total = b.hits.reduce((n, x) => n + x.n, 0);
       const byFormula = [];
       for (const x of b.hits) {
-        const needle = op.match_case !== false ? op.find : null;
-        const next = needle ? x.t.split(op.find).join(op.replace) : x.t.replace(new RegExp(op.find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), () => op.replace);
+        // the same matches the count above came from (findRanges), not a second reading of "case-insensitive" by a RegExp
+        let next = "";
+        let cur = 0;
+        for (const { start, end } of findRanges(x.t, op.find, op.match_case !== false)) (next += x.t.slice(cur, start) + op.replace), (cur = end);
+        next += x.t.slice(cur);
         byFormula.push({ sh: x.sh, r: x.r, c: x.c, input: next });
       }
       for (const sh of new Set(byFormula.map((x) => x.sh))) await st.h.engine.call("xlsx.set", [sh, byFormula.filter((x) => x.sh === sh).map(({ r, c, input }) => ({ r, c, input }))]);

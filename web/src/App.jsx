@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { DocViewer, hashText } from "@engine";
-import { TAB, api, blobToBase64, coalesce, getToken, labelFor, locFromResolved, paragraphText, parseA1, pullSelectionIntoParagraphs, rangeHasCell, uid, unionRange, verifyBlock } from "./lib.js";
+import { SEND_MS, TAB, api, blobToBase64, coalesce, getToken, labelFor, locFromResolved, paragraphText, parseA1, pullSelectionIntoParagraphs, rangeHasCell, uid, unionRange, verifyBlock } from "./lib.js";
 import { catchUpPlan, newestRun, retryDelay } from "./catchup.js";
 import { mark, measure } from "./marks.js";
-import { noteAfterStop } from "./stage.js";
+import { Drafts } from "./drafts.js";
 import { useFrame, useMedia, useSidebar, useTheme, useVisualViewport } from "./hooks.js";
 import { Sidebar } from "./Sidebar.jsx";
 import { Dock, TopBar, Toolbar } from "./Chrome.jsx";
@@ -16,15 +16,20 @@ import { Overlay } from "./Overlay.jsx";
 import { useQuickPreview } from "./QuickChange.jsx";
 import { placeChip, textUnder } from "./chip-place.js";
 import { noteAlone, ridesAlong } from "./quick-send.js";
+import { COMMENTS_MAX, TOO_MANY_COMMENTS } from "../../src/retain.js"; // pure, no imports: the server refuses the 501st comment in the same words
 import { useStamps } from "./Stamps.jsx";
 import { BUILT_IN, needsOneSentence, selectionShape, suggestEligible } from "./stamps.js";
 import { AHEAD_MS, NONE_WORDS, aheadKey, cardFor, reusableAhead, useRefusal } from "./suggest.js";
 import { MOD, isEditable, isQuickAsk } from "./keys.js";
 import { createWriteIn } from "./writein-live.js";
+import { HtmlHost } from "./HtmlHost.jsx";
+import { fetchHtmlView, htmlLocFromResolved, htmlMarks, stamped } from "./html-host.js";
 
 const FRESH_MS = 5000;
+const SLOW_MS = 300; // a Send's "Sending..." shows only past this: the usual one (15 to 80 ms) does not flicker
 const PILL_MS = 20_000; // how long the "changes below / above" pill may stay
 const REDUCED_FRESH_MS = 2000; // reduced motion: a still outline for about two seconds instead of the fading pulse
+const BUSY_WORDS = "Wait a moment: what you just pressed is still on its way. Then try again.";
 const LOST_MS = 10_000; // a stream with errors and no open this long: the server is gone (see the server events effect)
 const LOST_TEXT = "Onionskin on this Mac is not answering. Your comments and note are still here and the page keeps trying: if it does not come back, copy them, then open the file again.";
 const plain = (e) => (/failed to fetch|networkerror|load failed/i.test(e.message) ? "Could not reach the Onionskin server. Your edits are still in this page, so try again in a moment." : e.message); // how long changed regions stay highlighted after an agent run lands
@@ -42,7 +47,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [paint, setPaint] = useState({ items: [], chip: null }); // overlay drawings, in overlay-local pixels
   const [chipSel, setChipSel] = useState(null);
   const [focusId, setFocusId] = useState(null);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState(false); // a Send is in flight (the button's data-busy); `slow` shows it, after SLOW_MS
+  const [slow, setSlow] = useState(false);
+  // while a Send is in flight: the drafts it carried (ids) and whether it carried the note. Those stay as sent until the answer: read only
+  // in the page, and no autosave goes out meanwhile (the server applies a save after the Send anyway, src/session.js inTurn)
+  const [held, setHeld] = useState(null);
   const [problem, setProblem] = useState(null); // {kind:'conflict'|'error', message}
   const [notice, setNotice] = useState(null); // short-lived status toast
   const [noticeAction, setNoticeAction] = useState(null);
@@ -59,6 +68,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [heldBack, setHeldBack] = useState(null); // edits made while the agent worked that were not merged, or were merged with something to check: [{label, text, why, check}]
   const [heldCopy, setHeldCopy] = useState(null); // the name of the copy of the user's file the server kept with them, if any
   const [closeAsk, setCloseAsk] = useState(false); // Close session was pressed with unsent document edits
+  // HTML (HtmlHost.jsx): the person's pending text edits live in the viewer (R9), counted here
+  const [htmlEdits, setHtmlEdits] = useState(0);
+  const htmlEditsRef = useRef(0);
+  htmlEditsRef.current = htmlEdits;
   const [fresh, setFresh] = useState(false); // an agent run just landed: highlight what it touched, then fade
   const [theme, setTheme] = useTheme();
   const side = useSidebar();
@@ -113,6 +126,30 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [activeSheet, setActiveSheet] = useState(null);
   const saveTimer = useRef(null);
   const draftPendingRef = useRef(false); // a comment or note edit is waiting for its autosave
+  // every draft save and Send is numbered: the server ignores a save the same tab sent before a newer one (an autosave sent just before
+  // Send was pressed and landing after it would put the note back in the box)
+  const revRef = useRef(0);
+  const heldRef = useRef(null); // `held`, read by the handlers (a keystroke can land before the next render)
+  // the revisions of the comments and the note, and what each request was sent with: server state goes into them only through
+  // applyServer (web/src/drafts.js reconcile), which never replaces words typed here with words not based on them
+  const draftsRef = useRef(null);
+  if (!draftsRef.current) {
+    draftsRef.current = new Drafts();
+    draftsRef.current.loaded(initial.note, initial.comments || [], initial.seq ?? -1);
+  }
+  // Take back, Stop, Revert or Close in flight: no Send meanwhile, and the note is read only (their answer rewrites it), as during a Send
+  const rewritingRef = useRef(0);
+  const [rewriting, setRewriting] = useState(false);
+  const outRef = useRef(0); // ... and its request is out (sent, not answered yet): saves leave the note out meanwhile
+  const rewrite = (d) => {
+    rewritingRef.current += d;
+    setRewriting(rewritingRef.current > 0);
+  };
+  const savingRef = useRef(null); // the draft save in flight (a promise), so Take back, Stop, Revert and Close wait for it
+  const applyRef = useRef(null); // applyServer, for the event stream's handlers
+  const sentWaitRef = useRef(null);
+  const handingRef = useRef(null); // null | "waiting" (for its Send) | "sending" | "failed": this tab lost editing with unsaved words (handOver) // {rev, resolve}: the Send in flight, settled by server state that shows it committed (applyServer)
+  const mergeRef = useRef(null); // the event stream's merge: the answer of a Send is reconciled the same way, whichever arrives first
   const noticeTimer = useRef(null);
   const freshTimer = useRef(null);
   const quickRef = useRef(null);
@@ -147,7 +184,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }, []);
 
   // ---- file loading ----------------------------------------------------------------------------------------
-  const loadFile = useCallback(async () => {
+  const loadFile = useCallback(async ({ plain = false } = {}) => {
     // Every refresh keeps the reader where they are NOW (never the top, never where they were at Send): the view is read from the
     // document that is about to be replaced and put back on the new one.
     const h = hostRef.current;
@@ -160,7 +197,21 @@ export default function App({ sid, initial, product, settings, suggest }) {
       restoreRef.current = true;
     }
     mark("os:file-start");
-    const { buf, sha } = await api(`/api/file?s=${sid}`, { raw: true });
+    if (sessionRef.current.format === "html") {
+      // an HTML file: its render copy, never its bytes (GET /api/html-view). A page that is not UTF-8 any more is shown refused, with
+      // its UTF-8 copy offer; the pending text edits stay in the viewer and come along to the new version (R9)
+      let v;
+      try {
+        v = await fetchHtmlView(sid, { plain });
+      } catch (e) {
+        if (e.code !== "not_utf8" && e.code !== "encoding") throw e;
+        return setDoc((d) => ({ file: null, html: { error: e }, v: d.v + 1 }));
+      }
+      mark("os:file-fetched");
+      loadedShaRef.current = v.version;
+      return setDoc((d) => ({ file: null, html: { ...v, forced: plain }, v: d.v + 1 }));
+    }
+    const { buf, sha } = await api(`/api/file?s=${sid}`, { raw: true, timeout: SEND_MS });
     mark("os:file-fetched");
     measure("os:file-fetch", "os:file-start", "os:file-fetched");
     loadedShaRef.current = sha;
@@ -245,27 +296,34 @@ export default function App({ sid, initial, product, settings, suggest }) {
     const ensureStream = () => {
       if (es && es.readyState === EventSource.CLOSED && sessionRef.current.state !== "closed") connect();
     };
-    const merge = (view) => {
+    // `at`: what the request this state answers was sent with (a Send's answer); none for an event
+    const merge = (view, at = null) => {
       setSession(view);
       const roNext = !!view.editor && view.editor !== TAB;
+      // this tab just lost editing ("Edit here instead" in another) holding words no save has confirmed: they are handed over to the server
+      // first (POST /api/handover), and stay on screen until that went through; if it cannot, they stay, with Copy my comments
+      if (roNext && !roRef.current && !handingRef.current && draftsRef.current.dirty(commentsRef.current)) {
+        if (!sendingRef.current) return handOver();
+        handingRef.current = "waiting"; // a Send of this tab is in flight: what it carries is its own; the rest is handed over once it is done
+        return;
+      }
+      if (handingRef.current && !(!roNext && roRef.current)) return; // handing over, or it failed: the words stay as they are
+      if (!roNext && roRef.current && handingRef.current) {
+        // editing again with words that were never handed over: they stay, and the next autosave carries them
+        handingRef.current = null;
+        setProblem((p) => (p?.handover ? null : p));
+        applyRef.current(view);
+        return loadFile().catch((err) => setProblem({ kind: "error", message: `Could not reload: ${err.message}` }));
+      }
       if (roNext || roRef.current) {
         // a read-only tab shows what the editing tab saved; one that just took over starts from it and reloads the file
-        setComments(view.comments);
-        commentsRef.current = view.comments;
-        setNote(view.note || "");
-        noteRef.current = view.note || "";
+        applyRef.current(view, null, { wholesale: true });
         if (!roNext && roRef.current) loadFile().catch((err) => setProblem({ kind: "error", message: `Could not reload: ${err.message}` }));
         return;
       }
-      // from the ref, like updateComments: a keystroke between this event and the next render must not undo the merge
-      const next = commentsRef.current.map((c) => {
-        const s = view.comments.find((x) => x.id === c.id);
-        if (!s) return c;
-        return { ...c, status: s.status, result: s.result, localHint: s.localHint, durable: s.durable, batchId: s.batchId, question: s.question, answer: s.answer, text: s.status === "draft" && !s.answer ? c.text : s.text };
-      });
-      commentsRef.current = next;
-      setComments(next);
+      applyRef.current(view, at);
     };
+    mergeRef.current = merge;
     // A page that holds another version of the file than the state says missed its refresh (see catchup.js): it catches up here.
     const catchUp = (view) => {
       if (view.baseSha === syncedShaRef.current) syncedRunRef.current = newestRun(view); // in step: runs that changed nothing are seen
@@ -373,7 +431,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
     measure("os:file-render", "os:file-fetched", "os:doc-host"); // the viewer opening the file it was handed
     offsRef.current.push(
       h.onEdit((e) => {
-        dirtyRef.current = true;
+        // an HTML file's typed text is held by the viewer as pending edits (no bytes leave the page): only the record of what was typed is kept
+        if (h.format === "html") e = { ...e, location: { ...e.location, version: h.version } };
+        else dirtyRef.current = true;
         editSeq.current++;
         wiRef.current?.cancel("edit");
         setChanges((list) => {
@@ -386,12 +446,26 @@ export default function App({ sid, initial, product, settings, suggest }) {
       })
     );
     offsRef.current.push(h.onSelectionChange((sel) => showChip(sel)));
-    h.setReadOnly(roRef.current);
+    if (h.format === "html") {
+      // the viewer's own clicks: Comment and Pin modes pick an element (or, dragged in Comment mode, a text); a blocked action (Enter, a
+      // new element, a read-only part) opens the comment box on its element (R17); edits that could not be placed again say so
+      // through htmlOnRef: this callback is made once, the handlers read this render's state
+      offsRef.current.push(
+        h.onPick((p) => htmlOnRef.current.pick(p)),
+        h.onBlocked((b) => htmlOnRef.current.blocked(b)),
+        h.onEditsChange((l) => setHtmlEdits(l.length)),
+        h.onEditsLost((r) => htmlOnRef.current.lost(r)),
+        h.onMarkClick((id) => htmlOnRef.current.mark(id)),
+        h.onViewChange(() => htmlOnRef.current.view()),
+      );
+      setHtmlEdits(h.edits().length);
+    }
+    h.setReadOnly(roRef.current, "tab"); // the reason is the HTML view's (another tab holds the file); the engine reads the first argument only
     setHostTick((t) => t + 1);
   }, []);
 
   useEffect(() => {
-    hostRef.current?.setReadOnly(ro);
+    hostRef.current?.setReadOnly(ro, "tab");
     if (ro) setMode("edit");
   }, [ro, hostTick]);
 
@@ -459,7 +533,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
             const bp = [a.path[0] + (a.engineDelta || 0), ...a.path.slice(1)];
             map[id] = { method: a.method, text: a.text, heading: a.heading, loc: { blockPath: bp, ...(a.start != null ? { start: a.start, end: a.end } : {}) } };
           }
-        } else map[id] = { method: a.method, text: a.text, loc: withProtected(locFromResolved(h.format, a), commentsRef.current.find((c) => c.id === id)), changed: !!a.changed, moved: !!a.moved, quoteLost: !!a.quoteLost, tieLost: !!a.tieLost };
+        } else if (h.format === "html") map[id] = { method: a.method, text: a.text, heading: a.heading, loc: htmlLocFromResolved(a), changed: !!a.changed, quoteLost: !!a.quoteLost };
+        else if (h.format === "xlsx" || h.format === "pptx") map[id] = { method: a.method, text: a.text, loc: withProtected(locFromResolved(h.format, a), commentsRef.current.find((c) => c.id === id)), changed: !!a.changed, moved: !!a.moved, quoteLost: !!a.quoteLost, tieLost: !!a.tieLost };
       }
       setResolved(map);
       let exact = false; // the view came back to the exact place (setViewState said so)
@@ -511,6 +586,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     };
     const local = (r) => ({ x: lx(r.left), y: ly(r.top), w: Math.round(r.width), h: Math.round(r.height) });
     commentsRef.current.forEach((c, idx) => {
+      if (fmt === "html") return; // the HTML view draws its comments and pins itself, from `marks` (HtmlViewer)
       const rz = resolvedRef.current[c.id];
       let loc = null;
       let moved = false;
@@ -722,51 +798,119 @@ export default function App({ sid, initial, product, settings, suggest }) {
 
   // ---- draft persistence -----------------------------------------------------------------------------------
   // "Saved" / "Not saved" on the draft cards: the newest autosave decides (an older answer arriving late changes nothing). A failed save is tried again,
-  // soon and then slowly (retryDelay), and "Not saved" stays until one goes through.
+  // soon and then slowly (retryDelay), and "Not saved" stays until one goes through. A draft the server refuses as too large (413
+  // too_large_request) is not tried again: its words are shown once, and the next change to the comments tries again.
   const [ack, setAck] = useState(null); // null | "saved" | "failed"
   const saveSeq = useRef(0);
   const saveFails = useRef(0);
+  /**
+   * One draft save now: the comments and (unless a Send in flight carried it) the note, numbered. Its answer goes in through applyServer.
+   * Returns the request (it never rejects), which savingRef holds while it is in flight. `keepalive`: the save on the way out of the page.
+   */
+  const saveNow = useCallback(({ seq = ++saveSeq.current, keepalive = false } = {}) => {
+    clearTimeout(saveTimer.current);
+    draftPendingRef.current = false;
+    // the note goes with its revision: a save of the revision a Send already took leaves the server's note alone (the save on the way out
+    // while that Send is in flight), so the note is never put back after a Send took it, and never lost if that Send did not arrive
+    // while Take back, Stop, Revert or Close is in flight the note is left out (and read only): their answer joins the server's note with
+    // the box
+    const note = outRef.current ? undefined : noteRef.current;
+    const noteRev = draftsRef.current.noteRev;
+    const comments = commentsRef.current.map(toWire);
+    const wire = ++revRef.current;
+    const at = draftsRef.current.begin({ note, carriesNote: note !== undefined, wire, comments: commentsRef.current });
+    let ok = false;
+    const req = api(`/api/draft?s=${sid}`, { method: "POST", keepalive, body: { comments, note, noteRev, seen: draftsRef.current.seen, noteSeen: draftsRef.current.noteSeen, rev: wire } }).then(
+      (out) => {
+        ok = true;
+        draftsRef.current.end(at, true);
+        if (out?.session) applyRef.current?.(out.session, at);
+        if (seq !== saveSeq.current) return;
+        saveFails.current = 0;
+        setAck("saved");
+      },
+      (err) => {
+        draftsRef.current.end(at, false);
+        if (keepalive) return saveFails.current > 0 && err?.status !== 413 && saveDraftSoonRef.current(retryDelay(saveFails.current) ?? 15000); // a tab that was only hidden (or stayed) keeps trying
+        if (seq !== saveSeq.current) return;
+        setAck("failed");
+        if (err?.status === 413) {
+          if (saveFails.current++ === 0) say(err.message); // once; still unsent, so the leave-page guard asks first
+          return;
+        }
+        const ms = retryDelay(saveFails.current++);
+        if (saveFails.current === 1) say("Your comments could not be saved yet. They are still here, and Onionskin keeps trying.");
+        saveDraftSoonRef.current(ms ?? 15000); // past the quick retries, every 15 s: the words say "keeps trying" (and the leave-page guard counts the failure)
+      }
+    );
+    const mine = req.then(() => ok, () => false).finally(() => savingRef.current === mine && (savingRef.current = null));
+    savingRef.current = mine;
+    return mine; // resolves to whether it went through
+  }, [sid, say]);
   const saveDraftSoon = useCallback((delay = 350) => {
     clearTimeout(saveTimer.current);
     if (roRef.current) return;
     draftPendingRef.current = true;
+    if (heldRef.current) return; // a Send is in flight: saved once its answer is in (send)
     setAck((a) => (a === "failed" ? a : null));
     const seq = ++saveSeq.current;
-    saveTimer.current = setTimeout(() => {
-      draftPendingRef.current = false;
-      api(`/api/draft?s=${sid}`, { method: "POST", body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).then(
-        () => {
-          if (seq !== saveSeq.current) return;
-          saveFails.current = 0;
-          setAck("saved");
-        },
-        () => {
-          if (seq !== saveSeq.current) return;
-          setAck("failed");
-          const ms = retryDelay(saveFails.current++);
-          if (saveFails.current === 1) say("Your comments could not be saved yet. They are still here, and Onionskin keeps trying.");
-          saveDraftSoon(ms ?? 15000); // past the quick retries, every 15 s: the words say "keeps trying" (and the leave-page guard counts the failure)
-        }
-      );
-    }, delay);
-  }, [sid, say]);
+    saveTimer.current = setTimeout(() => saveNow({ seq }), delay);
+  }, [saveNow]);
+  const saveDraftSoonRef = useRef(saveDraftSoon);
+  saveDraftSoonRef.current = saveDraftSoon;
+  /** Before an action whose answer rewrites the drafts or the note (Take back, Stop, Revert, Close): what is typed is saved first, and a save in flight is waited for. */
+  async function flushDrafts() {
+    if (roRef.current) return true;
+    while (savingRef.current) await savingRef.current; // every save in flight (one sent meanwhile too) lands before the action goes
+    if (draftPendingRef.current && !heldRef.current) return (await saveNow()) && flushDrafts(); // false: not saved, so the action does not go
+    return true;
+  }
+  /** This tab lost editing holding unsaved words: hand them over once (Sessions.handOver); they stay on screen until that went through. */
+  function handOver() {
+    const d = draftsRef.current;
+    handingRef.current = "sending";
+    clearTimeout(saveTimer.current);
+    draftPendingRef.current = false;
+    api(`/api/handover?s=${sid}`, { method: "POST", body: d.unsaved(commentsRef.current, noteRef.current) }).then(
+      (out) => {
+        if (handingRef.current !== "sending") return;
+        handingRef.current = null;
+        if (out?.session) applyRef.current(out.session, null, { wholesale: true }); // the other tab edits it now, with these words in it
+        say("Another tab edits this file now. What you typed here was handed to it.");
+      },
+      () => {
+        if (handingRef.current !== "sending") return;
+        handingRef.current = "failed";
+        setProblem({ kind: "error", handover: true, copy: true, message: "Another tab edits this file now, and what you typed here last could not be handed to it. It is still on this page: copy it before you close this tab." });
+      }
+    );
+  }
+  /** The one place server state goes into the comments and the note (web/src/drafts.js reconcile). `at`: what the request it answers was sent with. */
+  const applyServer = (view, at = null, opts = {}) => {
+    const wait = sentWaitRef.current; // a Send in flight: this state shows it committed
+    if (wait && view.sent?.[TAB]?.rev >= wait.rev) wait.resolve(view);
+    const r = draftsRef.current.reconcile({ comments: commentsRef.current, note: noteRef.current }, view, at, opts);
+    commentsRef.current = r.comments;
+    setComments(r.comments);
+    if (r.note !== noteRef.current) {
+      noteRef.current = r.note;
+      setNote(r.note);
+    }
+    if (r.unsaved && !opts.wholesale && !draftPendingRef.current) saveDraftSoon(); // words the server does not hold yet: the next autosave carries them (one already due is not pushed back)
+  };
+  applyRef.current = applyServer;
 
   // ---- leaving the page --------------------------------------------------------------------------------------
   // Typed document edits live only in this page until Send. Leaving (refresh, tab close, navigation) asks first; a draft that has not
   // been autosaved yet is sent on the way out. (Persisting unsent document edits across a refresh is not done.)
   useEffect(() => {
-    const unsent = () => !roRef.current && (dirtyRef.current || changesRef.current.length > 0 || draftPendingRef.current || saveFails.current > 0); // a draft that failed to save is still unsent
+    // a comment or the note is unsent until the answer of a save that carried it came back (web/src/drafts.js dirty): one waiting for its
+    // autosave, one whose save is still on its way, one whose save failed, and one only the save on the way out (keepalive) carries
+    const unsent = () => !roRef.current && (dirtyRef.current || (sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || draftPendingRef.current || saveFails.current > 0 || !!savingRef.current || draftsRef.current.dirty(commentsRef.current));
     const flush = () => {
-      if (!draftPendingRef.current || roRef.current) return;
-      clearTimeout(saveTimer.current);
-      draftPendingRef.current = false;
-      api(`/api/draft?s=${sid}`, { method: "POST", keepalive: true, body: { comments: commentsRef.current.map(toWire), note: noteRef.current } }).then(
-        () => {
-          if (saveFails.current) setAck("saved"); // "Not saved" goes once this save went through
-          saveFails.current = 0;
-        },
-        () => saveFails.current > 0 && saveDraftSoon(retryDelay(saveFails.current) ?? 15000) // a tab that was only hidden (or stayed) keeps trying
-      );
+      // a Send in flight too: if it never arrives, this save holds what it carried
+      if ((!draftPendingRef.current && !sendingRef.current) || roRef.current) return;
+      saveNow({ keepalive: true });
     };
     const onBeforeUnload = (e) => {
       flush();
@@ -783,15 +927,21 @@ export default function App({ sid, initial, product, settings, suggest }) {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onHidden);
     };
-  }, [sid, saveDraftSoon]);
+  }, [sid, saveNow]);
   const updateComments = (fn) => {
     // the ref moves first: Quick ask creates a comment and sends in the same breath, and send() reads the ref
+    const prev = new Map(commentsRef.current.map((c) => [c.id, c]));
     const next = fn(commentsRef.current);
+    for (const c of next) if (prev.get(c.id) !== c) draftsRef.current.typed(c.id); // a comment made or changed here: newer than the server's
+    const kept = new Set(next.map((c) => c.id));
+    for (const id of prev.keys()) if (!kept.has(id)) draftsRef.current.removed(id); // deleted here: an older copy from the server is not brought back
     commentsRef.current = next;
     setComments(next);
     saveDraftSoon();
   };
   const updateNote = (v) => {
+    if (heldRef.current?.note || rewritingRef.current) return; // the Send in flight carried it; a Take back (or the like) in flight rewrites it
+    draftsRef.current.typedNote();
     setNote(v);
     noteRef.current = v;
     saveDraftSoon();
@@ -814,6 +964,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       }
     } else if (h.format === "xlsx" && v.format === "xlsx") return h.setViewState({ format: "xlsx", sheetIndex: v.sheetIndex, sheetName: v.sheetName, topLeft: v.topLeft, selection: v.selection });
     else if (h.format === "pptx" && v.format === "pptx") return h.setViewState({ format: "pptx", slideIndex: v.slideIndex, zoom: v.zoom ?? "fit" });
+    else if (h.format === "html" && v.raw?.format === "html") return h.setViewState(v.raw);
     return false;
   }
 
@@ -911,7 +1062,13 @@ export default function App({ sid, initial, product, settings, suggest }) {
   function addComment(kind, anchor, pin, { text = "", quiet = false } = {}) {
     if (roRef.current) return null;
     const list = commentsRef.current;
+    if (list.length >= COMMENTS_MAX) {
+      say(TOO_MANY_COMMENTS); // the server refuses the next one in the same words; none is made, so none is lost
+      return null;
+    }
     const pinNo = kind === "pin" ? list.filter((c) => c.kind === "pin").length + 1 : null;
+    // an HTML anchor names a node of the version this page shows: it carries that version (a node id means nothing in another)
+    if (sessionRef.current.format === "html") anchor = stamped(anchor, loadedShaRef.current);
     const c = { id: uid("c"), kind, text, status: "draft", anchor, pin: pin || null, pinNo };
     updateComments((l) => [...l, c]);
     setChipSel(null);
@@ -921,6 +1078,16 @@ export default function App({ sid, initial, product, settings, suggest }) {
     }
     return c;
   }
+
+  // the HTML view's events (onHost subscribes once and calls these, made on every render)
+  const htmlOnRef = useRef(null);
+  htmlOnRef.current = {
+    pick: (p) => (p.mode === "pin" ? addComment("pin", { ...p.anchor, format: "html" }, p.pin) : addComment(p.kind === "text" ? "text" : "element", { ...p.anchor, format: "html" })),
+    blocked: (b) => b.anchor && addComment("element", { ...b.anchor, format: "html" }),
+    lost: () => {}, // the viewer lists edits that could not be placed, each with its text and a Copy button (HtmlViewer.jsx)
+    mark: (id) => (setFocusId(id), openSidebar()),
+    view: () => redraw(),
+  };
 
   function onChip() {
     const s = chipSelRef.current;
@@ -958,7 +1125,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     const ds = window.getSelection();
     const inDoc = ds?.rangeCount && docRef.current?.contains(ds.getRangeAt(0).commonAncestorContainer);
     quickBackRef.current = { range: inDoc ? ds.getRangeAt(0).cloneRange() : null, el: docRef.current?.contains(document.activeElement) ? document.activeElement : null, host: h };
-    const blocked = roRef.current ? "This tab is read-only. Ask from the tab that holds the file." : sessionRef.current.state === "closed" ? "This session is closed, so nothing can be sent." : null;
+    const blocked = roRef.current ? "This tab is read-only. Ask from the tab that holds the file." : sessionRef.current.state === "closed" ? "This session is closed, so nothing can be sent." : commentsRef.current.length >= COMMENTS_MAX ? TOO_MANY_COMMENTS : null; // at the cap no words are typed that could not become a comment
     setChipSel(null);
     setQuick({ ...a, text: "", blocked, nudge: false });
     if (suggestOn && !blocked && (h.format === "docx" || h.format === "pptx")) {
@@ -1187,8 +1354,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
       } else if (e.key === "?" && !mod && !e.altKey && !phone && !isEditable(e.target) && !(session.format === "xlsx" && e.target.closest?.('[data-testid="docwrap"]')) && !e.target.closest?.(".scrim, .qa")) {
         e.preventDefault();
         setKeysOpen((o) => !o);
-      } else if (e.key === "Enter" && mod && !e.altKey && !e.shiftKey && !e.isComposing && !isEditable(e.target) && !inModal && !e.target.closest?.('[data-testid="docwrap"], .scrim, .qa, .shortcuts')) {
-        // Cmd/Ctrl+Enter from anywhere outside the document and its text boxes (the engine keeps it inside the document: a page break in Word)
+      } else if (e.key === "Enter" && mod && !e.altKey && !e.shiftKey && !e.isComposing && !isEditable(e.target) && !inModal && (!e.target.closest?.('[data-testid="docwrap"], .scrim, .qa, .shortcuts') || !!e.target.closest?.('[data-testid="html-catch"]'))) {
+        // Cmd/Ctrl+Enter from anywhere outside the document and its text boxes (the engine keeps it inside the document: a page break in Word),
+        // and from the HTML view's own layer in Comment and Pin modes (no engine there)
         e.preventDefault();
         if (!(sending || state === "closed" || ro || pendingSend === 0)) send();
       }
@@ -1245,9 +1413,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
       return { blockPath: [l.body_path[0] + delta, ...l.body_path.slice(1)] };
     }
     if (l.format === "xlsx") return l.range ? { sheetIndex: infoRef.current.sheets?.find((x) => x.name === l.sheet)?.index ?? 0, sheetName: l.sheet, range: l.range } : null;
-    return l.slide_index != null ? { slideIndex: l.slide_index, ...(l.shape_id != null ? { shapeId: l.shape_id } : {}) } : null;
+    if (l.format === "pptx") return l.slide_index != null ? { slideIndex: l.slide_index, ...(l.shape_id != null ? { shapeId: l.shape_id } : {}) } : null;
+    if (l.format === "html") return Number.isInteger(l.node_id) ? { nodeId: l.node_id } : null; // ids of the update's after version (History shows them only while it is current)
+    return null;
   }
-  const historyCanShow = (p) => !!hostRef.current && !!p.locator && (p.locator.format === "docx" ? !!p.locator.body_path : p.locator.format === "xlsx" ? !!p.locator.range && (!infoRef.current.sheets || infoRef.current.sheets.some((x) => x.name === p.locator.sheet)) : p.locator.slide_index != null);
+  const historyCanShow = (p) => !!hostRef.current && !!p.locator && (p.locator.format === "html" ? Number.isInteger(p.locator.node_id) : p.locator.format === "docx" ? !!p.locator.body_path : p.locator.format === "xlsx" ? !!p.locator.range && (!infoRef.current.sheets || infoRef.current.sheets.some((x) => x.name === p.locator.sheet)) : p.locator.format === "pptx" && p.locator.slide_index != null);
   historyLocRef.current = historyLoc;
   /** Scroll to a place and outline it for about two seconds (drawn over the document, never in it). */
   function showPlace(loc) {
@@ -1323,7 +1493,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
       return pin;
     }
     if (h.format === "xlsx") return { xFrac: fx, yFrac: r.height ? (e.clientY - r.top) / r.height : 0, yPx: e.clientY - r.top, on: "cell" };
-    return { xFrac: fx, yPx: e.clientY - r.top, on: "paragraph" };
+    if (h.format === "docx") return { xFrac: fx, yPx: e.clientY - r.top, on: "paragraph" };
+    return null;
   }
 
   /** XLSX Comment mode: press on a cell and drag to another to comment on the range between them (a click is a one-cell range). */
@@ -1358,6 +1529,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
 
   function capture(e) {
     if (modeRef.current === "edit") return; // comments and pins work while the agent holds the file: they are queued
+    if (hostRef.current?.format === "html") return; // the HTML view takes its own clicks on its layer (HtmlViewer onPick)
     if (e.target.closest?.(".de-tabs, .de-zoom, .de-fx, .de-thumbs")) return; // navigation stays usable: sheet tabs, zoom, formula bar, slide thumbnails
     e.preventDefault();
     e.stopPropagation();
@@ -1369,8 +1541,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
     const hit = h.hitTest(e.clientX, e.clientY);
     if (!hit) return;
     const anchor = anchorFrom(hit, h);
-    if (modeRef.current === "pin") addComment("pin", anchor, pinFor(h, hit, e));
-    else addComment("element", anchor);
+    if (modeRef.current === "pin") {
+      const pin = pinFor(h, hit, e);
+      if (pin) addComment("pin", anchor, pin); // null: a format with no pins
+    } else addComment("element", anchor);
   }
 
   // ---- send / take back / revert ------------------------------------------------------------------------------
@@ -1378,10 +1552,24 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (use && use.suggestion !== true) use = null; // a click handler passes its event
     wiRef.current?.cancel("send");
     const h = hostRef.current;
-    if (!h || sendingRef.current || roRef.current) return;
+    // not while Take back, Stop, Revert or Close is in flight: their answer rewrites the note and drafts this Send would carry
+    if (!h || sendingRef.current || roRef.current || rewritingRef.current) return;
     sendingRef.current = true;
     setSending(true);
     setProblem(null);
+    // From the press until the answer, what the Send carries is read only here: its drafts (a Use: only its stamp) and its note. A new
+    // comment can still be made; it stays here and is saved after the answer. The state shows only past SLOW_MS (a usual Send is 15 to
+    // 80 ms), on the same button and cards, so nothing moves.
+    const hold = (ids) => {
+      heldRef.current = { ids, note: !use };
+      setHeld(heldRef.current);
+    };
+    hold(new Set(use ? [use.commentId] : commentsRef.current.filter((c) => c.status === "draft").map((c) => c.id)));
+    const slowTimer = setTimeout(() => setSlow(true), SLOW_MS);
+    let failed = null;
+    let at = null; // what it was sent with (web/src/drafts.js)
+    let html = false;
+    let htmlSent = [];
     try {
       clearTimeout(saveTimer.current);
       draftPendingRef.current = false; // the Send below carries the comments and the note
@@ -1395,19 +1583,52 @@ export default function App({ sid, initial, product, settings, suggest }) {
       await h.flush();
       const locked = sessionRef.current.locked;
       const seq = editSeq.current;
-      const bytes = !locked && dirtyRef.current ? await h.saveBytes() : null;
+      // an HTML file: its pending text edits go as edits (R9), never bytes; read only here until the answer, cleared only when it went through
+      html = h.format === "html";
+      htmlSent = html && !locked ? h.edits() : [];
+      if (htmlSent.length) h.setReadOnly(true, "sending");
+      const bytes = !html && !locked && dirtyRef.current ? await h.saveBytes() : null;
       const body = {
         baseSha: loadedShaRef.current,
         ...(bytes ? { bytesB64: await blobToBase64(bytes) } : {}),
+        ...(htmlSent.length ? { htmlEdits: htmlSent } : {}),
         comments: commentsRef.current.map(toWire),
         note: noteRef.current,
         edits: locked ? [] : changesRef.current.map(({ kind, before, after, label, location }) => ({ kind, before, after, label, location })),
         viewState: (sentViewRef.current = h.getViewState()),
+        rev: ++revRef.current,
+        noteRev: draftsRef.current.noteRev,
+        seen: draftsRef.current.seen, // the newest session state this page took
+        noteSeen: draftsRef.current.noteSeen, // ... and whose note the box took: a note the server gave back since is merged, not overwritten
       };
+      if (!use) hold(new Set(commentsRef.current.filter((c) => c.status === "draft").map((c) => c.id))); // one made while the file was flushed goes too
+      if (!use) body.sends = [...heldRef.current.ids]; // what it delivers: what this page holds read only for it
       const q = quickChangeRef.current;
       if (!use && q && !bytes && !commentsRef.current.some(ridesAlong) && !body.edits.length && q.note === noteRef.current) body.quick = { command: q.command, count: q.count };
-      const out = await api(use ? `/api/suggest/use?s=${sid}` : `/api/send?s=${sid}`, { method: "POST", body: use ? { ...body, id: use.id, commentId: use.commentId } : body }); // Use this: the same body, plus the suggestion's id and the comment
-      if (!locked) {
+      at = draftsRef.current.begin({ note: body.note, carriesNote: true, sends: heldRef.current.ids, wire: body.rev, comments: commentsRef.current });
+      let out;
+      // its answer, or the server's state showing it committed (an event, any answer: `sent` names this Send), whichever comes first: an
+      // answer that never arrives does not keep what it carried locked once the outcome is known
+      const proof = new Promise((resolve) => (sentWaitRef.current = { rev: body.rev, resolve }));
+      try {
+        out = await Promise.race([api(use ? `/api/suggest/use?s=${sid}` : `/api/send?s=${sid}`, { method: "POST", timeout: SEND_MS, body: use ? { ...body, id: use.id, commentId: use.commentId } : body }), proof.then((session) => ({ session }))]); // Use this: the same body, plus the suggestion's id and the comment
+      } catch (e) {
+        if (e.status != null) throw e;
+        // no answer (the connection dropped, or the page is being left): the Send may still have gone through. Until that is known what it
+        // carried stays read only, saying so, and the server is asked again until it answers (GET /api/bootstrap waits for this file's
+        // Send): `sent` names the newest Send of this tab that committed
+        heldRef.current = { ...heldRef.current, checking: true };
+        setHeld(heldRef.current);
+        const view = await Promise.race([checkSent(), proof]);
+        if (!(view.sent?.[TAB]?.rev >= body.rev)) throw e; // it did not go through: everything is a draft again
+        out = { session: view }; // it went through: the same as its answer
+      }
+      if (!locked && html && htmlSent.length) {
+        // the server wrote the text edits: they leave the viewer, and the page shows the new version (its bytes are the server's)
+        h.clearEdits();
+        setChanges([]);
+        reloadNowRef.current?.(out.session);
+      } else if (!locked) {
         loadedShaRef.current = out.session.baseSha;
         syncedShaRef.current = out.session.baseSha;
         // typed during the request: those edits are not in what was sent, so the page stays dirty and they are merged or sent later
@@ -1416,21 +1637,34 @@ export default function App({ sid, initial, product, settings, suggest }) {
           setChanges([]);
         }
       }
-      // the note travelled with this Send (the server cleared its copy): empty the box so the next batch does not repeat it. A Use carries no
-      // note (Sessions.useSuggestion keeps it as a draft), so the box keeps it: emptying it here would let the next autosave or Send erase it
-      if (!use) {
-        setNote("");
-        noteRef.current = "";
-      }
-      setSession(out.session);
+      // once: what it carried becomes sent (or queued) as the server says, and the note it carried leaves the box (applyServer: the box
+      // could not change meanwhile, so the server's empty note is based on it); a comment made meanwhile stays a draft. A Use carries no
+      // note to the agent (Sessions.useSuggestion keeps it), so the box keeps it. The event stream may have said the same already
+      draftsRef.current.end(at, true);
+      at.done = true;
+      mergeRef.current?.(out.session, at);
       return true;
     } catch (e) {
+      failed = e;
       use?.fail(e);
       if (e.code === "conflict") setProblem({ kind: "conflict", message: e.message, side: e.side || "user", copy: e.copy_name ? { name: e.copy_name, path: e.copy_path } : null, copyError: e.copy_error || null, canReveal: !!e.can_reveal });
       else setProblem({ kind: "error", message: plain(e) });
+      // an HTML page whose edits were made on another version: it shows the file as it is now and places them again (by their text)
+      if (html && e.code === "version_changed") loadFile().catch((err) => setProblem({ kind: "error", message: `Could not reload: ${err.message}` }));
     } finally {
+      if (html && htmlSent.length) h.setReadOnly(false, "sending");
+      if (handingRef.current === "waiting") setTimeout(handOver, 0); // this tab lost editing during the Send: now hand over what is left
+      sentWaitRef.current = null;
+      if (at && !at.done) draftsRef.current.end(at, false);
+      // everything it carried is editable again: sent now, or a draft as before when it failed
+      clearTimeout(slowTimer);
+      heldRef.current = null;
+      setHeld(null);
+      setSlow(false);
       sendingRef.current = false;
       setSending(false);
+      // saved now: a comment made during the wait, and after a Send that failed (a refusal changes nothing on the server), the drafts it carried
+      if (draftPendingRef.current || failed) saveDraftSoon();
       if (sendAgainRef.current) {
         sendAgainRef.current = false;
         const chip = sentChipRef.current;
@@ -1439,7 +1673,16 @@ export default function App({ sid, initial, product, settings, suggest }) {
       }
     }
   }
+  /** After a request with no answer: the session as the server holds it once that request's turn is over, asked again (soon, then every 5 s) until it answers. */
+  async function checkSent() {
+    for (let i = 0; ; i++) {
+      const view = await api(`/api/bootstrap?s=${sid}`).then((r) => r.session, () => null);
+      if (view) return view;
+      await new Promise((r) => setTimeout(r, Math.min(retryDelay(i) ?? 5000, 5000)));
+    }
+  }
   sendFnRef.current = send;
+
 
   /** A tap on a question card: the server checks the index and makes the comment a draft again; a picked option is sent at once. */
   async function answer(id, choice) {
@@ -1471,39 +1714,41 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }
   /** A tap on one of the background agent's buttons: only an action name (and cli or on) goes to the server. */
   async function agentAct(action, extra = {}) {
+    // Stop takes the batch back like Take back: its answer brings the withdrawn batch's note back with its comments, joined with the box as
+    // the server held it (stopAgent saved it first); words typed since stay too (applyServer)
+    const at = action === "stop" && extra.takeBack ? draftsRef.current.begin({ rewrites: true }) : null;
+    if (at) outRef.current++;
     try {
       setProblem((p) => (p?.stream || p?.kind === "outside" ? p : null)); // a lost connection and an outside change are still true after a button press
       const out = await api(`/api/agent?s=${sid}`, { method: "POST", body: { action, ...extra } });
+      if (at) draftsRef.current.end(at, true);
       if (out.session) setSession(out.session);
-      if (action === "stop" && extra.takeBack && out.session) {
-        // Stop takes the batch back like Take back: the withdrawn batch's note comes back with its comments (the stream does not set the note box).
-        // A note typed while the agent worked and not saved yet stays: it is kept after the withdrawn one, never replaced by it.
-        const next = noteAfterStop(out.session.note || "", noteRef.current || "");
-        setNote(next);
-        noteRef.current = next;
-      }
+      if (at && out.session) applyServer(out.session, at);
       return true;
     } catch (e) {
+      if (at) draftsRef.current.end(at, false);
+      if (at && e.status == null) return afterLost(at); // no answer: what the server holds now goes in, before any save carries the note
       setProblem({ kind: "error", message: plain(e) });
       return false;
+    } finally {
+      if (at) outRef.current--;
     }
   }
-  /** Stop (the working banner): one call takes the batch back and ends the agent; the comments come back as drafts through the event stream. */
+  /** Stop (the working banner): one call takes the batch back and ends the agent; the comments come back as drafts. */
   async function stopAgent() {
     if (stopping || roRef.current) return;
+    if (rewritingRef.current || sendingRef.current) return say(BUSY_WORDS); // one at a time, and not during a Send
     setStopping(true);
-    // an autosave due now would reach the server after the take back and put the pre-Stop note over the withdrawn one: it waits, and goes after
-    const due = draftPendingRef.current;
-    clearTimeout(saveTimer.current);
-    draftPendingRef.current = false;
-    saveSeq.current++;
+    rewrite(1);
     let ok = false;
     try {
-      ok = await agentAct("stop", { takeBack: true });
+      // what is typed is saved first, so the take back joins it with the withdrawn note; not saved: Stop does not go, and says so
+      if (await flushDrafts()) ok = await agentAct("stop", { takeBack: true });
+      else setProblem({ kind: "error", message: plain(new Error("Failed to fetch")) });
     } finally {
+      rewrite(-1);
       setStopping(false);
     }
-    if (due || ok) saveDraftSoon(); // the joined note box (and any draft typed meanwhile) is saved as the page now shows it
     if (ok) {
       say("Stopped. Your comments are drafts again.");
       setTimeout(() => document.querySelector('[data-testid="send"]')?.focus(), 0); // the Stop button goes with its banner: focus moves on (after the drafts render), not to the page body
@@ -1573,26 +1818,43 @@ export default function App({ sid, initial, product, settings, suggest }) {
   mergeHeldRef.current = mergeHeld;
 
   async function post(path, body = {}) {
+    // Take back, Revert and Close: what is typed is saved first, and the answer (the withdrawn batch's note joined with the box, a run on this
+    // Mac's request back in an empty box) goes in through applyServer, so words typed meanwhile stay
+    const rewrites = path === "takeback" || path === "revert" || path === "close";
+    if (rewrites && (rewritingRef.current || sendingRef.current)) return say(BUSY_WORDS); // one at a time, and not during a Send
+    let at = null;
+    if (rewrites) rewrite(1);
     try {
       setProblem(null);
+      if (rewrites) {
+        if (!(await flushDrafts())) throw new Error("Failed to fetch"); // not saved first: the action does not go, and the words stay here
+        at = draftsRef.current.begin({ rewrites: true });
+        outRef.current++;
+      }
       const out = await api(`/api/${path}?s=${sid}`, { method: "POST", body });
+      if (at) draftsRef.current.end(at, true);
       if (out.session) setSession(out.session);
-      if (path === "takeback" && out.session) {
-        // the withdrawn batch's note comes back with its comments
-        setNote(out.session.note || "");
-        noteRef.current = out.session.note || "";
-      }
-      if (path === "revert" && out.session?.activity?.find((a) => a.id === body.id)?.by === "local") {
-        // a run on this Mac was undone: its request comes back to an empty note box, and the next Send goes to the agent
-        if (!noteRef.current && out.session.note) {
-          setNote(out.session.note);
-          noteRef.current = out.session.note;
-        }
-        say("Undone. Press Send to ask the agent instead.");
-      }
+      if (at && out.session) applyServer(out.session, at);
+      // a run on this Mac was undone: its request comes back to an empty note box, and the next Send goes to the agent
+      if (path === "revert" && out.session?.activity?.find((a) => a.id === body.id)?.by === "local") say("Undone. Press Send to ask the agent instead.");
     } catch (e) {
-      setProblem({ kind: "error", message: plain(e) });
+      if (at) draftsRef.current.end(at, false);
+      if (at && e.status == null) await afterLost(at); // no answer: what the server holds now goes in, before any save carries the note
+      else setProblem({ kind: "error", message: plain(e) });
+    } finally {
+      if (at) outRef.current--;
+      if (rewrites) rewrite(-1);
     }
+  }
+  /**
+   * Take back, Stop, Revert or Close got no answer: it may have changed the note. The note stays read only and out of every save until the
+   * server's state is known (asked until it answers), which then goes in as that action's answer would have (applyServer).
+   */
+  async function afterLost(at) {
+    const view = await checkSent();
+    setSession(view);
+    applyServer(view, at);
+    return true;
   }
 
   // "Copy my comments" on the Connection lost banner: the note and every draft, as plain text. writeText is called synchronously in the click (Safari).
@@ -1615,7 +1877,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
 
   async function keepMine() {
     const h = hostRef.current;
-    if (!h) return;
+    if (!h || h.format === "html") return; // an HTML page holds no bytes of its own: its edits stay in the viewer
     const blob = await h.saveBytes();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1627,7 +1889,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const counts = {
     comments: comments.filter((c) => c.kind !== "pin" && ["draft", "queued"].includes(c.status)).length,
     pins: comments.filter((c) => c.kind === "pin" && ["draft", "queued"].includes(c.status)).length,
-    edits: changes.length,
+    edits: session.format === "html" ? htmlEdits : changes.length, // an HTML file: the viewer's pending text edits (an undo takes one away)
   };
   // While a batch is delivered, typed edits are not something to send: they are merged when the agent finishes.
   const sendCounts = session.locked ? { ...counts, edits: 0 } : counts;
@@ -1650,21 +1912,37 @@ export default function App({ sid, initial, product, settings, suggest }) {
             session={session}
             counts={counts}
             pending={pendingSend}
-            sending={sending}
+            sending={slow}
             theme={theme}
             onTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
             bgOpen={bgOpen}
             onBackground={() => setBgOpen((o) => !o)}
             sideOpen={sideOpen}
             onSidebar={toggleSidebar}
-            onClose={() => (changesRef.current.length > 0 || dirtyRef.current ? setCloseAsk(true) : post("close"))}
+            onClose={() => ((sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || dirtyRef.current ? setCloseAsk(true) : post("close"))}
             keysOpen={keysOpen}
             onKeys={() => setKeysOpen((o) => !o)}
           />
           <Toolbar mode={mode} onMode={setMode} setBar={setBar} readOnly={ro} phone={phone} />
           <div className="docstage">
             <div className={`docwrap mode-${mode}`} ref={docRef} onMouseDownCapture={capture} onClickCapture={capture} data-testid="docwrap" data-working={state === "working" || state === "queued" ? "1" : "0"}>
-              {doc.file ? (
+              {session.format === "html" ? (
+                doc.html ? (
+                  <HtmlHost
+                    view={doc.html}
+                    mode={mode}
+                    marks={htmlMarks(comments, resolved, doc.html.version)}
+                    locked={!!session.locked}
+                    edits={htmlEdits}
+                    onHost={onHost}
+                    onWant={(plainView) => loadFile({ plain: plainView }).catch((e) => setProblem({ kind: "error", message: `Could not load the file: ${e.message}` }))}
+                  />
+                ) : (
+                  <p className="opening" role="status">
+                    <span className="spinner" aria-hidden="true" /> Opening {session.name}
+                  </p>
+                )
+              ) : doc.file ? (
                 <DocViewer
                   key={doc.v}
                   src={doc.file}
@@ -1702,7 +1980,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
               quick={phone ? null : quick}
               onQuickText={(text) => setQuick((q) => (q ? { ...q, text, nudge: false } : q))}
               onQuickSubmit={submitQuick}
-              stamps={{ ...stampsCtl, suggest: { sg, busy: sending, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
+              stamps={session.format === "html" ? null /* PLAN-html D9: no stamps for an HTML file */ : { ...stampsCtl, suggest: { sg, busy: slow, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
               onQuickClose={closeQuick}
               onAway={awayGo}
               canQuick={!phone}
@@ -1741,7 +2019,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           />
         </main>
         {bgOpen && <BackgroundPicker ctl={bgc} onClose={(refocus) => (setBgOpen(false), refocus && document.querySelector('[data-testid="bg-button"], [data-testid="more-menu"]')?.focus())} />}
-        {phone && <Dock mode={mode} onMode={setMode} readOnly={ro} counts={sendCounts} pending={pendingSend} sideOpen={sideOpen} onSidebar={toggleSidebar} sending={sending} />}
+        {phone && <Dock mode={mode} onMode={setMode} readOnly={ro} counts={sendCounts} pending={pendingSend} sideOpen={sideOpen} onSidebar={toggleSidebar} sending={slow} />}
         <Sidebar
           readOnly={ro}
           open={sideOpen}
@@ -1763,13 +2041,16 @@ export default function App({ sid, initial, product, settings, suggest }) {
           counts={sendCounts}
           heldEdits={session.locked && session.format === "docx" ? counts.edits : 0}
           pendingSend={pendingSend}
-          sending={sending}
+          sending={slow}
+          busy={sending}
+          held={held}
+          rewriting={rewriting}
           focusId={focusId}
           onFocused={() => setFocusId(null)}
           ack={ack}
           onNote={updateNote}
-          onText={(id, text) => updateComments((l) => l.map((c) => (c.id === id ? { ...c, text } : c)))}
-          onDelete={(id) => updateComments((l) => l.filter((c) => c.id !== id))}
+          onText={(id, text) => !heldRef.current?.ids.has(id) && updateComments((l) => l.map((c) => (c.id === id ? { ...c, text } : c)))}
+          onDelete={(id) => !heldRef.current?.ids.has(id) && !["sent", "queued"].includes(commentsRef.current.find((c) => c.id === id)?.status) && updateComments((l) => l.filter((c) => c.id !== id))}
           onAnswer={answer}
           agentPanel={<AgentPanel agent={session.agent} readOnly={ro} onAct={agentAct} />}
           onReview={(kind) => act("review", { kind })}
@@ -1890,7 +2171,7 @@ function awayPill(h, fmt, clip, pl, ref) {
 const withProtected = (loc, c) => (loc && c?.anchor?.location?.protected ? { ...loc, protected: true } : loc);
 
 /** Two view states show the same place (same top paragraph and offset, same sheet corner, same slide). */
-const viewKey = (v) => (v?.format === "docx" ? `d|${v.blockPath?.[0]}|${v.textHash}|${Math.round((v.offsetPx || 0) / 8)}` : v?.format === "xlsx" ? `x|${v.sheetIndex}|${v.topLeft}` : v?.format === "pptx" ? `p|${v.slideIndex}` : "");
+const viewKey = (v) => (v?.format === "html" ? `h|${v.version}|${Math.round((v.y || 0) / 8)}` : v?.format === "docx" ? `d|${v.blockPath?.[0]}|${v.textHash}|${Math.round((v.offsetPx || 0) / 8)}` : v?.format === "xlsx" ? `x|${v.sheetIndex}|${v.topLeft}` : v?.format === "pptx" ? `p|${v.slideIndex}` : "");
 const normTxt = (t) => String(t || "").replace(/\s+/g, " ").trim();
 /** A rendered paragraph starts with History's `text_start`: the server keeps 160 characters, cut to 148 plus "…[truncated]" when longer. */
 const opensWith = (text, start) => (start.endsWith("…[truncated]") ? normTxt(text).startsWith(start.slice(0, -"…[truncated]".length)) : normTxt(text).slice(0, 160) === start);
@@ -1926,7 +2207,15 @@ function changedPaint(h, fmt, session, info, active, clip, cut, local, skip) {
       const rs = h.rectsFor({ sheetIndex: info.sheets?.find((x) => x.name === it.sheetName)?.index ?? 0, sheetName: it.sheetName, range: it.range });
       if (rs[0]) add(rs[0], it.kind, tagged++ < 6);
     }
-  } else {
+  } else if (fmt === "html") {
+    // node ids of the version the run left: drawn only while the page shows exactly that version
+    if (h.version !== run.postSha) return [];
+    let tagged = 0;
+    for (const it of items) {
+      const rs = Number.isInteger(it.nodeId) ? h.rectsFor({ nodeId: it.nodeId }) : [];
+      if (rs[0]) add(rs[0], it.kind, tagged++ < 6);
+    }
+  } else if (fmt === "pptx") {
     const idx = (id) => info.slides?.find((x) => String(x.id) === String(id))?.index;
     let tagged = 0;
     for (const it of items) {
@@ -1959,6 +2248,8 @@ function thumbBadges(wrap, comments, resolved, box, lx, ly) {
   }
   return out;
 }
+
+/** Whether a Send that carried drafts `ids` and `note` went through, from a state the server gave after its turn. */
 
 function toWire(c) {
   return { id: c.id, kind: c.kind, text: c.text, anchor: c.anchor, pin: c.pin, pinNo: c.pinNo };

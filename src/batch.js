@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PRODUCT } from "./constants.js";
+import { PRODUCT, unknownFormat } from "./constants.js";
 import { untrusted, userText } from "./sanitize.js";
 import { pptxLocator } from "./pptx.js";
+import { htmlLocator } from "./html.js";
 import { GUIDE_MAX, SECTIONS, SHORT_MAX } from "./voice-guide.js";
 import { xlsxLocator } from "./xlsx.js";
+import { NOTE_MAX } from "./retain.js";
 
 const REFERENCE = "The skill's SKILL.md and reference/ files (batch.md, ops.md, troubleshooting.md) hold the full rules and every op.";
 
@@ -32,6 +34,13 @@ const EXAMPLES = [
   { format: "xlsx", description: "Set the cell or range an anchor names; expect.text_hash is the anchor's locator.text_hash.", op: { op: "set_cells", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, values: "<new value or =formula>" } },
   { format: "pptx", description: "Replace text inside the shape an anchor names.", op: { op: "replace_text_in_shape", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, find: "<text inside the shape>", replace: "<new text>" } },
   { format: "docx", description: "Replace text inside the paragraph an anchor names.", op: { op: "replace_text", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, find: "<text inside the paragraph>", replace: "<new text>" } },
+  { format: "html", description: "Replace text inside the element an anchor names (inside one text: not across a link or bold text).", op: { op: "replace_text", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, find: "<text inside the element>", replace: "<new text>" } },
+  { format: "html", description: "Add markup after the element an anchor names (text, formatting, lists, tables, local images and links only).", op: { op: "insert_html", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, where: "after", html: "<p>New paragraph with a <a href=\"https://example.com\">link</a>.</p>" } },
+];
+// HTML (PLAN-html R1): what a write may add, and what the refusal looks like
+const HTML_RULES = [
+  "HTML: code that runs in a browser cannot be added or changed (scripts, event handlers such as onclick, frames, forms, stylesheet links, remote images, data- attributes, URLs other than http, https, mailto, tel or relative); script and style elements cannot be edited. Such a write is refused whole with code active_content: \"The agent tried to add code that runs in a browser, so nothing was written.\"",
+  "HTML: replace_text works inside one text; a match across an element's edge answers spans_markup: use replace_element with the element's new markup.",
 ];
 
 /** Static, machine-readable instructions for editing the file (no document text in it). The long rules live in the skill's reference files, not in every batch. */
@@ -52,6 +61,7 @@ function howToApply(file, batchId = "batch", format = null) {
       `Or with apply (same engine as the browser): target ops by anchor id and give each an expect copied from what you read. ${REFERENCE}`,
       `If you edit with other tools, never regenerate the file from scratch and never write the document's own path: edit a COPY, then run \`${PRODUCT.bin} commit ${shellQuote(file)} --from <copy> --lease <ticket>\` (the same checked write as apply; \`done\` flags a file that changed any other way).`,
       "Anchors with protected: true cannot be edited losslessly; apply skips them (see protected_reason).",
+      ...(format === "html" ? HTML_RULES : []),
     ],
     examples: EXAMPLES.filter((e) => !format || e.format === format),
   };
@@ -66,7 +76,9 @@ export function replyWithOf(anchor, format) {
   if (!anchor.locator.text_hash) return "ops";
   if (format === "xlsx") return "set";
   if (format === "pptx") return anchor.unit === "shape" ? "find_replace_or_text" : "ops";
-  return "find_replace_or_text";
+  if (format === "docx") return "find_replace_or_text";
+  if (format === "html") return anchor.unit === "text" ? "find_replace_or_text" : "ops"; // an element that holds text (replace_text, set_text); an image or a container: ops
+  return unknownFormat(format, "replyWithOf");
 }
 
 /** A comment the person answered: a stored question and an index that is in range of its options. */
@@ -96,21 +108,25 @@ const MAX_VALUES = { rows: 20, cols: 10 };
 const unitOfXlsx = (d) => (d.cell ? (d.r0 === d.r1 && d.c0 === d.c1 ? "cell" : "range") : /^\d+:\d+$/.test(d.range) ? "rows" : /^[A-Za-z]+:[A-Za-z]+$/.test(d.range) ? "columns" : "sheet");
 
 /** Format-specific evidence of a durable anchor: locator, quote, unit and context. All strings are document-derived and sanitized by the caller. */
-function evidenceOf(d, extra) {
+function evidenceOf(d, extra, clean = (f) => untrusted(f, 100)) {
   if (d?.format === "xlsx") {
-    const values = d.cell ? d.text.split("\n").slice(0, MAX_VALUES.rows).map((r) => r.split("\t").slice(0, MAX_VALUES.cols).map((v) => untrusted(v, 200))) : undefined;
+    // the anchor keeps its top-left cells (src/xlsx.js rangeOf); one stored by an earlier version has its whole text instead
+    const grid = Array.isArray(d.values) ? d.values : d.cell ? d.text.split("\n").map((r) => r.split("\t")) : null;
+    const values = d.cell ? grid.slice(0, MAX_VALUES.rows).map((r) => r.slice(0, MAX_VALUES.cols).map((v) => untrusted(v, 200))) : undefined;
     const c = d.ctx;
     return {
       unit: unitOfXlsx(d),
       locator: { ...xlsxLocator(d), text_hash: d.cell ? d.rangeHash : null },
       quote: d.text,
       ...(values ? { values } : {}),
-      ...(d.cell && d.types ? { cell_types: d.types, number_formats: d.formats.map((r) => r.map((f) => untrusted(f, 100))) } : {}),
+      ...(d.cell && d.types ? { cell_types: d.types, number_formats: d.formats.map((r) => r.map(clean)) } : {}),
       ...(c ? { context: { row_header: untrusted(c.rowHeader, 120), column_header: untrusted(c.colHeader, 120), left: untrusted(c.left, 120), right: untrusted(c.right, 120), above: untrusted(c.up, 120), below: untrusted(c.down, 120) } } : {}),
     };
   }
   if (d?.format === "pptx") return { unit: d.kind, locator: pptxLocator(d), quote: d.quote || d.text, prefix: d.prefix, suffix: d.suffix };
-  return null;
+  if (d?.format === "html") return { unit: d.kind, locator: htmlLocator(d), quote: d.quote || d.text, prefix: d.prefix, suffix: d.suffix };
+  if (!d || d.format === undefined || d.format === "docx") return null; // Word's evidence is built by the caller (no anchor: unresolved)
+  return unknownFormat(d.format, "evidenceOf");
 }
 
 /**
@@ -124,9 +140,16 @@ export function buildBatch({ file, format, baseSha, note, comments, edits, style
   const batchId = `b_${crypto.randomBytes(6).toString("hex")}`;
   const anchors = [];
   let n = 0;
+  // a number format is sanitized once per batch: 500 anchors on one range repeat the same 200 formats
+  const formats = new Map();
+  const cleanFormat = (f) => {
+    let v = formats.get(f);
+    if (v === undefined) formats.set(f, (v = untrusted(f, 100)));
+    return v;
+  };
   const addAnchor = (d, extra = {}) => {
     const id = `a${++n}`;
-    const ev = evidenceOf(d, extra);
+    const ev = evidenceOf(d, extra, cleanFormat);
     anchors.push({
       id,
       kind: extra.kind || "paragraph",
@@ -172,7 +195,8 @@ export function buildBatch({ file, format, baseSha, note, comments, edits, style
     format,
     base_sha256: baseSha,
     note: "user_edits are changes the user already made; they are in the file; do not redo or revert them",
-    instructions: { overall_note: userText(note), ...(style ? { style_note: style } : {}), ...(guide ? { voice_guide: guide } : {}), ...(review ? { review: { kind: review.kind, ask: review.ask } } : {}), comments: instructionComments },
+    // the note at NOTE_MAX: a waiting batch's note and the next one together are never cut here (longer is refused at Send, src/session.js)
+    instructions: { overall_note: userText(note, NOTE_MAX), ...(style ? { style_note: style } : {}), ...(guide ? { voice_guide: guide } : {}), ...(review ? { review: { kind: review.kind, ask: review.ask } } : {}), comments: instructionComments },
     untrusted_document_evidence: { file_name: untrusted(path.basename(file)), anchors, user_edits: userEdits, ...(questions.length ? { questions } : {}), ...(units ? { units, ...(unitsMore ? { units_more: unitsMore } : {}) } : {}) },
     how_to_apply: howToApply(file, batchId, format),
     agent_rules: AGENT_RULES,

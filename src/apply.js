@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { FORMATS, MAX_DOC_BYTES, PRODUCT, REFUSED_EXTENSIONS, env } from "./constants.js";
+import { MAX_DOC_BYTES, PRODUCT, REFUSED_EXTENSIONS, env, formatOfExt } from "./constants.js";
 import { checkRegularOwned, readDoc, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
 import { hasDelivery, loadTicketRecord, parseTicket } from "./lease.js";
+import { NOT_YOUR_FILE, agentMayUse, isAgentHolder } from "./agent-detect.js";
 import { validatePackage } from "./package.js";
 import { cleanFlag, hasControlChars } from "./sanitize.js";
 import crypto from "node:crypto";
 import { ensureStateDir, sessionKey } from "./paths.js";
 import { demote, summarize, runOps } from "./ops/run.js";
+import { htmlWriteOffThread } from "./offload.js";
 import { validateOps } from "./ops/schema.js";
 
 export const APPLY_EXIT = { ok: 0, error: 1, invalid: 2, not_applied: 3, partial: 4, write_refused: 5 };
@@ -61,6 +63,12 @@ function readJsonFile(file, what) {
   }
 }
 
+/** The format of a file by its extension: an HTML file (.html or .htm) is "html"; null when Onionskin does not edit that kind of file. */
+export function formatOfPath(real) {
+  return formatOfExt(path.extname(real));
+}
+const ONLY = "Only .docx, .xlsx, .pptx, .html and .htm files are supported";
+
 const anchorMap = (batch) => new Map((batch?.untrusted_document_evidence?.anchors || []).map((a) => [a.id, a]));
 
 /**
@@ -84,12 +92,59 @@ function outsideChangeOf(j) {
 const refusal = (message) => new ApplyError(message, APPLY_EXIT.write_refused);
 
 /**
+ * Who calls, checked before the file is read: an agent Onionskin started (ONIONSKIN_HOLDER onionskin-bg-* or onionskin-term-*) acts only on
+ * its own file and only as itself (no --holder of another). Returns the holder that goes with the claim: --holder, else ONIONSKIN_HOLDER,
+ * else the holder the server saved with the ticket.
+ */
+function callerHolder(a, real, ticket) {
+  const envHolder = env("HOLDER", "");
+  if (!agentMayUse(envHolder, real)) throw refusal(NOT_YOUR_FILE);
+  if (isAgentHolder(envHolder) && a.holder && a.holder !== envHolder) throw refusal("--holder cannot name another holder for an agent Onionskin started. Nothing was written.");
+  return a.holder || envHolder || (ticket ? loadTicketRecord(ticket.batch_id)?.holder : "") || "";
+}
+
+/**
+ * The server's state for the file, asked before the file is read. With a ticket the delivered batch is handed out only to its holder, and a
+ * ticket the server does not accept ends the command here, with no op run against the file. Returns {up, session, batch}.
+ */
+async function sessionState({ server, real, holder, ticket, wantBatch, report = "apply" }) {
+  const up = await server.healthy();
+  if (!up) return { up, session: null, batch: null };
+  const q = holder ? `&holder=${encodeURIComponent(holder)}` : "";
+  const r = await server.req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(real)}${q}` });
+  const body = (t) => {
+    try {
+      return server.json(t) || {};
+    } catch {
+      return {};
+    }
+  };
+  if (r.status === 403 && body(r.text).code === "not_your_file") throw refusal(NOT_YOUR_FILE);
+  const session = r.status === 200 ? server.json(r.text) : null;
+  if (!session) return { up, session, batch: null };
+  if (ticket) {
+    const b = await server.req({ method: "GET", path: `/cli/batch?file=${encodeURIComponent(real)}${q}&batch_id=${encodeURIComponent(ticket.batch_id)}&lease_token=${encodeURIComponent(ticket.token)}` });
+    if (b.status !== 200) {
+      const j = body(b.text);
+      if (j.code === "not_your_file") throw refusal(NOT_YOUR_FILE);
+      const note = j.code === "missing_lease" ? `Cannot tell which holder this ticket belongs to: set ${PRODUCT.envPrefix}_HOLDER or pass --holder. Nothing was written.` : `The server does not accept this ticket for this file (${j.code === "no_batch" ? "no batch is delivered" : "it is not the current delivery's"}). Nothing was written. Run \`${PRODUCT.bin} status <file> --ticket\` (it answers only the agent that polled this batch) or poll again.`;
+      // the same write_error a refused write reports, from the server's own content-free words; no op ran, so there are no results
+      throw new ApplyError(note, APPLY_EXIT.write_refused, { schema: `onionskin.${report}-report/1`, file: real, written: false, write_path: "none", note, write_error: { status: b.status, code: typeof j.code === "string" ? j.code : null, message: typeof j.error === "string" ? j.error.slice(0, 300) : `server answered ${b.status}` } });
+    }
+    return { up, session, batch: server.json(b.text).batch };
+  }
+  if (!wantBatch) return { up, session, batch: null };
+  const b = await server.req({ method: "GET", path: `/cli/batch?file=${encodeURIComponent(real)}${q}` });
+  return { up, session, batch: b.status === 200 ? server.json(b.text).batch : null };
+}
+
+/**
  * Where a write may go, and under which credentials. Fails closed: a ticket, a delivered batch or a saved delivery for the file means the
  * write goes through the live session or does not happen. Standalone writes (no review session at all) need the explicit --standalone flag
  * and are refused while a live session or a saved delivery exists for the file.
  * Returns {via: "session", claim} or {via: "standalone"}; throws ApplyError(write_refused).
  */
-async function resolveWriteTarget({ a, real, server, session, up, ticket }) {
+async function resolveWriteTarget({ a, real, session, up, ticket, holder }) {
   const live = !!session && session.state !== "closed";
   const delivered = live && ["working", "queued"].includes(session.state);
   const saved = hasDelivery(real);
@@ -100,7 +155,6 @@ async function resolveWriteTarget({ a, real, server, session, up, ticket }) {
     if (session.state === "closed") throw refusal(`The session for this file is closed; the delivery named by --lease no longer exists. Nothing was written.`);
     if (!delivered) throw refusal(`This file has an open ${PRODUCT.name} session in state "${session.state}": no batch is delivered, so the ticket is void. Nothing was written. Run \`${PRODUCT.bin} poll\` and wait for the user's Send.`);
     if (session.delivered_batch !== ticket.batch_id) throw refusal(`The ticket belongs to batch ${ticket.batch_id}, but the delivered batch is ${session.delivered_batch}: your delivery was taken back, finished or handed on. Nothing was written. Run \`${PRODUCT.bin} poll\` again.`);
-    const holder = a.holder || env("HOLDER", "") || loadTicketRecord(ticket.batch_id)?.holder;
     if (!holder) throw refusal(`Cannot tell which holder this ticket belongs to: set ${PRODUCT.envPrefix}_HOLDER or pass --holder. Nothing was written.`);
     return { via: "session", claim: { holder, lease_token: ticket.token, batch_id: ticket.batch_id } };
   }
@@ -163,12 +217,23 @@ export async function applyCommand(rest, server, inline = null) {
   if (hasControlChars(real)) throw new ApplyError("This file's path contains control or bidirectional-text characters. Rename or move the file and run apply again.");
   const ext = path.extname(real).toLowerCase();
   if (REFUSED_EXTENSIONS.has(ext)) throw new ApplyError(`${ext} (macro-enabled) files are refused`);
-  const format = ext.slice(1);
-  if (!FORMATS[format]) throw new ApplyError("Only .docx, .xlsx and .pptx files are supported");
+  const format = formatOfPath(real);
+  if (!format) throw new ApplyError(ONLY);
 
   const doc = inline ? inline.ops : readJsonFile(a.ops, "ops file");
   const v = validateOps(doc);
   if (!v.ok) throw new ApplyError("the ops file does not match the schema", APPLY_EXIT.invalid, { schema: "onionskin.apply-report/1", status: "invalid_ops", errors: v.errors });
+
+  // the only credential is the ticket (--lease): not the batch JSON, not whatever the last poll of this file saved
+  const ticket = parseTicket(a.lease);
+  if (a.lease && !ticket) throw new ApplyError("--lease wants the value printed in the batch's commands (<batch id>:<token>)", APPLY_EXIT.invalid);
+  if (ticket && a.standalone) throw new ApplyError("--lease and --standalone contradict each other", APPLY_EXIT.invalid);
+  // authorization before the file is read: who calls, what the server holds for the file, and (with a ticket) that the server accepts it.
+  // Nothing below reads, parses or runs an op on the document until then, so a refusal carries nothing of it.
+  const holder = callerHolder(a, real, ticket);
+  const st = await sessionState({ server, real, holder, ticket, wantBatch: !inline?.batch && !a.batch });
+  const { up, session } = st;
+  const batch = inline?.batch ?? (a.batch ? readJsonFile(a.batch, "batch file") : st.batch);
 
   checkRegularOwned(real);
   let bytes;
@@ -178,35 +243,32 @@ export async function applyCommand(rest, server, inline = null) {
     if (err.code === "TOO_LARGE") throw new ApplyError(`document too large: ${err.message}`);
     throw err;
   }
-  try {
-    validatePackage(bytes, format);
-  } catch (err) {
-    throw new ApplyError(`Not a valid .${format}: ${err.message}`);
-  }
-  const baseSha = sha256(bytes);
-
-  // where the write must go: through the server when a session tracks this file (it owns the lease, the compare-and-swap and the snapshots)
-  let session = null;
-  let batch = inline?.batch ?? (a.batch ? readJsonFile(a.batch, "batch file") : null);
-  const up = await server.healthy();
-  if (up) {
-    const r = await server.req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(real)}` });
-    if (r.status === 200) session = server.json(r.text);
-    if (session && !batch) {
-      const b = await server.req({ method: "GET", path: `/cli/batch?file=${encodeURIComponent(real)}` });
-      if (b.status === 200) batch = server.json(b.text).batch;
+  // an HTML file is no package: the driver reads it in the ops worker and refuses every op of a file it cannot read (src/ops/html.js)
+  if (format !== "html") {
+    try {
+      validatePackage(bytes, format);
+    } catch (err) {
+      throw new ApplyError(`Not a valid .${format}: ${err.message}`);
     }
   }
-  // the only credential is the ticket (--lease): not the batch JSON, not whatever the last poll of this file saved
-  const ticket = parseTicket(a.lease);
-  if (a.lease && !ticket) throw new ApplyError("--lease wants the value printed in the batch's commands (<batch id>:<token>)", APPLY_EXIT.invalid);
-  if (ticket && a.standalone) throw new ApplyError("--lease and --standalone contradict each other", APPLY_EXIT.invalid);
+  // a run inside the server (src/local.js) reads the bytes within the readers' caps before the engine does, on the server's thread
+  if (server.checkBytes && format !== "html") {
+    try {
+      server.checkBytes(bytes, format);
+    } catch (err) {
+      throw new ApplyError(String(err?.message || err)); // nothing ran: the local runner hands the batch to the agent
+    }
+  }
+  const baseSha = sha256(bytes);
+  // where the write must go (no op has run yet): through the server when a session tracks this file (it owns the lease, the compare-and-swap and the snapshots)
   let target = { via: "none" };
-  if (!a.dryRun) target = await resolveWriteTarget({ a, real, server, session, up, ticket });
+  if (!a.dryRun) target = await resolveWriteTarget({ a, real, session, up, ticket, holder });
   const claim = target.claim;
   const viaSession = target.via === "session";
 
-  const { results: ran, bytes: out, warnings, blocked } = await runOps({ bytes, format, name: path.basename(real), ops: doc.ops, partial: a.partial, anchors: anchorMap(batch) });
+  // a run inside the server (src/local.js) has the engine work in a worker thread (server.runOps), off the server's own thread
+  const run = server.runOps ?? runOps;
+  const { results: ran, bytes: out, warnings, blocked } = await run({ bytes, format, name: path.basename(real), ops: doc.ops, partial: a.partial, anchors: anchorMap(batch) });
   const results = ran;
   const refuseWrite = (note, extra = {}) => {
     // nothing reached disk, so no op may read `applied`
@@ -245,7 +307,7 @@ export async function applyCommand(rest, server, inline = null) {
     // what a real run would do: atomic writes only when every op applies, --partial writes the ops that apply
     const writes = (r) => !!r.bytes && r.results.some((x) => x.status === "applied");
     const wouldWrite = a.partial ? writes({ bytes: out, results }) : failed === 0 && !!out;
-    const wouldWritePartial = a.partial ? wouldWrite : failed === 0 ? wouldWrite : writes(await runOps({ bytes, format, name: path.basename(real), ops: doc.ops, partial: true, anchors: anchorMap(batch) }));
+    const wouldWritePartial = a.partial ? wouldWrite : failed === 0 ? wouldWrite : writes(await run({ bytes, format, name: path.basename(real), ops: doc.ops, partial: true, anchors: anchorMap(batch) }));
     report.would_write = wouldWrite;
     report.would_write_partial = wouldWritePartial;
     report.note = `dry run: nothing was written. A real run in ${report.mode} mode would ${wouldWrite ? "write the file" : "write nothing"}${a.partial ? "" : `; with --partial it would ${wouldWritePartial ? "write the ops that apply" : "write nothing"}`}.`;
@@ -312,7 +374,7 @@ export function parseCommitArgs(rest) {
  * The base the candidate was edited from is, unless --base says otherwise, the hash the server last wrote or delivered for the batch;
  * if the file moved since, the commit is refused with `conflict` and the agent starts over from a fresh copy.
  */
-export async function commitCommand(rest, server) {
+export async function commitCommand(rest, server, { check = htmlWriteOffThread } = {}) {
   const a = parseCommitArgs(rest);
   let real;
   try {
@@ -323,35 +385,34 @@ export async function commitCommand(rest, server) {
   if (hasControlChars(real)) throw new ApplyError("This file's path contains control or bidirectional-text characters. Rename or move the file and run commit again.");
   const ext = path.extname(real).toLowerCase();
   if (REFUSED_EXTENSIONS.has(ext)) throw new ApplyError(`${ext} (macro-enabled) files are refused`);
-  const format = ext.slice(1);
-  if (!FORMATS[format]) throw new ApplyError("Only .docx, .xlsx and .pptx files are supported");
+  const format = formatOfPath(real);
+  if (!format) throw new ApplyError(ONLY);
   let candidatePath;
   try {
     candidatePath = fs.realpathSync(path.resolve(a.from));
   } catch {
     throw new ApplyError(`candidate file not found: ${JSON.stringify(a.from.slice(0, 200))}`, APPLY_EXIT.invalid);
   }
+  const ticket = parseTicket(a.lease);
+  if (a.lease && !ticket) throw new ApplyError("--lease wants the value printed in the batch's commands (<batch id>:<token>)", APPLY_EXIT.invalid);
+  if (ticket && a.standalone) throw new ApplyError("--lease and --standalone contradict each other", APPLY_EXIT.invalid);
+  const holder = callerHolder(a, real, ticket);
   if (candidatePath === real) throw new ApplyError("--from is the document itself: edit a COPY (cp the file to a temp path first) and commit that", APPLY_EXIT.invalid);
   const cst = fs.statSync(candidatePath);
   if (!cst.isFile() || cst.size > MAX_DOC_BYTES) throw new ApplyError(`candidate ${a.from} is not a regular file under ${MAX_DOC_BYTES / 1024 / 1024} MB`, APPLY_EXIT.invalid);
   if (a.base && !/^[0-9a-f]{64}$/.test(a.base)) throw new ApplyError("--base wants a sha256 in lower-case hex", APPLY_EXIT.invalid);
   const candidate = fs.readFileSync(candidatePath);
-  try {
-    validatePackage(candidate, format);
-  } catch (err) {
-    throw new ApplyError(`The candidate is not a valid .${format}: ${err.message}. Nothing was written.`, APPLY_EXIT.write_refused);
+  // an HTML candidate is checked as a whole new version (src/html-write.js): by the server for a session, below for a standalone commit
+  if (format !== "html") {
+    try {
+      validatePackage(candidate, format);
+    } catch (err) {
+      throw new ApplyError(`The candidate is not a valid .${format}: ${err.message}. Nothing was written.`, APPLY_EXIT.write_refused);
+    }
   }
-  const ticket = parseTicket(a.lease);
-  if (a.lease && !ticket) throw new ApplyError("--lease wants the value printed in the batch's commands (<batch id>:<token>)", APPLY_EXIT.invalid);
-  if (ticket && a.standalone) throw new ApplyError("--lease and --standalone contradict each other", APPLY_EXIT.invalid);
 
-  let session = null;
-  const up = await server.healthy();
-  if (up) {
-    const r = await server.req({ method: "GET", path: `/cli/status?file=${encodeURIComponent(real)}` });
-    if (r.status === 200) session = server.json(r.text);
-  }
-  const target = await resolveWriteTarget({ a, real, server, session, up, ticket });
+  const { up, session } = await sessionState({ server, real, holder, ticket, wantBatch: false, report: "commit" });
+  const target = await resolveWriteTarget({ a, real, session, up, ticket, holder });
   const report = { schema: "onionskin.commit-report/1", file: real, format, written: false, write_path: target.via, candidate_sha256: sha256(candidate) };
   if (target.via === "session") {
     const w = await server.req({ method: "POST", path: "/cli/commit" }, { file: real, bytes_b64: candidate.toString("base64"), ...(a.base ? { base_sha256: a.base } : {}), ...target.claim });
@@ -361,9 +422,20 @@ export async function commitCommand(rest, server) {
   }
   if (!a.base) throw new ApplyError("a standalone commit needs --base <sha256 of the file the candidate was edited from> so a newer version is never overwritten", APPLY_EXIT.invalid);
   checkRegularOwned(real);
-  const w = standaloneWrite(real, readDoc(real), candidate, a.base, "before commit (standalone)");
+  const disk = readDoc(real);
+  let out = candidate;
+  if (format === "html") {
+    // R1, R12: the same check as the server's, in a worker, against exactly the bytes whose hash is --base (a disk that differs now and
+    // is put back before the write would otherwise let a change the base forbids through); the compare-and-swap of standaloneWrite runs
+    // after the await, against --base again. A refusal here writes no copy: the candidate was never checked.
+    if (sha256(disk) !== a.base) return { exit: APPLY_EXIT.write_refused, report: { ...report, note: "The file on disk is not the version --base names (someone changed it outside Onionskin); nothing was checked and nothing was written.", status: "outside_change", outside_change: { instruction: OUTSIDE_INSTRUCTION, copy_path: null, copy_name: null, copy_error: "no copy was saved: the candidate was not checked against the version on disk" } } };
+    const c = await check({ before: disk, after: candidate });
+    if (!c.ok) return { exit: APPLY_EXIT.write_refused, report: { ...report, note: `${c.reason} Nothing was written.`, write_error: { status: 422, code: c.code, message: c.reason, ...(c.reasons ? { reasons: c.reasons } : {}) } } };
+    out = c.bytes;
+  }
+  const w = standaloneWrite(real, disk, out, a.base, "before commit (standalone)");
   if (w.refused) return { exit: APPLY_EXIT.write_refused, report: { ...report, note: w.refused, ...(w.outside ? { status: "outside_change", outside_change: w.outside } : {}) } };
-  return { exit: APPLY_EXIT.ok, report: { ...report, written: true, new_sha256: report.candidate_sha256, snapshot: w.snapshot, acl: w.acl, note: "standalone (explicit --standalone): written atomically; the previous version is snapshotted in the state dir" } };
+  return { exit: APPLY_EXIT.ok, report: { ...report, written: true, new_sha256: sha256(out), snapshot: w.snapshot, acl: w.acl, note: "standalone (explicit --standalone): written atomically; the previous version is snapshotted in the state dir" } };
 }
 
 /** The compact form of an apply or commit report (`--summary`): per-op statuses, flags, written, ok. The full report is the default. */

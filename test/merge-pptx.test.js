@@ -102,7 +102,7 @@ test("slides the agent added, removed or reordered: text on a slide all three ve
   assert.equal(text(r.bytes, 257, 2), "Why it is so fast");
   const out = parseDeck(r.bytes);
   assert.deepEqual(out.slides.map((s) => s.id), ["258", "259", "260", "257"], "the agent's slide order stands");
-  assert.deepEqual(r.unplaced, [{ label: "Slide 1, Title", text: "The engine", why: "The agent removed slide 1, so your edit to the title on slide 1 was not carried over. This is yours." }]);
+  assert.deepEqual(r.unplaced, [{ label: "Slide 1, Title", text: "The engine", why: "The agent removed slide 1, so your edit to the title on slide 1 was not carried over. This is yours.", of: ["h256/2#0"] }]);
 });
 
 test("slides the user added, removed or moved are reported and the user's file is kept; their text edits elsewhere still merge", { skip: SKIP }, async () => {
@@ -117,7 +117,7 @@ test("slides the user added, removed or moved are reported and the user's file i
   const added = await mergePptx({ base: without(BASE), mine: BASE, theirs: without(theirs), name: "t.pptx", runOps });
   assert.equal(added.bytes, null);
   assert.equal(added.copy, true, "a whole slide is not in the list: the caller keeps the user's file");
-  assert.deepEqual(added.unplaced, [{ label: "Slide 5", text: "Chart (placeholder)", why: "You added slide 5. Slide changes are not carried over. This is its text." }]);
+  assert.deepEqual(added.unplaced, [{ label: "Slide 5", text: "Chart (placeholder)", why: "You added slide 5. Slide changes are not carried over. This is its text.", of: ["s260"] }]);
 });
 
 test("shapes the user added or removed and table text are reported with their text, not rebuilt", { skip: SKIP }, async () => {
@@ -127,7 +127,7 @@ test("shapes the user added or removed and table text are reported with their te
   const added = await mergePptx({ base: without(BASE), mine: BASE, theirs: without(theirs), name: "t.pptx", runOps });
   assert.equal(added.bytes, null);
   assert.equal(added.copy, true);
-  assert.deepEqual(added.unplaced, [{ label: "Slide 3, Oval 3", text: "Oval", why: 'You added "Oval 3" on slide 3. Shape changes are not carried over. This is its text.' }]);
+  assert.deepEqual(added.unplaced, [{ label: "Slide 3, Oval 3", text: "Oval", why: 'You added "Oval 3" on slide 3. Shape changes are not carried over. This is its text.', of: ["h258/4#0"] }]);
   const removed = await merge(without(BASE), theirs);
   assert.deepEqual(removed.unplaced.map((u) => u.why), ['You removed "Oval 3" on slide 3. Shape changes are not carried over.']);
   const table = await merge(edit(BASE, slidePart(4), ["<a:t>Metric</a:t>", "<a:t>Measure</a:t>"]), theirs);
@@ -212,4 +212,24 @@ test("the session merge writes a deck as the user's update", { skip: SKIP }, asy
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("an edit counts as already there only in its own shape: the same text in another shape does not hide a conflict", { skip: SKIP }, async () => {
+  // the person renamed slide 3's "Rounded" shape to "Oval"; the agent renamed it too, and "Oval" is still the next shape's text
+  const r = await merge(edit(BASE, slidePart(3), [">Rounded<", ">Oval<"]), edit(BASE, slidePart(3), [">Rounded<", ">Square<"]));
+  assert.equal(r.bytes, null);
+  assert.deepEqual(r.unplaced.map((u) => u.text), ["Oval"], "the person's text is handed back");
+  assert.match(r.unplaced[0].why, /The agent changed .* too/);
+});
+
+// The DOCX merge once paired a paragraph by text against its id (outside review, final round). A deck pairs by slide id and shape id
+// alone: the person retypes shape 3 to read as shape 4 and edits shape 4, the agent edits shapes 4 and 5. Shape 3's edit lands in
+// shape 3, shape 4's is handed back, shape 5 keeps the agent's text.
+test("ids, the person's side: a shape retyped to read as its neighbor stays its own shape; the neighbor's edit is handed back", { skip: SKIP }, async () => {
+  const mine = edit(BASE, slidePart(3), [">Oval<", ">Oval two<"], [">Rounded<", ">Oval<"]);
+  const theirs = edit(BASE, slidePart(3), [">Oval<", ">Oval three<"], [">Arrow<", ">Arrow four<"]);
+  const r = await merge(mine, theirs);
+  assert.equal(r.merged, 1);
+  assert.deepEqual([text(r.bytes, 258, 3), text(r.bytes, 258, 4), text(r.bytes, 258, 5)], ["Oval", "Oval three", "Arrow four"]);
+  assert.deepEqual(r.unplaced.map((u) => u.text), ["Oval two"]);
 });

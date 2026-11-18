@@ -176,7 +176,7 @@ function expand(s) {
 function tokens(s) {
   const out = [];
   // a number keeps a sign written right before it ("-5", "+3", "~240"), but not the dash of a range ("3-5")
-  const re = /((?:(?<![\p{L}\p{N}])[-+~<>\u2212\u2248\u00b1])?[$€£¥₹]?\p{N}[\p{N},.:/%]*(?:\s?%)?)|[\p{L}][\p{L}\p{M}'-]*/gu;
+  const re = /((?:(?<![\p{L}\p{N}])[-+~<>\u2212\u2248\u00b1])?[$€£¥₹]?\p{N}[\p{N},.:/%]*(?:\s?%)?)|[\p{L}][\p{L}\p{M}'-]{0,4095}/gu; // a word at most 4,096 characters (a run of 7.9 million marks overflowed the regex stack)
   for (const m of expand(s).matchAll(re)) {
     if (m[1] !== undefined) {
       const kept = m[0].replace(/[.,:/]+$/, "");
@@ -661,7 +661,7 @@ const factText = (s) =>
     .replace(/(\p{N})\s*(?:percent|per cent)\b/giu, "$1%")
     .replace(/(\p{N})\s*([ap])\.?\s?m\.?(?![\p{L}\p{N}])/giu, (_, n, x) => `${n} ${x.toLowerCase()}m`);
 
-const APOS_WORD = /\p{L}[\p{L}\p{M}']*/gu;
+const APOS_WORD = /\p{L}[\p{L}\p{M}']{0,4095}/gu; // bounded, as in tokens() above
 /**
  * Words that differ only by an apostrophe are written alike on both sides, with the apostrophe ("Its" and "It's" both "It's"), but only
  * a word that one side has more often than the other (a word in both is no misspelling of the other's word), and never a pair whose
