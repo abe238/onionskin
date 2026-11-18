@@ -69,7 +69,6 @@ You do not have to wait for a run to finish. In Word, Excel and PowerPoint, keep
 Select one sentence in a Word or PowerPoint file and ask for Fix grammar. Apple's built-in on-device model answers on your Mac. Nothing is downloaded, and nothing changes until you tap Use this.
 
 - **Usually ready by the time you tap.** The fix starts when the Quick ask box opens and takes about 0.85 seconds per sentence. On the first fix of a session, or an immediate tap, the card took about 0.3 to 0.4 seconds.
-- **Guarded text.** Text inside quotation marks, numbers, dates and names are guarded. A suggestion that changes them is withheld.
 - **Plain commands use no AI.** Replace in N places and other plain quick commands run on your Mac with no AI at all.
 
 Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to your coding agent.
