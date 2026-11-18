@@ -1,6 +1,6 @@
 # Onionskin
 
-> Review and edit Word, Excel and PowerPoint files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.
+> Review and edit Word, Excel, PowerPoint and HTML files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.
 
 Status: Available now. Open source under the MIT license.
 
