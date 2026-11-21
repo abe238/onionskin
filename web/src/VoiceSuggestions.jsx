@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { api } from "./lib.js";
 import { suggestionView } from "./voice-ui.js";
 
@@ -76,7 +76,12 @@ export function VoiceSuggestions({ voice, onVoice }) {
 export function VoiceLearning({ voice, onVoice }) {
   const [asking, setAsking] = useState(false);
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const post = async (path, body) => {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
     setErr("");
     try {
       onVoice(await api(path, { method: "POST", body }));
@@ -84,27 +89,30 @@ export function VoiceLearning({ voice, onVoice }) {
     } catch {
       setErr(SAVE_ERR);
       return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   };
   return (
     <section className="vc-block" aria-label="Learning" data-testid="voice-learning">
       <label className="vc-switch">
-        <input type="checkbox" role="switch" checked={!!voice.learning} data-testid="voice-learning-switch" onChange={(e) => post("/api/voice/learning", { on: e.target.checked })} />
+        <input type="checkbox" role="switch" checked={!!voice.learning} disabled={busy} data-testid="voice-learning-switch" onChange={(e) => post("/api/voice/learning", { on: e.target.checked })} />
         <span>Learn from my edits</span>
       </label>
       <p className="vc-hint">Onionskin keeps a few of your recent edits on this Mac to make suggestions. Nothing is sent anywhere.</p>
       {!asking ? (
-        <button type="button" className="btn quiet sm vc-self" data-testid="voice-forget" onMouseDown={keep} onClick={() => setAsking(true)}>
+        <button type="button" className="btn quiet sm vc-self" disabled={busy} data-testid="voice-forget" onMouseDown={keep} onClick={() => setAsking(true)}>
           Forget my edits
         </button>
       ) : (
         <div className="vc-confirm" role="group" aria-label="Forget my edits" data-testid="voice-forget-ask">
           <p>Forget the edits Onionskin has kept? Your preferences stay.</p>
           <span className="vc-row">
-            <button type="button" className="btn sm" data-testid="voice-forget-yes" onMouseDown={keep} onClick={async () => (await post("/api/voice/forget", {})) && setAsking(false)}>
+            <button type="button" className="btn sm" disabled={busy} data-testid="voice-forget-yes" onMouseDown={keep} onClick={async () => (await post("/api/voice/forget", {})) && setAsking(false)}>
               Forget
             </button>
-            <button type="button" className="btn quiet sm" data-testid="voice-forget-no" onMouseDown={keep} onClick={() => setAsking(false)}>
+            <button type="button" className="btn quiet sm" disabled={busy} data-testid="voice-forget-no" onMouseDown={keep} onClick={() => setAsking(false)}>
               Cancel
             </button>
           </span>

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DRAFT_MAX_BYTES, GUIDE_MAX, SECTIONS, SHORT_MAX, VOICE_FIX, cleanVoiceDraft, parseGuide, shortForm } from "../src/voice-guide.js";
+import { DRAFT_MAX_BYTES, GUIDE_MAX, SECTIONS, SHORT_MAX, VOICE_FIX, cleanVoiceDraft, domainPath, foldLinkText, parseGuide, shortForm } from "../src/voice-guide.js";
 
 // The voice guide's fixed shape and the strict check of an agent's draft: it refuses, it never cuts. Characters a reader cannot see are
 // built from escapes, so none lives in this file as a literal.
@@ -159,4 +159,86 @@ test("parseGuide: a composed guide with some sections in order is structured; an
   assert.equal(shortForm("## In short\n\n## Humor\nNone."), "", "an empty In short");
   assert.equal(shortForm(`## In short\n${"a".repeat(701)}`), "", "over the cap");
   assert.equal(shortForm(`## In short\n${"a".repeat(700)}`), `## In short\n${"a".repeat(700)}`, "the person's own long line is theirs");
+});
+
+test("T1: cleanVoiceDraft refuses ://, www., emails, and domain/path (with look-alike dots & invisible chars), while allowing ordinary sentences and bare domains", () => {
+  const hostileDraft = [
+    "https://x.example",
+    "https://x\u3002example",
+    "https://x\uFF61example",
+    "https://x\uFF0Eexample",
+    "https://x\u2024example",
+    "www.x.example",
+    "www\u3002x.example",
+    "www\uFF61x.example",
+    "www\uFF0Ex.example",
+    "www\u2024x.example",
+    "a@b.example",
+    "a@b\u3002example",
+    "a@b\uFF61example",
+    "a@b\uFF0Eexample",
+    "a@b\u2024example",
+    "mailto:a@b.example",
+    "evil.example/login",
+    "evil\u3002example/login",
+    "evil\uFF61example/login",
+    "evil\uFF0Eexample/login",
+    "evil\u2024example/login",
+    "//evil.example/login",
+    "evil.example:8080/x",
+    "\u{10400}.example/x",
+  ];
+  for (const s of hostileDraft) {
+    assert.equal(codeOf(draftOf({ words: `See ${s} today.` })), "link_or_markup", `draft must refuse: ${s}`);
+  }
+  assert.equal(domainPath(foldLinkText("\u{10400}.example/x")), true, "astral letter before dot matches domainPath");
+  // Lone ZWNJ/ZWJ or braille blank (allowed by HIDDEN) still cannot hide www., ://, or domain/path after foldLinkText
+  for (const inv of ["\u200C", "\u200D", "\u2800"]) {
+    assert.equal(codeOf(draftOf({ words: `See w${inv}ww.x.example today.` })), "link_or_markup", `draft must refuse www with U+${inv.codePointAt(0).toString(16)}`);
+    assert.equal(codeOf(draftOf({ words: `See evil${inv}.example/login today.` })), "link_or_markup", `draft must refuse domain/path with U+${inv.codePointAt(0).toString(16)}`);
+  }
+  // All invisible characters are stripped by foldLinkText
+  for (const inv of ["\u00AD", "\u034F", "\u061C", "\u115F", "\u17B4", "\u17B5", "\u180E", "\u200B", "\u200C", "\u200D", "\u200E", "\u200F", "\u202A", "\u202E", "\u2060", "\u2066", "\u2800", "\u3164", "\uFEFF", "\uFFA0"]) {
+    assert.equal(domainPath(foldLinkText(`See evil${inv}.example/login today.`)), true, `foldLinkText+domainPath must refuse U+${inv.codePointAt(0).toString(16)}`);
+  }
+  const ordinary = [
+    "That is done.It works now?",
+    "Is the crash at main.py:42 the one you mean?",
+    "Finished.No changes needed.",
+    "Step 1.Click Save.",
+    "Fixed.Run the tests.",
+    "Socket.IO",
+    "ADO.NET",
+    "ML.NET",
+    "app.js:120",
+    "file.txt:12",
+    "Main.java:17",
+    "index.html:30",
+    "report.docx",
+    "budget.xlsx",
+    "index.html",
+    "Node.js",
+    "ASP.NET",
+    "Done.Next",
+    "e.g.",
+    "v1.2.3",
+    "U.S.",
+    "3.b",
+    "README.md",
+    "setup.sh",
+    "evil.com",
+  ];
+  for (const s of ordinary) {
+    assert.equal(codeOf(draftOf({ words: `Check ${s} first.` })), undefined, `draft must allow: ${s}`);
+    assert.equal(domainPath(foldLinkText(`Check ${s} first.`)), false, `domainPath must allow: ${s}`);
+  }
+});
+
+test("S5: domainPath runs in linear time (< 20ms on 32 KB of dots + x)", () => {
+  const hostile = ".".repeat(32 * 1024) + "x";
+  const t0 = performance.now();
+  const res = domainPath(hostile);
+  const ms = performance.now() - t0;
+  assert.equal(res, false);
+  assert.ok(ms < 20, `expected < 20ms on 32 KB dots+x, took ${ms.toFixed(2)}ms`);
 });

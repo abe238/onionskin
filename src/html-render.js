@@ -378,8 +378,7 @@ function dataUrl(v) {
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 // ---- CSS (R1's rule, R16, R21) -------------------------------------------------------------------------------------------------------
-const IMPORT = /@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)|"([^"]*)"|'([^']*)')\s*([^;{}]*)(?:;|$)/gi;
-const URL_RE = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi; // the url() src/html-active.js cssPlain reads
+const IMPORT = /@import[ \t\n\f\r]+(?:url\([ \t\n\f\r]*(?:"([^"]*)"|'([^']*)'|([^)"' \t\n\f\r]+)?)[ \t\n\f\r]*\)|"([^"]*)"|'([^']*)')[ \t\n\f\r]*([^;{}]*)(?:;|$)/gi;
 const MEDIA_LIST = /^[a-z0-9 ,()\-:._]*$/i;
 
 // ---- the render ---------------------------------------------------------------------------------------------------------------------
@@ -506,6 +505,20 @@ export function renderCopy(read, { fileDir, readAsset = makeAssetReader(), limit
     if (got.ok) sheetsSeen.add(got.key);
     return got;
   };
+  const readDataSheet = (ref) => {
+    const d = dataUrl(ref);
+    if (!d || d.mime !== "text/css") return refuse("not_text");
+    const room = Math.min(limits.sheet, limits.cssBytes - cssRead);
+    if (room <= 0) return (stats.styles.heavy ??= "css_bytes"), refuse("css_cap");
+    if (d.bytes.length > room) {
+      if (room < limits.sheet) return (stats.styles.heavy ??= "css_bytes"), refuse("css_cap");
+      return refuse("too_large");
+    }
+    cssRead += d.bytes.length;
+    const text = sheetText(d.bytes);
+    if (text === null) return refuse("not_text");
+    return text;
+  };
   const sheetNodes = [];
   {
     const stack = [read.doc];
@@ -536,9 +549,7 @@ export function renderCopy(read, { fileDir, readAsset = makeAssetReader(), limit
     else {
       const href = attr(n, "href") ?? "";
       if (/^[ \t\n\f\r]*data:/i.test(href)) {
-        const d = dataUrl(href);
-        if (d && d.mime === "text/css") css = sheetText(d.bytes);
-        else refuse("not_text");
+        css = readDataSheet(href);
         base = null;
       } else if (kindOf(href) === "relative") {
         const got = readSheet(href, []);
@@ -587,17 +598,16 @@ export function renderCopy(read, { fileDir, readAsset = makeAssetReader(), limit
     return out;
   }
   function importTarget(m, b, depth) {
+    if (depth >= limits.importDepth) return (bump(stats.styles.left, "import_depth"), null);
     const target = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? "";
     const media = String(m[6] || "").trim();
     if (media && (!MEDIA_LIST.test(media) || /layer|supports|url/i.test(media))) return (bump(stats.styles.left, "import_media"), null);
     if (/^[ \t\n\f\r]*data:/i.test(target)) {
-      const d = dataUrl(target);
-      const text = d && d.mime === "text/css" ? sheetText(d.bytes) : null;
-      if (text === null) return refuse("not_text");
+      const text = readDataSheet(target);
+      if (text === null) return null;
       return { text, base: null, media };
     }
     if (kindOf(target) !== "relative" || b === null) return refuse("remote");
-    if (depth >= limits.importDepth) return (bump(stats.styles.left, "import_depth"), null);
     const got = readSheet(target, b);
     if (!got.ok) return refuse(got.code);
     const text = sheetText(got.bytes);
@@ -612,12 +622,61 @@ export function renderCopy(read, { fileDir, readAsset = makeAssetReader(), limit
   const stylesOn = !stats.styles.heavy;
 
   /** CSS text with every url() made a checked data: image or `none`; null when the result is not plain (R1's rule) or not writable. */
-  const resolveUrls = (css, base) =>
-    css.replace(URL_RE, (m, a, b, c) => {
-      const ref = a ?? b ?? c ?? "";
-      const uri = image(ref, base);
-      return uri ? `url("${uri}")` : "none";
-    });
+  const resolveUrls = (css, base) => {
+    const s = css;
+    if (s.length < 4 || !/url\(/i.test(s)) return s;
+    const space = (c) => {
+      const k = c.charCodeAt(0);
+      return k < 128 ? k === 32 || (k >= 9 && k <= 13) : /\s/.test(c);
+    };
+    const isUrl = (i) => (s.charCodeAt(i) | 32) === 117 && (s.charCodeAt(i + 1) | 32) === 114 && (s.charCodeAt(i + 2) | 32) === 108;
+    let stop = null;
+    const stops = () => {
+      if (stop) return stop;
+      const n = s.length;
+      stop = { any: new Int32Array(n + 1), dq: new Int32Array(n + 1), sq: new Int32Array(n + 1), ns: new Int32Array(n + 1) };
+      stop.any[n] = stop.dq[n] = stop.sq[n] = stop.ns[n] = n;
+      for (let i = n - 1; i >= 0; i--) {
+        const c = s[i];
+        const ws = space(c);
+        stop.any[i] = c === ")" || c === '"' || c === "'" || ws ? i : stop.any[i + 1];
+        stop.dq[i] = c === '"' ? i : stop.dq[i + 1];
+        stop.sq[i] = c === "'" ? i : stop.sq[i + 1];
+        stop.ns[i] = ws ? stop.ns[i + 1] : i;
+      }
+      return stop;
+    };
+    const out = [];
+    let from = 0;
+    for (let i = 0; i + 3 < s.length; ) {
+      if (!(isUrl(i) && s[i + 3] === "(")) {
+        i++;
+        continue;
+      }
+      const st = stops();
+      const j = st.ns[i + 4];
+      let val = null;
+      let k = j;
+      if (j < s.length && (s[j] === '"' || s[j] === "'")) {
+        const close = j + 1 <= s.length ? (s[j] === '"' ? st.dq : st.sq)[j + 1] : s.length;
+        if (close < s.length) [val, k] = [s.slice(j + 1, close), close + 1];
+      } else {
+        k = st.any[j];
+        val = s.slice(j, k);
+      }
+      const m = val !== null ? st.ns[k] : s.length;
+      if (val === null || m >= s.length || s[m] !== ")") {
+        i++;
+        continue;
+      }
+      const uri = image(val, base);
+      out.push(s.slice(from, i), uri ? `url("${uri}")` : "none");
+      from = i = m + 1;
+    }
+    if (!from) return s;
+    out.push(s.slice(from));
+    return out.join("");
+  };
   const finalCss = (parts, inElement) => {
     const text = parts.map((p) => resolveUrls(p.text, p.base)).join("");
     const c = cssPlain(text);

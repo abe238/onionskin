@@ -11,7 +11,7 @@ Environment: ONIONSKIN_SOFFICE (path to soffice), ONIONSKIN_NO_SOFFICE=1, ONIONS
 Run it with `python -I` so nothing from the current directory is imported. Parts are read with lxml, entity resolution and
 network access off, DTD and ENTITY declarations refused (defusedxml's rule).
 """
-import collections, json, os, re, shutil, signal, subprocess, sys, tempfile, time, zipfile
+import collections, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile, time, zipfile
 
 try:
     from lxml import etree
@@ -48,10 +48,16 @@ def read_part(z, name):
     info = z.getinfo(name)
     if info.file_size > MAX_PART:
         raise ValueError(f'{name} is larger than {MAX_PART} bytes')
-    data = z.read(name)
+    with z.open(name) as f:
+        data = f.read(MAX_PART + 1)
+    if len(data) > MAX_PART:
+        raise ValueError(f'{name} is larger than {MAX_PART} bytes')
     if re.search(rb'<!(DOCTYPE|ENTITY)', data[:65536]):
         raise ValueError(f'{name} declares a DTD or entity')
-    return etree.fromstring(data, parser())
+    root = etree.fromstring(data, parser())
+    if root.getroottree().docinfo.doctype:
+        raise ValueError(f'{name} declares a DTD or entity')
+    return root
 
 
 def short(qn):
@@ -222,10 +228,18 @@ def soffice_convert(soffice, path, timeout, to='pdf'):
     tmp = tempfile.mkdtemp(prefix='onionskin-soffice-')
     try:
         # private profile so a LibreOffice the user has open is never touched; own process group so a hang can be killed whole
-        cmd = [soffice, f'-env:UserInstallation=file://{tmp}/profile', '--headless', '--norestore', '--convert-to', to, '--outdir', tmp, path]
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        cmd = [soffice, f'-env:UserInstallation={pathlib.Path(os.path.abspath(tmp)).as_uri()}/profile', '--headless', '--norestore', '--convert-to', to, '--outdir', tmp, path]
+        pid_file = os.environ.get('ONIONSKIN_SOFFICE_PID_FILE') if os.name == 'posix' else None
+        if pid_file:
+            # Wait for registration before exec. If the checker dies first, EOF ends the new group.
+            cmd = ['/bin/sh', '-c', 'IFS= read -r ready || exit 1; exec "$@"', 'soffice', *cmd]
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE if pid_file else None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         CURRENT.append(p)
         try:
+            if pid_file:
+                pathlib.Path(pid_file).write_text(f'{p.pid}\n', encoding='ascii')
+                p.stdin.write(b'\n')
+                p.stdin.flush()
             deadline = time.monotonic() + timeout
             while True:
                 try:
@@ -240,6 +254,11 @@ def soffice_convert(soffice, path, timeout, to='pdf'):
                         p.communicate()
                         return {'ok': False, 'timeout': True, 'error': f'timeout after {timeout}s'}
         finally:
+            if p.poll() is None:
+                kill_current()
+                p.wait()
+            if pid_file:
+                pathlib.Path(pid_file).unlink(missing_ok=True)
             CURRENT.clear()
         pdf = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + '.' + to)
         size = os.path.getsize(pdf) if os.path.exists(pdf) else 0

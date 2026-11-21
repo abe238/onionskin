@@ -109,4 +109,39 @@ describe("a quick change, start to finish", { skip: SKIP }, () => {
     assert.deepEqual(cspViolations(br.log), []);
     assert.deepEqual(page.log.errors, []);
   });
+
+  test("V4: leave-page guard warns with Quick ask text, not when empty, closed, or discarded with Esc", async () => {
+    const file2 = path.join(root, "docs", "quick-guard.docx");
+    fs.copyFileSync(file, file2);
+    const key2 = srv.sessions.open(fs.realpathSync(file2)).key;
+    const p = await br.page();
+    await p.setViewportSize({ width: 1440, height: 900 });
+    try {
+      await p.goto(`${srv.auth.origin}/?s=${key2}&n=${srv.auth.newNonce()}`);
+      await waitDoc(p);
+      await para(p, "Acme grew 24%").waitFor({ timeout: 30000 });
+      const prevented = () => p.evaluate(() => {
+        const e = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(e);
+        return e.defaultPrevented;
+      });
+      assert.equal(await prevented(), false, "closed box: not prevented");
+      const box = await para(p, "Acme grew 24%").boundingBox();
+      await p.mouse.dblclick(box.x + 80, box.y + 10);
+      await p.locator(q("comment-chip")).waitFor({ timeout: 5000 });
+      await p.locator(q("quick-ask-chip")).click();
+      await p.locator(q("quick-ask")).waitFor({ timeout: 3000 });
+      assert.equal(await prevented(), false, "open empty box: not prevented");
+      const ta = p.locator(q("quick-ask-text"));
+      await ta.fill("   ");
+      assert.equal(await prevented(), false, "whitespace-only box: not prevented");
+      await ta.fill("Please keep these typed words");
+      assert.equal(await prevented(), true, "open box with text: prevented");
+      await ta.press("Escape");
+      await p.locator(q("quick-ask")).waitFor({ state: "detached", timeout: 3000 });
+      assert.equal(await prevented(), false, "after Esc: not prevented");
+    } finally {
+      await p.close();
+    }
+  });
 });

@@ -92,16 +92,13 @@ export function acquireLock(file, { waitMs = 5000 } = {}) {
           stale = e.code === "ESRCH";
         }
       } else stale = Date.now() - fs.statSync(lock).mtimeMs > 2000; // being created, or garbage
-    } catch {
-      continue; // released between our attempts
-    }
+    } catch {} // it may have been released, or its pid may be unreadable
     if (stale) {
       try {
         fs.unlinkSync(lock);
       } catch {}
-      continue;
     }
-    if (Date.now() > deadline) throw new LockBusy(file);
+    if (Date.now() >= deadline) throw new LockBusy(file);
     sleepSync(20);
   }
 }
@@ -209,6 +206,8 @@ export function replaceGuarded(file, bytes, { expectSha = null, snapshotBefore =
     const dfd = fs.openSync(path.dirname(file), "r");
     try {
       fs.fsyncSync(dfd);
+    } catch (err) {
+      if (err?.code !== "EINVAL" && err?.code !== "ENOTSUP" && err?.code !== "EPERM" && err?.code !== "EROFS") throw err;
     } finally {
       fs.closeSync(dfd);
     }
@@ -258,6 +257,15 @@ export function writeSiblingCopy(file, bytes, { now = new Date(), label = "Onion
         fs.linkSync(tmp, dest);
         return { name, path: dest };
       } catch (err) {
+        if (err.code === "ENOTSUP" || err.code === "EXDEV" || err.code === "EPERM") {
+          try {
+            fs.copyFileSync(tmp, dest, fs.constants.COPYFILE_EXCL);
+            return { name, path: dest };
+          } catch (copyErr) {
+            if (copyErr.code !== "EEXIST") throw copyErr;
+            continue;
+          }
+        }
         if (err.code !== "EEXIST") throw err;
       }
     }

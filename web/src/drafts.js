@@ -156,6 +156,7 @@ export class Drafts {
       const r = this.rev(c.id);
       if (s.status === "draft" && !s.answer) {
         // the server's words for a draft are words this page sent: the page's own are the same or newer
+        if (at?.sends && !s.text?.trim() && c.text?.trim() && r > (this.acked.get(c.id) ?? 0)) unsaved = true;
         comments.push({ ...c, ...fields, text: r === 0 ? s.text : c.text });
         continue;
       }

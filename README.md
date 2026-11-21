@@ -28,7 +28,7 @@ To open Terminal: press Command-Space, type `Terminal`, then press Return.
 
    ```sh
    RELEASE=https://github.com/abe238/onionskin/releases/latest/download
-   curl -fsSL "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
+   curl -fsSL --proto "=https" --proto-redir "=https" "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
    ```
 
 **npm** (if you already use npm)
@@ -135,7 +135,7 @@ You were asked to install Onionskin. Run this as one shell command from any fold
 
 ```sh
 RELEASE=https://github.com/abe238/onionskin/releases/latest/download
-curl -fsSL "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
+curl -fsSL --proto "=https" --proto-redir "=https" "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
 onionskin doctor   # if "command not found", run ~/.local/bin/onionskin doctor
 ```
 
@@ -193,7 +193,7 @@ Limits: 10 MB and 200,000 elements, UTF-8 only. Chrome is the tested browser. De
 - Claude Code or Codex, already installed and signed in. The terminal start needs Claude Code; with Codex, you start from inside it.
 - For quick fixes only: macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without it, grammar fixes go to your agent.
 
-Limits: macOS only so far. This is a pre-release (0.0.5) and has been tested by one person. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes or 10 MB of HTML: the full list is in [Size limits](docs/GUIDE.md#size-limits).
+Limits: macOS only so far. This is a pre-release (0.0.6) and has been tested by one person. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes or 10 MB of HTML: the full list is in [Size limits](docs/GUIDE.md#size-limits).
 
 ## Privacy
 

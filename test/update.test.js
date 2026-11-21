@@ -1,12 +1,14 @@
 // `onionskin update` (src/update.js): route detection, version comparison, the version.txt check and the refusal while work is open.
 // Temp dirs only; the one network-shaped check is a server on 127.0.0.1 inside this process and file:// URLs. Nothing runs get.sh or npm.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { NPM_COMMANDS, baseUrlOk, compareVersions, detectRoute, fetchLatest, parseVersionText, runGetShDefault, updateCommand, workAtRisk } from "../src/update.js";
 import { openWork } from "../src/local.js";
 import { tmpdir } from "./helpers/zipbuild.js";
@@ -109,20 +111,20 @@ test("--check: version.txt present (newer, same), missing (file:// and a 404 ove
   assert.equal((await check("http://example.com/rel")).status, 1, "plain http elsewhere is refused before anything is fetched");
 });
 
-test("curl is asked for https and file only (plain http only for 127.0.0.1), and redirects to https only, for version.txt and for get.sh", () => {
+test("curl is asked for https and file only (plain http only for 127.0.0.1), and redirects to https only, for version.txt and for get.sh", async () => {
   const seen = [];
   const run = (cmd, args) => (seen.push(args), { status: 0, stdout: "0.0.4\n", stderr: "" });
   fetchLatest("https://example.invalid/rel", { run });
   fetchLatest("http://127.0.0.1:9/rel", { run });
   const flag = (args, f) => args[args.indexOf(f) + 1];
-  assert.deepEqual(seen.map((a) => [flag(a, "--proto"), flag(a, "--proto-redir")]), [["=https,file", "=https"], ["=https,file,http", "=https"]]);
+  assert.deepEqual(seen.map((a) => [flag(a, "--proto"), flag(a, "--proto-redir")]), [["=https", "=https"], ["=http", "=https"]]);
   // the installer download: a curl on PATH that records its arguments and fails, so nothing is run
   const bin = mk("curl-shim");
   const log = path.join(bin, "args.txt");
   fs.writeFileSync(path.join(bin, "curl"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${log}"\nexit 22\n`, { mode: 0o755 });
-  assert.notEqual(runGetShDefault("https://example.invalid/rel/", { PATH: `${bin}:/usr/bin:/bin` }), 0);
+  assert.notEqual(await runGetShDefault("https://example.invalid/rel/", { PATH: `${bin}:/usr/bin:/bin` }), 0);
   const args = fs.readFileSync(log, "utf8").trim().split("\n");
-  assert.deepEqual([flag(args, "--proto"), flag(args, "--proto-redir"), args.at(-1)], ["=https,file", "=https", "https://example.invalid/rel/get.sh"]);
+  assert.deepEqual([flag(args, "--proto"), flag(args, "--proto-redir"), args.at(-1)], ["=https", "=https", "https://example.invalid/rel/get.sh"]);
 });
 
 test("fetchLatest reads only the first line and names the URL it asked", () => {
@@ -282,4 +284,278 @@ test("GET /cli/open-work sums every session's unsent edits, draft comments and b
   const w = openWork(sessions);
   assert.deepEqual(w, { sessions: 4, open_sessions: 0, unsent_edits: 2, draft_comments: 2, batches: 2 });
   assert.ok(!JSON.stringify(w).includes("name.docx"));
+});
+
+test("npm update waits for the command and reports its 10 minute timeout before running setup", async () => {
+  const h = harness({ route: "npm" });
+  const commands = [];
+  h.d.run = async (cmd, args, opts) => {
+    commands.push(cmd);
+    await Promise.resolve();
+    assert.equal(opts.totalTimeout, 600_000);
+    assert.ok(opts.timeout > 0 && opts.timeout <= opts.totalTimeout);
+    opts.onTimeout(opts.timeout);
+    return 1;
+  };
+  assert.equal(await updateCommand(["--yes"], h.d), 1);
+  assert.deepEqual(commands, ["npm"]);
+  assert.match(h.lines.at(-1), /npm.*timed out after 10 minutes/i);
+});
+
+/** Builds a local release folder served over file:// with the real scripts/get.sh and a fake install.sh. */
+function makeFileRelease(name, installSh) {
+  const rel = mk(name);
+  const stage = mk(`${name}-stage`, "onionskin");
+  fs.writeFileSync(path.join(stage, "package.json"), JSON.stringify({ name: "onionskin", version: "0.0.9" }) + "\n");
+  fs.writeFileSync(path.join(stage, "install.sh"), installSh, { mode: 0o755 });
+  const zipPath = path.join(rel, "onionskin.zip");
+  const z = spawnSync("/usr/bin/zip", ["-X", "-r", "-q", zipPath, "onionskin"], { cwd: path.dirname(stage) });
+  assert.equal(z.status, 0, z.stderr);
+  const hash = crypto.createHash("sha256").update(fs.readFileSync(zipPath)).digest("hex");
+  fs.writeFileSync(`${zipPath}.sha256`, `${hash}  onionskin.zip\n`);
+  fs.copyFileSync(path.join(repo, "scripts", "get.sh"), path.join(rel, "get.sh"));
+  return rel;
+}
+
+const baseEnv = (extra = {}) => ({
+  HOME: mk("get-home"),
+  TMPDIR: root,
+  PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  ...extra,
+});
+
+test("installer update passes the existing deeper-check choice through get.sh", async () => {
+  const rel = makeFileRelease("checker-choice", '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/installer-args"\n');
+  for (const installation of ["absent", "plain file", "working", "dangling"]) {
+    const h = harness();
+    const noChecker = installation === "absent" || installation === "plain file";
+    if (installation === "plain file") fs.writeFileSync(path.join(h.d.home, ".onionskin", "venv"), "");
+    if (!noChecker) {
+      const bin = path.join(h.d.home, ".onionskin", "venv", "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, "..", "pyvenv.cfg"), "home = /old/python\n");
+      if (installation === "dangling") fs.symlinkSync("removed-python", path.join(bin, "python"));
+      else fs.writeFileSync(path.join(bin, "python"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+    h.d.env.ONIONSKIN_BASE_URL = `file://${rel}`;
+    h.d.runGetSh = (base, opts) => runGetShDefault(base, baseEnv({ HOME: h.d.home }), opts);
+    assert.equal(await updateCommand([], h.d), 0, h.out());
+    assert.equal(fs.readFileSync(path.join(h.d.home, "installer-args"), "utf8").trim(), noChecker ? "--no-checker" : "", installation);
+  }
+});
+
+test("CLI update requires --force when a running server answers with an older protocol", async () => {
+  const { d } = harness();
+  fs.cpSync(path.join(repo, "src"), path.join(d.appRoot, "src"), { recursive: true });
+  for (const name of ["docs", "vendor", "node_modules"]) fs.symlinkSync(path.join(repo, name), path.join(d.appRoot, name));
+  fs.writeFileSync(path.join(d.appRoot, "package.json"), JSON.stringify({ type: "module", version: d.version }));
+  const rel = mk("old-protocol-release");
+  fs.writeFileSync(path.join(rel, "version.txt"), "99.0.0\n");
+  fs.writeFileSync(path.join(rel, "get.sh"), 'touch "$HOME/installer-ran"\nexit 23\n');
+  const state = path.join(d.home, ".onionskin");
+  const env = baseEnv({ HOME: d.home, ONIONSKIN_STATE_DIR: state, ONIONSKIN_BASE_URL: `file://${rel}` });
+  const stopped = [];
+  const srv = http.createServer((req, res) => {
+    if (req.url === "/cli/stop") stopped.push(req.method);
+    res.end(JSON.stringify({ protocol: 1, pid: 2147483647, sessions: 0, open_sessions: 0 }));
+  });
+  await new Promise((resolve, reject) => srv.once("error", reject).listen(path.join(state, "s.sock"), resolve));
+  try {
+    const run = (...args) => promisify(execFile)(process.execPath, [path.join(d.appRoot, "src", "cli.js"), "update", ...args], { env, timeout: 10_000 });
+    await assert.rejects(run(), (err) => {
+      assert.match(err.stdout, /^A running Onionskin server from another version may hold unsent work: run onionskin stop, or onionskin update --force\.$/m, err.stderr || err.stdout);
+      return err.code === 1;
+    });
+    assert.deepEqual(stopped, []);
+    assert.equal(fs.existsSync(path.join(d.home, "installer-ran")), false);
+    await assert.rejects(run("--force"), (err) => err.code === 1 && /installer stopped \(exit 23/.test(err.stdout));
+    assert.deepEqual(stopped, ["POST"]);
+    assert.ok(fs.existsSync(path.join(d.home, "installer-ran")));
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
+test("S8/T3: real scripts/get.sh over file:// — timeout kills process group including TERM-ignoring grandchild", async () => {
+  const pidFile = path.join(root, "t3-timeout-child.pid");
+  const doneFile = path.join(root, "t3-timeout-done");
+  const rel = makeFileRelease(
+    "t3-rel-timeout",
+    `#!/bin/sh
+trap '' TERM
+sh -c 'trap "" TERM; echo $$ > ${JSON.stringify(pidFile)}; exec sleep 30'
+touch ${JSON.stringify(doneFile)}
+`,
+  );
+  let timedOutWith = 0;
+  const t0 = Date.now();
+  const rc = await runGetShDefault(`file://${rel}`, baseEnv(), {
+    timeout: 1200,
+    graceMs: 250,
+    onTimeout: (ms) => {
+      timedOutWith = ms;
+    },
+  });
+  const elapsed = Date.now() - t0;
+  assert.notEqual(rc, 0, "timed-out real get.sh must return non-zero");
+  assert.equal(timedOutWith, 1200, "onTimeout must report the configured timeout");
+  assert.ok(elapsed < 5000, `expected timeout + grace < 5000ms, took ${elapsed}ms`);
+  assert.equal(fs.existsSync(doneFile), false, "install.sh must not continue after timeout");
+  assert.equal(fs.existsSync(pidFile), true, "grandchild pidFile must have been written before timeout");
+  const cpid = Number(fs.readFileSync(pidFile, "utf8").trim());
+  assert.ok(cpid > 0);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.throws(() => process.kill(cpid, 0), /ESRCH/, `TERM-ignoring grandchild ${cpid} must be SIGKILLed`);
+});
+
+test("T3: real scripts/get.sh over file:// — Ctrl-C (SIGINT) to parent forwards to installer group and stops it", async () => {
+  const pidFile = path.join(root, "t3-sigint-child.pid");
+  const doneFile = path.join(root, "t3-sigint-done");
+  const rel = makeFileRelease(
+    "t3-rel-sigint",
+    `#!/bin/sh
+sh -c 'echo $$ > ${JSON.stringify(pidFile)}; exec sleep 30'
+touch ${JSON.stringify(doneFile)}
+`,
+  );
+  const runner = path.join(root, "t3-sigint-runner.mjs");
+  fs.writeFileSync(
+    runner,
+    `import { runGetShDefault } from ${JSON.stringify(path.join(repo, "src", "update.js"))};
+const rc = await runGetShDefault(${JSON.stringify(`file://${rel}`)}, process.env, { timeout: 20000, graceMs: 250 });
+process.exit(rc);
+`,
+  );
+  const proc = spawn(process.execPath, [runner], { env: baseEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(pidFile) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 30));
+    assert.equal(fs.existsSync(pidFile), true, "install.sh child must start and write pidFile before SIGINT");
+    const cpid = Number(fs.readFileSync(pidFile, "utf8").trim());
+    assert.ok(cpid > 0);
+
+    const t0 = Date.now();
+    proc.kill("SIGINT");
+    const exitCode = await new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error("parent did not exit after SIGINT")), 5000);
+      proc.once("exit", (code) => {
+        clearTimeout(to);
+        resolve(code);
+      });
+    });
+    assert.notEqual(exitCode, 0, "parent must exit non-zero on SIGINT");
+    assert.ok(Date.now() - t0 < 4000, "parent must exit promptly on SIGINT");
+    await new Promise((r) => setTimeout(r, 100));
+    assert.throws(() => process.kill(cpid, 0), /ESRCH/, `installer child ${cpid} must be killed when parent gets SIGINT`);
+    assert.equal(fs.existsSync(doneFile), false, "install.sh must not finish after SIGINT");
+  } finally {
+    try { proc.kill("SIGKILL"); } catch {}
+    try {
+      const cpid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      if (cpid > 0) process.kill(cpid, "SIGKILL");
+    } catch {}
+  }
+});
+
+test("T3: real scripts/get.sh over file:// — background child holding stdout still returns 0 quickly", async () => {
+  const bgPidFile = path.join(root, "t3-bgpipe.pid");
+  const rel = makeFileRelease(
+    "t3-rel-bgpipe",
+    `#!/bin/sh
+sleep 30 &
+echo $! > ${JSON.stringify(bgPidFile)}
+exit 0
+`,
+  );
+  try {
+    const t0 = Date.now();
+    const rc = await runGetShDefault(`file://${rel}`, baseEnv(), { timeout: 10_000, graceMs: 200 });
+    const elapsed = Date.now() - t0;
+    assert.equal(rc, 0, "install that exits 0 with background child holding stdout must return 0");
+    assert.ok(elapsed < 4000, `must finish quickly after exit+grace, took ${elapsed}ms`);
+    assert.equal(fs.existsSync(bgPidFile), true, "background child must have been spawned");
+  } finally {
+    try {
+      const pid = Number(fs.readFileSync(bgPidFile, "utf8").trim());
+      if (pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+});
+
+test("T3: updateCommand prints a clear timeout message and handles split-chunk SKILL_SETUP_FAILED without showing raw token", async () => {
+  // 1) Timeout message says it timed out and after how long
+  const hTo = harness();
+  hTo.d.runGetSh = (base, opts) => {
+    hTo.calls.push(["get.sh", base]);
+    opts?.onTimeout?.(360_000);
+    return 1;
+  };
+  assert.equal(await updateCommand([], hTo.d), 1);
+  assert.match(hTo.out(), /Not updated: the installer timed out after 6 minutes\./);
+
+  // 2) Split-chunk SKILL_SETUP_FAILED is buffered by line in updateCommand
+  const hSplit = harness();
+  hSplit.d.runGetSh = (base, opts) => {
+    hSplit.calls.push(["get.sh", base]);
+    opts?.onOutput?.("  SKILL_SET");
+    opts?.onOutput?.("UP_FAILED: warning: skill setup exited 1\n");
+    return 0;
+  };
+  assert.equal(await updateCommand([], hSplit.d), 0);
+  assert.match(hSplit.out(), /UPDATED \(with warning\):.*skill setup failed.*onionskin setup/);
+
+  // 3) Real scripts/get.sh emitting split SKILL_SETUP_FAILED: onOutput sees it, user stdout gets plain sentence without raw token
+  const rel = makeFileRelease(
+    "t3-rel-skill",
+    `#!/bin/sh
+printf '  SKILL_SET'
+sleep 0.05
+printf 'UP_FAILED: warning: skill setup exited 1\\n'
+exit 0
+`,
+  );
+  const runner = path.join(root, "t3-skill-runner.mjs");
+  const seenFile = path.join(root, "t3-skill-seen.txt");
+  fs.writeFileSync(
+    runner,
+    `import fs from "node:fs";
+import { runGetShDefault } from ${JSON.stringify(path.join(repo, "src", "update.js"))};
+let seen = "";
+const rc = await runGetShDefault(${JSON.stringify(`file://${rel}`)}, process.env, {
+  timeout: 10000,
+  graceMs: 200,
+  onOutput: (s) => { seen += s; },
+});
+fs.writeFileSync(${JSON.stringify(seenFile)}, seen);
+process.exit(rc);
+`,
+  );
+  const r = spawnSync(process.execPath, [runner], { env: baseEnv(), encoding: "utf8", timeout: 15_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(seenFile, "utf8"), /SKILL_SETUP_FAILED/, "onOutput must receive the full buffered line");
+  assert.doesNotMatch(r.stdout, /SKILL_SETUP_FAILED/, "raw SKILL_SETUP_FAILED token must not be printed to the user");
+  assert.match(r.stdout, /Warning: skill setup did not finish/, "plain warning sentence must be printed to the user");
+});
+
+test("S9: update catches stop() failure and prints standard Not updated + Nothing was changed + AGENT line", async () => {
+  const h = harness({ healthy: true });
+  h.d.stop = async () => {
+    throw new Error("server (pid 42424) did not stop within 5s");
+  };
+  assert.equal(await updateCommand([], h.d), 1);
+  assert.match(h.out(), /Not updated:.*42424.*Nothing was changed\./);
+  assert.match(h.out(), /^AGENT:/m);
+  assert.ok(!h.calls.some((c) => c[0] === "get.sh"), "installer must not run when stop fails");
+});
+
+test("S14: update reports failed skill setup when installer emits SKILL_SETUP_FAILED", async () => {
+  const h = harness();
+  h.d.runGetSh = (base, opts) => {
+    h.calls.push(["get.sh", base]);
+    opts?.onOutput?.("  SKILL_SETUP_FAILED: warning: skill setup exited 1\n");
+    return 0;
+  };
+  assert.equal(await updateCommand([], h.d), 0);
+  assert.match(h.out(), /UPDATED \(with warning\):.*skill setup failed.*onionskin setup/);
+  assert.match(h.out(), /^AGENT:.*SKILL_SETUP_FAILED.*onionskin setup/m);
 });

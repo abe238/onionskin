@@ -1,6 +1,6 @@
 import zlib from "node:zlib";
 import { gated } from "./stop-gate.js";
-import { openZip, ZipError } from "./zip.js";
+import { crc32, openZip, ZipError } from "./zip.js";
 
 // Rewrites one entry of a ZIP held in memory and copies every other entry as it is: same order, same compressed bytes, same CRC, same
 // central-directory fields (times, attributes, extra fields, comments). The local headers are written fresh from the central-directory
@@ -19,7 +19,7 @@ export function replaceEntry(bytes, name, data) {
   if (!zip.entries.has(name)) throw new ZipError(`no entry ${JSON.stringify(name)} to replace`);
   const newData = Buffer.from(data);
   const newComp = gated(() => zlib.deflateRawSync(newData)); // never stopped inside zlib (src/stop-gate.js)
-  const newCrc = zlib.crc32(newData) >>> 0;
+  const newCrc = crc32(newData);
   const parts = [];
   const central = [];
   let offset = 0;
@@ -38,9 +38,11 @@ export function replaceEntry(bytes, name, data) {
     const crc = mine ? newCrc : e.crc;
     const size = mine ? newData.length : e.size;
     const flags = e.flags & ~0x8; // sizes are in the local header now: no data descriptor
+    if (offset > 0xfffffffe || comp.length > 0xfffffffe || size > 0xfffffffe) throw new ZipError("the archive would need ZIP64");
+    const verNeeded = method === 8 ? Math.max(20, record.readUInt16LE(6)) : record.readUInt16LE(6);
     const lh = Buffer.alloc(30);
     lh.writeUInt32LE(0x04034b50, 0);
-    lh.writeUInt16LE(record.readUInt16LE(6), 4); // version needed
+    lh.writeUInt16LE(verNeeded, 4); // version needed
     lh.writeUInt16LE(flags, 6);
     lh.writeUInt16LE(method, 8);
     lh.writeUInt16LE(record.readUInt16LE(12), 10); // time
@@ -51,6 +53,7 @@ export function replaceEntry(bytes, name, data) {
     lh.writeUInt16LE(nameLen, 26);
     lh.writeUInt16LE(0, 28); // no local extra field
     parts.push(lh, nameBuf, comp);
+    record.writeUInt16LE(verNeeded, 6);
     record.writeUInt16LE(flags, 8);
     record.writeUInt16LE(method, 10);
     record.writeUInt32LE(crc, 16);
@@ -59,8 +62,10 @@ export function replaceEntry(bytes, name, data) {
     record.writeUInt32LE(offset, 42);
     central.push(record);
     offset += 30 + nameLen + comp.length;
+    if (offset > 0xfffffffe) throw new ZipError("the archive would need ZIP64");
   }
   const cd = Buffer.concat(central);
+  if (offset + cd.length > 0xfffffffe) throw new ZipError("the archive would need ZIP64");
   const commentLen = buf.readUInt16LE(zip.eocd + 20);
   const end = Buffer.alloc(22);
   sig(0x06054b50).copy(end, 0);
@@ -70,6 +75,5 @@ export function replaceEntry(bytes, name, data) {
   end.writeUInt32LE(offset, 16);
   end.writeUInt16LE(commentLen, 20);
   const comment = buf.subarray(zip.eocd + 22, zip.eocd + 22 + commentLen);
-  if (offset + cd.length > 0xfffffffe) throw new ZipError("the archive would need ZIP64");
   return Buffer.concat([...parts, cd, end, comment]);
 }

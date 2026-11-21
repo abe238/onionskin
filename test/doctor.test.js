@@ -56,6 +56,24 @@ test("doctor: an installed home passes; optional items never fail it; --json has
   assert.equal(line(r, "deeper check").status, "NOTE");
 });
 
+test("doctor: recognizes single-quoted install.sh launcher without false custom-launcher or another-onionskin notes", async () => {
+  const home = tmpHome();
+  const s = await runSetup([], { home, ask: async () => assert.fail("must not ask"), python: () => null });
+  assert.equal(s.exit, 0, s.lines.join("\n"));
+  const bin = path.join(home, ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const sq = repo.replace(/'/g, "'\\''");
+  fs.writeFileSync(path.join(bin, "onionskin"), `#!/bin/sh\nexec node '${sq}/src/cli.js' "$@"\n`, { mode: 0o755 });
+  const env = { HOME: home, PATH: `${bin}:${sysPath}`, ONIONSKIN_STATE_DIR: path.join(home, ".onionskin") };
+  const r = await runDoctor({ home, env, probes });
+  assert.equal(r.ok, true, JSON.stringify(r.checks.filter((c) => c.status === "MISSING")));
+  const l = line(r, "launcher");
+  assert.equal(l.status, "OK");
+  assert.doesNotMatch(l.detail, /custom launcher/);
+  assert.match(l.detail, /-> .*src\/cli\.js$/);
+  assert.equal(r.checks.some((c) => c.name === "another onionskin"), false);
+});
+
 test("doctor: a stale skill is MISSING with `onionskin setup --force`; a launcher dir off PATH is only a NOTE with the PATH line", async () => {
   const home = tmpHome();
   const env = await install(home, { onPath: false });

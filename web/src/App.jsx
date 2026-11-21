@@ -7,6 +7,7 @@ import { Drafts } from "./drafts.js";
 import { useFrame, useMedia, useSidebar, useTheme, useVisualViewport } from "./hooks.js";
 import { Sidebar } from "./Sidebar.jsx";
 import { Dock, TopBar, Toolbar } from "./Chrome.jsx";
+import { Icon } from "./Icons.jsx";
 import { Backdrop } from "./Backdrop.jsx";
 import { BackgroundPicker } from "./BackgroundPicker.jsx";
 import { useBackground } from "./background.js";
@@ -18,12 +19,15 @@ import { placeChip, textUnder } from "./chip-place.js";
 import { noteAlone, ridesAlong } from "./quick-send.js";
 import { COMMENTS_MAX, TOO_MANY_COMMENTS } from "../../src/retain.js"; // pure, no imports: the server refuses the 501st comment in the same words
 import { useStamps } from "./Stamps.jsx";
-import { BUILT_IN, needsOneSentence, selectionShape, suggestEligible } from "./stamps.js";
+import { BUILT_IN, needsOneSentence, selectionShape, stampComment, suggestEligible } from "./stamps.js";
 import { AHEAD_MS, NONE_WORDS, aheadKey, cardFor, reusableAhead, useRefusal } from "./suggest.js";
 import { MOD, isEditable, isQuickAsk } from "./keys.js";
 import { createWriteIn } from "./writein-live.js";
 import { HtmlHost } from "./HtmlHost.jsx";
 import { fetchHtmlView, htmlLocFromResolved, htmlMarks, stamped } from "./html-host.js";
+import { setRescueSnapshot } from "./ErrorBoundary.jsx";
+
+const isSendableComment = (c, noteHasWords) => c.status !== "draft" || !!c.text.trim() || (c.kind === "pin" && noteHasWords);
 
 const FRESH_MS = 5000;
 const SLOW_MS = 300; // a Send's "Sending..." shows only past this: the usual one (15 to 80 ms) does not flicker
@@ -47,6 +51,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [paint, setPaint] = useState({ items: [], chip: null }); // overlay drawings, in overlay-local pixels
   const [chipSel, setChipSel] = useState(null);
   const [focusId, setFocusId] = useState(null);
+  const [hoverId, setHoverId] = useState(null);
   const [sending, setSending] = useState(false); // a Send is in flight (the button's data-busy); `slow` shows it, after SLOW_MS
   const [slow, setSlow] = useState(false);
   // while a Send is in flight: the drafts it carried (ids) and whether it carried the note. Those stay as sent until the answer: read only
@@ -89,6 +94,13 @@ export default function App({ sid, initial, product, settings, suggest }) {
   roRef.current = ro;
 
   const hostRef = useRef(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const docRef = useRef(null);
   const overlayRef = useRef(null);
   const sessionRef = useRef(session);
@@ -174,6 +186,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
   modeRef.current = mode;
   quickRef.current = quick;
   const stampsCtl = useStamps();
+  const stampDirtyRef = useRef(false);
+  const guideDirtyRef = useRef(false);
   freshRef.current = fresh;
 
   const say = useCallback((text, action = null) => {
@@ -906,7 +920,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   useEffect(() => {
     // a comment or the note is unsent until the answer of a save that carried it came back (web/src/drafts.js dirty): one waiting for its
     // autosave, one whose save is still on its way, one whose save failed, and one only the save on the way out (keepalive) carries
-    const unsent = () => !roRef.current && (dirtyRef.current || (sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || draftPendingRef.current || saveFails.current > 0 || !!savingRef.current || draftsRef.current.dirty(commentsRef.current));
+    const unsent = () => !roRef.current && (dirtyRef.current || (sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || draftPendingRef.current || saveFails.current > 0 || !!savingRef.current || draftsRef.current.dirty(commentsRef.current) || !!quickRef.current?.text?.trim() || stampDirtyRef.current || guideDirtyRef.current);
     const flush = () => {
       // a Send in flight too: if it never arrives, this save holds what it carried
       if ((!draftPendingRef.current && !sendingRef.current) || roRef.current) return;
@@ -1134,10 +1148,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
     }
   }
 
-  /** Close the composer; with `back`, return focus to the document with the selection as it was. */
-  function closeQuick(back) {
+  /** Close the composer; with `back`, return focus to the document with the selection as it was; with `keep`, save typed words as an unsent comment. */
+  function closeQuick(back, keep = false) {
+    const q = quickRef.current;
     const b = quickBackRef.current;
-    const loc = quickRef.current?.anchor.location ?? null;
+    const loc = q?.anchor.location ?? null;
     quickBackRef.current = null;
     aheadRef.current = null; // a held answer is for this box only
     sgSeq.current++;
@@ -1145,6 +1160,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     setQuick(null);
     quickRef.current = null;
     redraw();
+    if (keep && q?.text?.trim()) addComment(q.kind, q.anchor, null, { text: q.text.trim(), quiet: true });
     if (!back || !b) return;
     // Until the frame below the focus is in neither the box nor the document. A reload that starts then (Use this writes the file, and its reload can come first)
     // would find no place to keep, and the new editor's own caret at the top of the file would take the typing: it takes this place over instead (rememberPlace)
@@ -1177,7 +1193,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   function submitQuick(words) {
     const q = quickRef.current;
     if (!q || q.blocked) return;
-    const text = typeof words === "string" ? words : q.text.trim(); // a stamp passes its fixed words
+    const text = typeof words === "string" ? words : q.text.trim();
     if (!text) return setQuick({ ...q, nudge: true });
     quietRef.current = { until: Date.now() + 600, quote: q.anchor.quote }; // the selection comes back right after this: no comment chip over it
     closeQuick(true);
@@ -1218,6 +1234,12 @@ export default function App({ sid, initial, product, settings, suggest }) {
     const q = quickRef.current;
     const h = hostRef.current;
     if (!q || q.blocked) return;
+    const typed = q.text.trim();
+    if (typed) {
+      const text = stampComment(words, typed);
+      if (text === null) return say("The stamp and your words exceed 5,000 characters. Shorten the comment and try again.");
+      return submitQuick(text);
+    }
     const busy = sendingRef.current || ["working", "queued"].includes(sessionRef.current.state);
     const { anchor, paraText: para } = selectionRead(q, h?.format);
     const el = suggestEligible({ stamp, on: suggestOn, tasks: suggest?.tasks, busy, format: h?.format, kind: q.kind, anchor, paraText: para });
@@ -1321,7 +1343,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     const onKey = (e) => {
       const mod = e.metaKey || e.ctrlKey;
       // a modal (the close confirmation, the background picker, the shortcuts list) keeps its own keys: nothing global reaches past it
-      const inModal = !!document.activeElement?.closest?.('.scrim, [role="dialog"]:not(.qa)') && !document.activeElement.closest(".qa");
+      const inModal = !!document.activeElement?.closest?.('.scrim, .dialog, [role="alertdialog"], .bgpop, .shortcuts');
       if (e.key === "Escape" && quickRef.current && !e.isComposing && !inModal && !e.target.closest?.(".qa, [role=\"dialog\"]") && (docRef.current?.contains(e.target) || e.target === document.body)) {
         // Esc closes the open card, then the box, wherever the focus is in the document (the box handles its own Esc). The reader keeps the place they are at now
         // (the box's own Esc is the one that returns to its words), and words typed into the box stay as an unsent comment
@@ -1337,15 +1359,15 @@ export default function App({ sid, initial, product, settings, suggest }) {
         }
         return;
       }
-      if (isQuickAsk(e) && inModal) return;
+      if (inModal) return;
       if (isQuickAsk(e)) {
         e.preventDefault();
         e.stopPropagation(); // the engine reads Cmd/Ctrl+K (any other modifier too) as "insert a link": it must not see this
         openQuick();
-      } else if (mod && e.altKey && e.code === "KeyM") {
+      } else if (mod && e.altKey && !e.shiftKey && e.code === "KeyM") {
         e.preventDefault();
         commentFromKeyboard();
-      } else if (mod && !e.altKey && e.code === "Backslash") {
+      } else if (mod && !e.altKey && !e.shiftKey && e.code === "Backslash") {
         e.preventDefault();
         toggleSidebar();
       } else if (e.code === "F6" && !mod && !e.altKey) {
@@ -1359,6 +1381,23 @@ export default function App({ sid, initial, product, settings, suggest }) {
         // and from the HTML view's own layer in Comment and Pin modes (no engine there)
         e.preventDefault();
         if (!(sending || state === "closed" || ro || pendingSend === 0)) send();
+      } else if (
+        e.key === "Escape" &&
+        modeRef.current !== "edit" &&
+        !e.isComposing &&
+        !mod &&
+        !e.altKey &&
+        !quickRef.current &&
+        !keysOpen &&
+        !bgOpen &&
+        !closeAsk &&
+        !(narrow && drawer) &&
+        !document.querySelector('.menu[role="menu"]') &&
+        !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || "") &&
+        !e.target.closest?.('.menu, .qa, .scrim, .dialog, [role="alertdialog"], .bgpop, .shortcuts, [data-testid="comment-card"]')
+      ) {
+        e.preventDefault();
+        setMode("edit");
       }
     };
     document.addEventListener("keydown", onKey, true);
@@ -1564,7 +1603,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
       heldRef.current = { ids, note: !use };
       setHeld(heldRef.current);
     };
-    hold(new Set(use ? [use.commentId] : commentsRef.current.filter((c) => c.status === "draft").map((c) => c.id)));
+    const initHasNote = !!noteRef.current.trim();
+    hold(new Set(use ? [use.commentId] : commentsRef.current.filter((c) => c.status === "draft" && isSendableComment(c, initHasNote)).map((c) => c.id)));
     const slowTimer = setTimeout(() => setSlow(true), SLOW_MS);
     let failed = null;
     let at = null; // what it was sent with (web/src/drafts.js)
@@ -1588,6 +1628,12 @@ export default function App({ sid, initial, product, settings, suggest }) {
       htmlSent = html && !locked ? h.edits() : [];
       if (htmlSent.length) h.setReadOnly(true, "sending");
       const bytes = !html && !locked && dirtyRef.current ? await h.saveBytes() : null;
+      const hasNote = !!noteRef.current.trim();
+      const sendComments = use ? commentsRef.current : commentsRef.current.filter((c) => isSendableComment(c, hasNote));
+      if (!use) {
+        const sendDrafts = commentsRef.current.filter((c) => c.status === "draft" && isSendableComment(c, hasNote));
+        hold(new Set(sendDrafts.map((c) => c.id))); // one made while the file was flushed goes too
+      }
       const body = {
         baseSha: loadedShaRef.current,
         ...(bytes ? { bytesB64: await blobToBase64(bytes) } : {}),
@@ -1601,10 +1647,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
         seen: draftsRef.current.seen, // the newest session state this page took
         noteSeen: draftsRef.current.noteSeen, // ... and whose note the box took: a note the server gave back since is merged, not overwritten
       };
-      if (!use) hold(new Set(commentsRef.current.filter((c) => c.status === "draft").map((c) => c.id))); // one made while the file was flushed goes too
       if (!use) body.sends = [...heldRef.current.ids]; // what it delivers: what this page holds read only for it
       const q = quickChangeRef.current;
-      if (!use && q && !bytes && !commentsRef.current.some(ridesAlong) && !body.edits.length && q.note === noteRef.current) body.quick = { command: q.command, count: q.count };
+      if (!use && q && !bytes && !sendComments.some(ridesAlong) && !body.edits.length && q.note === noteRef.current) body.quick = { command: q.command, count: q.count };
       at = draftsRef.current.begin({ note: body.note, carriesNote: true, sends: heldRef.current.ids, wire: body.rev, comments: commentsRef.current });
       let out;
       // its answer, or the server's state showing it committed (an event, any answer: `sent` names this Send), whichever comes first: an
@@ -1620,7 +1665,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
         heldRef.current = { ...heldRef.current, checking: true };
         setHeld(heldRef.current);
         const view = await Promise.race([checkSent(), proof]);
-        if (!(view.sent?.[TAB]?.rev >= body.rev)) throw e; // it did not go through: everything is a draft again
+        if (!view || !(view.sent?.[TAB]?.rev >= body.rev)) throw e; // it did not go through: everything is a draft again
         out = { session: view }; // it went through: the same as its answer
       }
       if (!locked && html && htmlSent.length) {
@@ -1675,11 +1720,20 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }
   /** After a request with no answer: the session as the server holds it once that request's turn is over, asked again (soon, then every 5 s) until it answers. */
   async function checkSent() {
-    for (let i = 0; ; i++) {
-      const view = await api(`/api/bootstrap?s=${sid}`).then((r) => r.session, () => null);
-      if (view) return view;
+    for (let i = 0; mountedRef.current; i++) {
+      try {
+        const r = await api(`/api/bootstrap?s=${sid}`);
+        if (r?.session) return r.session;
+      } catch (err) {
+        if (err?.status != null && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+          throw err;
+        }
+        // network error (err?.status == null) or transient/5xx: keep retrying
+      }
+      if (!mountedRef.current) return null;
       await new Promise((r) => setTimeout(r, Math.min(retryDelay(i) ?? 5000, 5000)));
     }
+    return null;
   }
   sendFnRef.current = send;
 
@@ -1851,10 +1905,16 @@ export default function App({ sid, initial, product, settings, suggest }) {
    * server's state is known (asked until it answers), which then goes in as that action's answer would have (applyServer).
    */
   async function afterLost(at) {
-    const view = await checkSent();
-    setSession(view);
-    applyServer(view, at);
-    return true;
+    try {
+      const view = await checkSent();
+      if (!view) return false;
+      setSession(view);
+      applyServer(view, at);
+      return true;
+    } catch (err) {
+      if (mountedRef.current) setProblem({ kind: "error", message: plain(err) });
+      return false;
+    }
   }
 
   // "Copy my comments" on the Connection lost banner: the note and every draft, as plain text. writeText is called synchronously in the click (Safari).
@@ -1886,9 +1946,15 @@ export default function App({ sid, initial, product, settings, suggest }) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
 
+  useEffect(() => {
+    const hasEdits = dirtyRef.current || (session.format === "html" ? htmlEdits > 0 : changes.length > 0);
+    setRescueSnapshot(comments, note, hasEdits);
+  }, [comments, note, htmlEdits, changes.length, session.format]);
+
+  const noteHasWords = !!note.trim();
   const counts = {
-    comments: comments.filter((c) => c.kind !== "pin" && ["draft", "queued"].includes(c.status)).length,
-    pins: comments.filter((c) => c.kind === "pin" && ["draft", "queued"].includes(c.status)).length,
+    comments: comments.filter((c) => c.kind !== "pin" && ["draft", "queued"].includes(c.status) && isSendableComment(c, noteHasWords)).length,
+    pins: comments.filter((c) => c.kind === "pin" && ["draft", "queued"].includes(c.status) && isSendableComment(c, noteHasWords)).length,
     edits: session.format === "html" ? htmlEdits : changes.length, // an HTML file: the viewer's pending text edits (an undo takes one away)
   };
   // While a batch is delivered, typed edits are not something to send: they are merged when the agent finishes.
@@ -1911,6 +1977,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
             product={product}
             session={session}
             counts={counts}
+            hasNote={noteHasWords}
             pending={pendingSend}
             sending={slow}
             theme={theme}
@@ -1932,6 +1999,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
                     view={doc.html}
                     mode={mode}
                     marks={htmlMarks(comments, resolved, doc.html.version)}
+                    hoverId={hoverId}
+                    onHover={setHoverId}
                     locked={!!session.locked}
                     edits={htmlEdits}
                     onHost={onHost}
@@ -1968,19 +2037,30 @@ export default function App({ sid, initial, product, settings, suggest }) {
               )}
             </div>
             <div className="sheen-edge" aria-hidden="true" data-on={state === "working" || state === "queued" ? "1" : "0"} />
+            {mode !== "edit" && (
+              <div className="mode-pill glass-pop" data-testid="mode-pill" role="status">
+                <Icon name={mode} size={14} />
+                <span>
+                  {mode === "comment" ? "Comment mode" : "Pin mode"}
+                  <span className="mode-pill-esc"> · Esc for Edit</span>
+                </span>
+              </div>
+            )}
             <Overlay
               boxRef={overlayRef}
               paint={paint}
+              hoverId={hoverId}
+              onHover={setHoverId}
               onChip={onChip}
               onQuickChip={openQuick}
-              onPin={(id) => setFocusId(id)}
+              onPin={(id) => { setFocusId(id); openSidebar(); }}
               onThumb={(i) => hostRef.current?.scrollTo({ slideIndex: i })}
               version={doc.v}
               fresh={fresh}
               quick={phone ? null : quick}
               onQuickText={(text) => setQuick((q) => (q ? { ...q, text, nudge: false } : q))}
               onQuickSubmit={submitQuick}
-              stamps={session.format === "html" ? null /* PLAN-html D9: no stamps for an HTML file */ : { ...stampsCtl, suggest: { sg, busy: slow, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
+              stamps={session.format === "html" ? null /* PLAN-html D9: no stamps for an HTML file */ : { ...stampsCtl, dirtyRef: stampDirtyRef, suggest: { sg, busy: slow, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
               onQuickClose={closeQuick}
               onAway={awayGo}
               canQuick={!phone}
@@ -1990,6 +2070,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
             readOnly={ro}
             onTakeOver={() => post("claim", { takeover: true })}
             session={session}
+            canDownload={session.format !== "html"}
             heldBack={heldBack}
             heldCopy={heldCopy}
             onHeldBackDone={() => setHeldBack(null)}
@@ -2021,6 +2102,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
         {bgOpen && <BackgroundPicker ctl={bgc} onClose={(refocus) => (setBgOpen(false), refocus && document.querySelector('[data-testid="bg-button"], [data-testid="more-menu"]')?.focus())} />}
         {phone && <Dock mode={mode} onMode={setMode} readOnly={ro} counts={sendCounts} pending={pendingSend} sideOpen={sideOpen} onSidebar={toggleSidebar} sending={slow} />}
         <Sidebar
+          guideDirtyRef={guideDirtyRef}
           readOnly={ro}
           open={sideOpen}
           narrow={narrow}
@@ -2030,7 +2112,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           onToggle={toggleSidebar}
           session={session}
           sid={sid}
-          historyKey={`${session.seq}:${doc.v}`}
+          historyKey={`${session.baseSha || ""}:${session.activity?.[0]?.id || ""}:${doc.v}`}
           historyCanShow={historyCanShow}
           onHistoryShow={historyShow}
           comments={comments}
@@ -2039,14 +2121,16 @@ export default function App({ sid, initial, product, settings, suggest }) {
           note={note}
           changes={changes}
           counts={sendCounts}
-          heldEdits={session.locked && session.format === "docx" ? counts.edits : 0}
+          heldEdits={session.locked && session.format !== "html" ? counts.edits : 0}
           pendingSend={pendingSend}
           sending={slow}
           busy={sending}
           held={held}
           rewriting={rewriting}
           focusId={focusId}
+          hoverId={hoverId}
           onFocused={() => setFocusId(null)}
+          onHover={setHoverId}
           ack={ack}
           onNote={updateNote}
           onText={(id, text) => !heldRef.current?.ids.has(id) && updateComments((l) => l.map((c) => (c.id === id ? { ...c, text } : c)))}

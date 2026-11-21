@@ -21,26 +21,35 @@ const toggled = (traits, id) => {
  * The composer's "Writing preferences" line, its panel, and the one offer after a Revert. A preference is only ever switched on by a tap
  * (or by the person's typing): nothing from the document or the agent's answer is read here.
  */
-export function StylePrefs({ sid, session, readOnly }) {
+export function StylePrefs({ sid, session, readOnly, guideDirtyRef }) {
   const [style, setStyle] = useState({ traits: [], words: "" });
   const [open, setOpen] = useState(false);
   const [offer, setOffer] = useState(false);
   const [words, setWords] = useState("");
+  const [clearing, setClearing] = useState(false);
   const [err, setErr] = useState("");
   // learning and the guide: loaded with the page, again when the panel opens and when the agent finishes a draft (a new voice entry)
   const [voice, setVoice] = useVoice(true, `${open}:${session.activity?.find((a) => a.kind === "voice")?.id || ""}`);
   const latest = useRef(style);
-  latest.current = style;
+  const confirmed = useRef(style);
+  const seqRef = useRef(0);
   const offered = useRef(false); // the offer shows once per page load
   const seenRevert = useRef(undefined);
+  const [load, setLoad] = useState("loading");
 
   useEffect(() => {
+    const seq = ++seqRef.current;
+    setLoad("loading");
     api(`/api/style?s=${sid}`)
       .then((s) => {
+        if (seq !== seqRef.current) return;
+        confirmed.current = s;
+        latest.current = s;
         setStyle(s);
         setWords(s.words || "");
+        setLoad("ready");
       })
-      .catch(() => {});
+      .catch(() => { if (seq === seqRef.current) setLoad("failed"); });
   }, [sid]);
 
   // A Revert that happens while this page is open (not one already in the list when the page loaded) offers the unused preferences once.
@@ -58,21 +67,33 @@ export function StylePrefs({ sid, session, readOnly }) {
   }, [revertId, readOnly]);
 
   async function save(next) {
+    const seq = ++seqRef.current;
+    latest.current = next;
     setErr("");
     try {
       const saved = await api(`/api/style?s=${sid}`, { method: "POST", body: next });
+      if (seq !== seqRef.current) return null;
+      confirmed.current = saved;
+      latest.current = saved;
       setStyle(saved);
+      setLoad("ready");
       return saved;
     } catch (e) {
-      setErr("Could not save that. Try again.");
+      if (seq === seqRef.current) {
+        latest.current = confirmed.current;
+        setStyle(confirmed.current);
+        setErr("Could not save that. Try again.");
+      }
       return null;
     }
   }
   const tap = (id) => save({ traits: toggled(latest.current.traits, id), words: latest.current.words });
-  const saveWords = () => (words.trim() === latest.current.words ? null : save({ traits: latest.current.traits, words }));
+  const saveWords = () => (load === "loading" || clearing || words.trim() === latest.current.words ? null : save({ traits: latest.current.traits, words }));
   const clearAll = async () => {
-    const s = await save({ traits: [], words: "" });
-    if (s) setWords("");
+    setClearing(true);
+    const saved = await save({ traits: [], words: "" });
+    if (saved) setWords("");
+    setClearing(false);
   };
   const done = async () => {
     await saveWords();
@@ -82,7 +103,11 @@ export function StylePrefs({ sid, session, readOnly }) {
   // every voice answer carries the preferences as they are now (a suggestion turned on changes them)
   const onVoice = (v) => {
     setVoice(v);
-    if (v?.style) setStyle(v.style);
+    if (v?.style) {
+      confirmed.current = v.style;
+      latest.current = v.style;
+      setStyle(v.style);
+    }
   };
 
   const on = TRAITS.filter((t) => style.traits.includes(t.id));
@@ -101,12 +126,13 @@ export function StylePrefs({ sid, session, readOnly }) {
           </button>
         )}
       </div>
+      {load === "failed" && (offer || open) && <p className="sp-err" role="alert">Could not load your preferences. Changing them will replace any saved preferences.</p>}
       {offer && !open && (
         <div className="sp-offer" role="group" aria-label="Writing preferences" data-testid="style-offer">
           <p>Want the agent to do it differently next time?</p>
           <div className="sp-chips">
             {TRAITS.filter((t) => !style.traits.includes(t.id)).map((t) => (
-              <button key={t.id} type="button" className="btn sm" data-testid={`style-offer-${t.id}`} onMouseDown={keep} onClick={() => tap(t.id)}>
+              <button key={t.id} type="button" className="btn sm" disabled={load === "loading"} data-testid={`style-offer-${t.id}`} onMouseDown={keep} onClick={() => tap(t.id)}>
                 {t.label}
               </button>
             ))}
@@ -116,24 +142,24 @@ export function StylePrefs({ sid, session, readOnly }) {
           </div>
         </div>
       )}
-      {!open && <VoiceGuideBlock sid={sid} session={session} voice={voice} onVoice={onVoice} readOnly={readOnly} />}
+      {!open && <VoiceGuideBlock dirtyRef={guideDirtyRef} sid={sid} session={session} voice={voice} onVoice={onVoice} readOnly={readOnly} />}
       {open && (
         <div className="sp-panel" role="group" aria-label="Writing preferences" data-testid="style-panel">
           <div className="sp-chips">
             {TRAITS.map((t) => (
-              <button key={t.id} type="button" className="btn sm sp-trait" aria-pressed={style.traits.includes(t.id)} data-testid={`style-trait-${t.id}`} onMouseDown={keep} onClick={() => tap(t.id)}>
+              <button key={t.id} type="button" className="btn sm sp-trait" aria-pressed={style.traits.includes(t.id)} disabled={load === "loading" || clearing} data-testid={`style-trait-${t.id}`} onMouseDown={keep} onClick={() => tap(t.id)}>
                 {t.label}
               </button>
             ))}
           </div>
           <label htmlFor="style-words">In your own words (optional)</label>
-          <textarea id="style-words" data-testid="style-words" rows={2} maxLength={MAX_WORDS} value={words} onChange={(e) => setWords(e.target.value)} onBlur={saveWords} />
+          <textarea id="style-words" data-testid="style-words" rows={2} maxLength={MAX_WORDS} value={words} disabled={load === "loading" || clearing} onChange={(e) => setWords(e.target.value)} onBlur={saveWords} />
           <p className="sp-hint">These go to the agent with every request.</p>
           {voice && (
             <>
               <VoiceSuggestions voice={voice} onVoice={onVoice} />
               <VoiceLearning voice={voice} onVoice={onVoice} />
-              <VoiceGuideBlock sid={sid} session={session} voice={voice} onVoice={onVoice} readOnly={readOnly} panel>
+              <VoiceGuideBlock dirtyRef={guideDirtyRef} sid={sid} session={session} voice={voice} onVoice={onVoice} readOnly={readOnly} panel>
                 <div className="vc-files">
                   <VoiceExport voice={voice} style={style} />
                   <VoiceImport voice={voice} onVoice={onVoice} />
@@ -143,10 +169,10 @@ export function StylePrefs({ sid, session, readOnly }) {
           )}
           {err && <p className="sp-err" role="alert">{err}</p>}
           <div className="sp-actions">
-            <button type="button" className="btn quiet sm" data-testid="style-clear" onMouseDown={keep} onClick={clearAll}>
+            <button type="button" className="btn quiet sm" data-testid="style-clear" disabled={load === "loading" || clearing} onMouseDown={keep} onClick={clearAll}>
               Clear preferences
             </button>
-            <button type="button" className="btn primary sm" data-testid="style-done" onMouseDown={keep} onClick={done}>
+            <button type="button" className="btn primary sm" data-testid="style-done" disabled={clearing} onMouseDown={keep} onClick={done}>
               Done
             </button>
           </div>

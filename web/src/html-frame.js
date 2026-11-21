@@ -71,6 +71,9 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
   let handle = null;
   let hintTimer = null;
   let flashTimer = null;
+  let clearTimer = null;
+  let afterLoadTimer = null;
+  let destroyed = false;
   let flashLoc = null;
   let drag = null; // comment mode: {x, y, moved, from} from the press on the page's layer
   const stats = { reloads: 0, armMs: 0, armDoneMs: 0, scanMax: 0, hostMax: 0, slots: 0, ticks: 0, tickMax: 0, tickSum: 0, anchorMax: 0, indexMs: 0, srcdocMs: 0, decodeMs: 0 };
@@ -93,7 +96,7 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
     // once per version (R12): the same version fetched again is not set again; the plain view and a retry are
     if (ver && ver.version === version && ver.plain === (plain || null) && ver.attempt === attempt) return;
     finishHost();
-    if (ver && !ver.loaded && !ver.plain) flag.clear(ver.version); // replaced before it loaded: not a crash
+    if (ver && !ver.plain) flag.clear(ver.version); // replaced before it loaded: not a crash
     stopArming();
     doc = null;
     ix = null;
@@ -139,7 +142,7 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
 
   /** The iframe element's load event (a listener on the page's own element, not inside the frame). */
   function loaded() {
-    if (!ver || ver.loaded || !frame) return;
+    if (destroyed || !ver || ver.loaded || !frame) return;
     const d = D.frameDoc(frame);
     if (!d || D.url(d) !== "about:srcdoc") return; // the frame's first about:blank
     ver.loaded = true;
@@ -153,14 +156,16 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
     // cleared once the content has been laid out and painted: two frames after load
     // two frames, or one second where frames do not run (a hidden tab): the heavy work of a page (its styles) is done before load
     let cleared = false;
-    const clear = () => !cleared && ((cleared = true), !v.plain && flag.clear(v.version));
-    requestAnimationFrame(() => requestAnimationFrame(clear));
-    setTimeout(clear, 1000);
-    setTimeout(() => afterLoad(v), 0);
+    const clear = () => !destroyed && !cleared && ((cleared = true), !v.plain && flag.clear(v.version));
+    requestAnimationFrame(() => !destroyed && requestAnimationFrame(clear));
+    clearTimeout(clearTimer);
+    clearTimeout(afterLoadTimer);
+    clearTimer = setTimeout(clear, 1000);
+    afterLoadTimer = setTimeout(() => afterLoad(v), 0);
   }
 
   function afterLoad(v) {
-    if (v !== ver || !doc) return;
+    if (destroyed || v !== ver || !doc) return;
     const t0 = performance.now();
     ix = buildIndex(D, doc);
     bySource = new Map();
@@ -254,6 +259,7 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
     timer = setInterval(tick, TICK_MS);
     cancelAnimationFrame(raf);
     const loop = () => {
+      if (destroyed) return;
       raf = requestAnimationFrame(loop);
       frameLoop();
     };
@@ -261,7 +267,7 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
   }
 
   function tick() {
-    if (!ready()) return;
+    if (destroyed || !ready()) return;
     const t0 = performance.now();
     const sel = readSelection();
     const same = sameSel(sel, last);
@@ -578,7 +584,7 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
 
   // ---- marks, hover, flash: drawn in the page's layer from frame rects --------------------------------------------------------------
   function frameLoop() {
-    if (!ready()) return;
+    if (destroyed || !ready()) return;
     const sc = D.scroller(doc);
     const key = sc ? `${D.scrollTop(sc)}|${D.scrollLeft(sc)}|${frame.clientWidth}|${frame.clientHeight}` : "";
     if (key !== scrollKey) {
@@ -840,13 +846,18 @@ export function createFrameView({ ui, flag = crashFlag(), focusPage = null }) {
   }
 
   function destroy() {
+    destroyed = true;
     clearInterval(timer);
     cancelAnimationFrame(raf);
     clearTimeout(hintTimer);
     clearTimeout(flashTimer);
+    clearTimeout(clearTimer);
+    clearTimeout(afterLoadTimer);
     stopArming();
-    if (ver && !ver.loaded && !ver.plain) flag.clear(ver.version);
+    if (ver && !ver.plain) flag.clear(ver.version);
     finishHostQuiet();
+    doc = null;
+    ver = null;
     onHost?.(null);
   }
   function finishHostQuiet() {

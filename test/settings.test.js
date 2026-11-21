@@ -141,7 +141,7 @@ test("CLI config: set a preset, get it, copy an image, refuse a text file and a 
   const big = path.join(root, "big.png");
   fs.writeFileSync(big, Buffer.concat([png(), Buffer.alloc(S.MAX_IMAGE_BYTES)]));
   assert.match(run("background", "--image", big).stderr, /larger than 15 MB/);
-  assert.match(run("background", "default").stdout, /paper/);
+  assert.match(run("background", "default").stdout, /^Background set to the default \(paper\)\./);
   assert.match(run("get", "background").stdout, /^paper \(default\)\n$/);
   run("background", "studio", "--strength", "20", "--no-blur");
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(st, "settings.json"), "utf8")).background, { kind: "preset", name: "studio", strength: 20, blur: false }, "a preset keeps what you set");

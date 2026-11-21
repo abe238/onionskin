@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test, after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildZip, docxBytes, tmpdir } from "./helpers/zipbuild.js";
+import { buildZip, docxBytes, rezip, tmpdir, xlsxBytes } from "./helpers/zipbuild.js";
 
 // temp state dir and documents only; the engine samples are copied, never written
 const root = tmpdir();
@@ -20,7 +20,7 @@ const SKIP_PY = skipUnless(HAVE_PY, "needs .venv with the fixture libraries", VE
 const SKIP_SAMPLES = skipUnless(haveSamples(), `engine samples not found in ${SAMPLES}`, "restore test/fixtures/engine or set ONIONSKIN_TEST_SAMPLES");
 
 const { validateOps } = await import("../src/ops/schema.js");
-const { runOps, summarize } = await import("../src/ops/run.js");
+const { previewAll, runOps, summarize } = await import("../src/ops/run.js");
 const { findAll, pickMatches, replaceRange, setAllText, splitForRange, applySet, layout } = await import("../src/ops/runs.js");
 const { readDocxParagraphs } = await import("../src/docx.js");
 const { textHash: hashOf } = await import("../src/text.js");
@@ -287,6 +287,145 @@ test("xlsx: set_cells, format_cells, rows/columns, sheets, replace_all; wrong ex
   assert.equal(all.results[0].status, "expect_mismatch");
 });
 
+for (const [original, find, replace, value] of [
+  ["ID-00123", "ID-", "", "00123"],
+  ["00123", "00", "0", "0123"],
+  ["old", null, null, "00123"],
+]) {
+  test(`xlsx: refuse writing "${value}" over "${original}" and preserve the file`, async () => {
+    const bytes = xlsxBytes({ Data: { B7: original } });
+    const file = copyTo(bytes, "identifier.xlsx");
+    const op = find ? { op: "replace_all_text", find, replace, expect: { count: 1 } }
+      : { op: "set_cells", target: { sheet: "Data", range: "B7" }, expect: { quote: original }, values: value };
+    const { report } = await applyCommand([file, "--ops", opsFile("identifier.json", [op]), "--standalone"], noServer);
+    const [result] = report.results;
+    assert.equal(result.status, "refused");
+    assert.equal(result.code, "number_would_change");
+    assert.ok(result.reason.includes("B7") && result.reason.includes(JSON.stringify(value)), result.reason);
+    assert.equal(report.written, false);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+    if (find) assert.equal((await previewAll(bytes, "xlsx", op)).code, "number_would_change");
+  });
+}
+
+test("xlsx: cells without addresses keep their positions when a write is refused", async () => {
+  const part = "xl/worksheets/sheet1.xml";
+  const bytes = rezip(xlsxBytes({ Data: { A1: "first", B1: "next" }, Other: { A1: "first" } }), {
+    [part]: (xml) => xml.replace(/<c r="[AB]1"/g, "<c"),
+    "xl/worksheets/sheet2.xml": (xml) => xml.replace("</worksheet>", '<extLst><ext uri="chart"><x:c xmlns:x="chart"/></ext></extLst></worksheet>'),
+  });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "first" };
+  const apply = (op) => runOps({ bytes, format: "xlsx", name: "cells.xlsx", ops: [op] });
+  for (const op of [
+    { op: "set_cells", target, expect, values: null },
+    { op: "format_cells", target, expect, set: { bold: true } },
+    { op: "insert_rows", target: { sheet: "Other", at: 1 }, expect },
+    { op: "rename_sheet", target: { sheet: "Other" }, expect: { quote: "Other" }, new_name: "New" },
+    { op: "replace_all_text", find: "first", replace: "", expect: { count: 2 } },
+  ]) {
+    const r = await apply(op);
+    assert.equal(r.results[0].code, "cells_without_address", op.op);
+    assert.equal(r.bytes, null);
+  }
+  const ok = await apply({ op: "set_cells", target: { ...target, sheet: "Other" }, expect, values: "new" });
+  assert.deepEqual(status(ok), ["applied"]);
+  assert.deepEqual(openZip(ok.bytes).read(part), openZip(bytes).read(part));
+});
+
+test("xlsx: nonexistent dates cannot roll over in date-formatted cells", async () => {
+  const bytes = xlsxBytes({ Data: { A1: "old" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const format = { op: "format_cells", target, expect, set: { number_format: "yyyy-mm-dd" } };
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const apply = (ops) => runOps({ bytes, format: "xlsx", name: "dates.xlsx", ops });
+  const invalid = ["31/02/2026", " 2026-02-29T12:05 ", "2026-02-28 24:00", "2026-01-31 25:61", "2026-01-31 23:59:99", "2026-01-31T12:60", "31/01/2026 24:00"];
+  for (const op of [...invalid.map(set), { op: "replace_all_text", find: "old", replace: "00/01/2026", expect: { count: 1 } }]) {
+    const r = await apply([format, op]);
+    assert.equal(r.results[1].code, "invalid_date");
+    assert.equal(r.bytes, null);
+  }
+  const { parseWorkbook } = await import("../src/xlsx.js");
+  for (const [ops, expected] of [
+    [[set("31/02/2026")], ["text", "31/02/2026"]],
+    [[set("2026-02-28 24:00")], ["text", "2026-02-28 24:00"]],
+    [[format, set("29/02/2024 23:59:59")], ["number", String(Date.UTC(2024, 1, 29, 23, 59, 59) / 86400000 + 25569)]],
+    [[format, set("2024-02-29")], ["number", "45351"]],
+  ]) {
+    const wb = parseWorkbook((await apply(ops)).bytes);
+    const cell = wb.sheetCells(wb.sheets[0]).cells.get(0);
+    assert.deepEqual([cell.k, cell.text], expected);
+  }
+});
+
+test("xlsx: numeric text guard refuses leading zeros and decimal values that change", async () => {
+  const { numberWriteRefusal } = await import("../src/ops/xlsx.js");
+  for (const value of ["00123", "0123", "-007", "+0123", " 00123 ", "0123.50", "00123%"]) {
+    const result = numberWriteRefusal(value, 0, 0);
+    assert.equal(result?.code, "number_would_change", value);
+    assert.match(result.reason, /leading zeros are not kept in this version$/, value);
+  }
+  for (const value of ["12345678901234567890", "0.1234567890123456789", "9007199254740993", "12345678901234567%", "1e400", "1e-400"]) {
+    const result = numberWriteRefusal(value, 0, 0);
+    assert.equal(result?.code, "number_would_change", value);
+    assert.match(result.reason, /the number cannot be stored exactly$/, value);
+  }
+  for (const value of [
+    "0", "-0.00", "0.5", "-0.25", "123", "1.50", "1400", "12.50", "1e5", "+5", "5.", ".5",
+    "33.333333333333336", "0.30000000000000004", "3.141592653589793", "1234567890123456", ".1234567890123456e2",
+    "0.000123456789012345e20", "10E+20", "0.0000001", "5%", "12.5%", "0.5%", "001e2%", "abc", "", "ID-00123", "0x10", 1234567890123456,
+  ]) {
+    assert.equal(numberWriteRefusal(value, 0, 0), null, String(value));
+  }
+});
+
+test("xlsx: set_cells saves 33.333333333333336 from a string as a number", async () => {
+  const { parseWorkbook } = await import("../src/xlsx.js");
+  const r = await runOps({ bytes: xlsxBytes({ Data: { A1: "old" } }), format: "xlsx", name: "values.xlsx", ops: [
+    { op: "set_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, values: "33.333333333333336" },
+  ] });
+  assert.deepEqual(status(r), ["applied"]);
+  const wb = parseWorkbook(r.bytes);
+  const [cell] = wb.sheetCells(wb.sheets[0]).rows.get(0);
+  assert.deepEqual([cell.k, cell.text], ["number", "33.333333333333336"]);
+});
+
+test("xlsx: replacement checks the live value after an earlier op", async () => {
+  const bytes = xlsxBytes({ Data: { A1: "ID-123", B1: "ID-456" } });
+  const r = await runOps({ bytes, format: "xlsx", name: "ids.xlsx", partial: true, ops: [
+    { op: "set_cells", target: { sheet: "Data", range: "B1" }, expect: { quote: "ID-456" }, values: "ID-00123" },
+    { op: "replace_all_text", find: "ID-", replace: "", expect: { count: 2 } },
+  ] });
+  assert.deepEqual(status(r), ["applied", "refused"]);
+  assert.equal(r.results[1].code, "number_would_change");
+  const xml = openZip(r.bytes).readText("xl/worksheets/sheet1.xml");
+  assert.match(xml, />ID-123</);
+  assert.match(xml, />ID-00123</);
+});
+
+test("xlsx: safe replacements and typed inputs keep the engine's stored cell types and values", async () => {
+  const { parseWorkbook } = await import("../src/xlsx.js");
+  const id = await runOps({ bytes: xlsxBytes({ Data: { A1: "ID-00123" } }), format: "xlsx", name: "id.xlsx", ops: [
+    { op: "replace_all_text", find: "ID-", replace: "X-", expect: { count: 1 } },
+  ] });
+  assert.deepEqual(status(id), ["applied"]);
+  const idBook = parseWorkbook(id.bytes);
+  const [cell] = idBook.sheetCells(idBook.sheets[0]).rows.get(0);
+  assert.deepEqual([cell.k, cell.text], ["text", "X-00123"]);
+  const out = await runOps({ bytes: xlsxBytes({ Data: { B1: "ID-123" } }), format: "xlsx", name: "values.xlsx", ops: [
+    { op: "replace_all_text", find: "ID-", replace: "", expect: { count: 1 } },
+    { op: "set_cells", target: { sheet: "Data", range: "C1:J1" }, expect: { quote: "\t".repeat(7) },
+      values: [["1400", "12.50", "0", "0.5", "5%", "TRUE", "=A1+1", 123]] },
+  ] });
+  assert.deepEqual(status(out), ["applied", "applied"]);
+  const wb = parseWorkbook(out.bytes);
+  assert.deepEqual(wb.sheetCells(wb.sheets[0]).rows.get(0).map(({ k, text }) => [k, text]), [
+    ["number", "123"], ["number", "1400"], ["number", "12.5"], ["number", "0"],
+    ["number", "0.5"], ["number", "0.05"], ["boolean", "TRUE"], ["formula", "=A1+1"], ["number", "123"],
+  ]);
+});
+
 test("pptx: set_shape_text and replace_text_in_shape through slide and shape ids; replace_all_text", { skip: SKIP_SAMPLES }, async () => {
   const bytes = sample("sample.pptx");
   const r = await runOps({ bytes, format: "pptx", name: "t.pptx", ops: [
@@ -308,7 +447,7 @@ test("xlsx: a refusal thrown by the engine reaches the report as the op's code (
   fs.writeFileSync(stub, `
 export class Engine {
   constructor(emit) { this.emit = emit; }
-  async open() { return { kind: "xlsx", xlsx: { sheets: [{ name: "S", index: 0 }] } }; }
+  async open() { return { kind: "xlsx", xlsx: { sheets: [{ name: "S", index: 0, path: "xl/worksheets/sheet1.xml" }] } }; }
   async call(m) {
     if (m === "xlsx.load") { this.emit("xlsx:progress", { sheet: 0, rows: 3, done: true }); return; }
     if (m === "xlsx.block") return { rows: [] };
@@ -323,7 +462,8 @@ export const paraSpec = () => ({});
 `);
   const script = `
 import { runOps } from ${JSON.stringify(path.join(repo, "src/ops/run.js"))};
-const r = await runOps({ bytes: Buffer.from("x"), format: "xlsx", name: "t.xlsx", partial: true, ops: [{ op: "insert_rows", target: { sheet: "S", at: 2 }, expect: { quote: "" } }] });
+import { xlsxBytes } from ${JSON.stringify(path.join(repo, "test/helpers/zipbuild.js"))};
+const r = await runOps({ bytes: xlsxBytes({ S: {} }), format: "xlsx", name: "t.xlsx", partial: true, ops: [{ op: "insert_rows", target: { sheet: "S", at: 2 }, expect: { quote: "" } }] });
 console.log(JSON.stringify(r.results[0]));`;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { env: { ...process.env, ONIONSKIN_ENGINE_NODE: stub }, encoding: "utf8" });
   const res = JSON.parse(out);

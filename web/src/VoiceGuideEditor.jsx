@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./lib.js";
 import { VoiceDialog } from "./VoiceDialog.jsx";
+import { beginGuideRequest } from "./voice-bus.js";
 import { GUIDE_MAX, SECTIONS, addSpan, chars, composeGuide, covered, hasHeadingLine, lineDiff, parseGuide } from "./voice-guide.js";
 
 const keep = (e) => e.preventDefault();
@@ -34,7 +35,7 @@ function AutoText({ value, shown, ...rest }) {
  * its middle to the end, is not enough. When the box changes height (the person types a line), what was covered so far is forgotten.
  * Ceiling: "on screen" is the box's place inside the window and the editor's scroll area, not whether the person's eyes read it.
  */
-function Block({ spec, saved, text, open, tick, locked, over, hashLine, diffOpen, onText, onTick, onOpen, onDiff, onSeen }) {
+function Block({ spec, saved, text, open, tick, locked, busy, over, hashLine, diffOpen, onText, onTick, onOpen, onDiff, onSeen }) {
   const wrap = useRef(null);
   const status = saved === undefined ? "new" : norm(saved) === norm(text) ? "same" : "changed";
   useEffect(() => {
@@ -101,7 +102,7 @@ function Block({ spec, saved, text, open, tick, locked, over, hashLine, diffOpen
           </button>
         )}
         <label className="vc-check vg-tick">
-          <input type="checkbox" checked={tick} disabled={locked} data-testid={`vg-tick-${id}`} onChange={(e) => onTick(e.target.checked)} />
+          <input type="checkbox" checked={tick} disabled={locked || busy} data-testid={`vg-tick-${id}`} onChange={(e) => onTick(e.target.checked)} />
           <span>Use this section</span>
         </label>
       </div>
@@ -112,7 +113,7 @@ function Block({ spec, saved, text, open, tick, locked, over, hashLine, diffOpen
       )}
       <div ref={wrap} className="vg-box" hidden={!open}>
         {PRIVATE_HINT.includes(id) && <p className="vc-hint">Examples are quoted from your files. Check they hold nothing private.</p>}
-        <AutoText className="vc-text vg-text" data-testid={`vg-text-${id}`} aria-labelledby={`vg-h-${id}`} aria-invalid={over} value={text} shown={open} spellCheck={false} onChange={(e) => onText(e.target.value)} />
+        <AutoText className="vc-text vg-text" data-testid={`vg-text-${id}`} aria-labelledby={`vg-h-${id}`} aria-invalid={over} value={text} shown={open} disabled={busy} spellCheck={false} onChange={(e) => onText(e.target.value)} />
         <p className={`vc-count ${over ? "over" : ""}`} data-testid={`vg-count-${id}`}>
           {n} of {spec.max} characters
         </p>
@@ -150,7 +151,7 @@ function Block({ spec, saved, text, open, tick, locked, over, hashLine, diffOpen
  * last section, so every section is passed on the way. Save sends the text this page composes from the boxes (never a draft id), then
  * the draft is discarded. `voice` is the page's voice state; `draft` is null when the saved guide is opened for editing.
  */
-export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
+export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved, dirtyRef }) {
   const saved = voice.guide || { text: "", on: false };
   const savedParsed = useMemo(() => parseGuide(saved.text), []); // eslint-disable-line react-hooks/exhaustive-deps -- a snapshot at open
   const base = useMemo(() => (draft ? parseGuide(draft.text) : savedParsed), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -201,6 +202,10 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
   const fromDraft = specs.filter((s) => ticks[s.id] && norm(texts[s.id]) && statusOf(s.id) !== "same").length; // what the draft adds or changes
   const already = sections.length - fromDraft;
   const dirty = specs.some((s) => texts[s.id] !== init.texts[s.id] || ticks[s.id] !== init.ticks[s.id]);
+  useLayoutEffect(() => {
+    dirtyRef.current = dirty;
+    return () => { dirtyRef.current = false; };
+  }, [dirtyRef, dirty]);
   const canSave = !busy && composed !== "" && total <= GUIDE_MAX && problems.length === 0;
   // typing in a box that is not ticked is left out of the save: Save asks first, so it is never lost without a word
   const untickedEdits = specs.filter((s) => !ticks[s.id] && texts[s.id] !== init.texts[s.id]);
@@ -214,6 +219,7 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
     setAskSave(false);
     setBusy(true);
     setError("");
+    const finish = beginGuideRequest();
     try {
       let v = await api("/api/voice/guide", { method: "POST", body: { text: composed, on, send: sendMode } });
       // the server discards the draft only when it is still the one on screen (`at`): a newer draft that arrived meanwhile stays
@@ -223,16 +229,23 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
     } catch {
       setError("Could not save that. Try again.");
       setBusy(false);
+    } finally {
+      finish();
     }
   }
 
   async function discard() {
+    if (busy) return;
     setAskDiscard(false);
+    setBusy(true);
+    setError("");
     try {
       onVoice(await api("/api/voice/draft/discard", { method: "POST", body: { at: draft.at } })); // only this draft, never a newer one
       onClose();
     } catch {
       setError("Could not discard that. Try again.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -266,6 +279,7 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
             open={!!open[s.id]}
             tick={!!ticks[s.id]}
             locked={lockedOf(s.id) && !ticks[s.id]}
+            busy={busy}
             over={chars(texts[s.id]) > s.max}
             hashLine={hasHeadingLine(texts[s.id])}
             diffOpen={!!diffs[s.id]}
@@ -289,17 +303,17 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
             This saves {sections.length} sections: {fromDraft} from the draft and {already} you already had.
           </p>
           <label className="vc-check">
-            <input type="checkbox" checked={on} data-testid="vg-send" onChange={(e) => setOn(e.target.checked)} />
+            <input type="checkbox" checked={on} disabled={busy} data-testid="vg-send" onChange={(e) => setOn(e.target.checked)} />
             <span>Send my guide with every request</span>
           </label>
           {hasShort && (
             <div className="vg-choice" role="radiogroup" aria-label="What to send">
               <label className="vc-check">
-                <input type="radio" name="vg-send-mode" checked={sendMode === "full"} data-testid="vg-send-full" onChange={() => setSend("full")} />
+                <input type="radio" name="vg-send-mode" checked={sendMode === "full"} disabled={busy} data-testid="vg-send-full" onChange={() => setSend("full")} />
                 <span>Full guide</span>
               </label>
               <label className="vc-check">
-                <input type="radio" name="vg-send-mode" checked={sendMode === "short"} data-testid="vg-send-short" onChange={() => setSend("short")} />
+                <input type="radio" name="vg-send-mode" checked={sendMode === "short"} disabled={busy} data-testid="vg-send-short" onChange={() => setSend("short")} />
                 <span>Short form only</span>
               </label>
             </div>
@@ -349,7 +363,7 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved }) {
             </div>
           ) : (
             <div className="dialog-actions">
-              <button type="button" className="btn" data-testid="vg-use-all" onClick={useAll}>
+              <button type="button" className="btn" data-testid="vg-use-all" disabled={busy} onClick={useAll}>
                 Use all sections
               </button>
               <button type="button" className="btn primary" data-testid="vg-save" disabled={!canSave} onClick={() => (untickedEdits.length ? setAskSave(true) : save())}>

@@ -3,7 +3,10 @@ import { Icon } from "./Icons.jsx";
 import { useFocusTrap } from "./hooks.js";
 import { elapsedText, progressOf, stageOf, stopKind } from "./stage.js";
 
-export function CopyButton({ text, label = "Copy", testid = "copy-command" }) {
+const APP_NAME = { docx: "Word", xlsx: "Excel", pptx: "PowerPoint", html: "your editor" };
+const appName = (format) => APP_NAME[format] || "your editor";
+
+export function CopyButton({ text, label = "Copy", ariaLabel, testid = "copy-command" }) {
   const [done, setDone] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const copy = async () => {
@@ -17,23 +20,25 @@ export function CopyButton({ text, label = "Copy", testid = "copy-command" }) {
     }
   };
   return (
-    <button type="button" className="btn" onClick={copy} data-testid={testid} aria-label={label === "Copy" ? "Copy the command" : label}>
+    <button type="button" className="btn" onClick={copy} data-testid={testid} aria-label={ariaLabel || undefined}>
       <Icon name={done ? "check" : "copy"} size={14} /> {done ? "Copied" : blocked ? "Select it to copy" : label}
     </button>
   );
 }
 
 /** Where the held version went: the sentence, the copy's name, and what the person can do next. */
-function CopyActions({ copy, copyError, canReveal, onShowCopy, onKeepMine }) {
+function CopyActions({ copy, copyError, canReveal, canDownload = true, onShowCopy, onKeepMine }) {
   if (!copy?.name) {
     return (
       <>
         <p className="hint" data-testid="conflict-copy-failed">
-          The copy could not be saved in this folder{copyError ? ` (${copyError})` : ""}. Download it instead.
+          The copy could not be saved in this folder{copyError ? ` (${copyError})` : ""}.{canDownload ? " Download it instead." : ""}
         </p>
-        <button type="button" className="btn primary" onClick={onKeepMine} data-testid="keep-mine">
-          Download a copy
-        </button>
+        {canDownload && (
+          <button type="button" className="btn primary" onClick={onKeepMine} data-testid="keep-mine">
+            Download a copy
+          </button>
+        )}
       </>
     );
   }
@@ -43,12 +48,12 @@ function CopyActions({ copy, copyError, canReveal, onShowCopy, onKeepMine }) {
     </button>
   ) : (
     <span className="copy-path">
-      <code data-testid="copy-path">{copy.path}</code> <CopyButton text={copy.path || ""} />
+      <code data-testid="copy-path">{copy.path}</code> <CopyButton text={copy.path || ""} ariaLabel="Copy file path" />
     </span>
   );
 }
 
-function ConflictDialog({ conflict, onReloadDisk, onKeepMine, onShowCopy, onClose }) {
+function ConflictDialog({ conflict, format, canDownload = true, onReloadDisk, onKeepMine, onShowCopy, onClose }) {
   const ref = useRef(null);
   useFocusTrap(ref, true, onClose);
   const { copy, copyError, canReveal, side } = conflict;
@@ -65,14 +70,14 @@ function ConflictDialog({ conflict, onReloadDisk, onKeepMine, onShowCopy, onClos
           {copy?.name ? (
             <>
               {" "}
-              A copy with {who} was saved as <strong data-testid="copy-name">{copy.name}</strong> in the same folder, so you can open both in Word and combine them yourself.
+              A copy with {who} was saved as <strong data-testid="copy-name">{copy.name}</strong> in the same folder, so you can open both in {appName(format)} and combine them yourself.
             </>
           ) : (
             <> Nothing was written over it.</>
           )}
         </p>
         <div className="dialog-actions">
-          <CopyActions copy={copy} copyError={copyError} canReveal={canReveal} onShowCopy={onShowCopy} onKeepMine={onKeepMine} />
+          <CopyActions copy={copy} copyError={copyError} canReveal={canReveal} canDownload={canDownload} onShowCopy={onShowCopy} onKeepMine={onKeepMine} />
           <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk">
             Reload the changed file
           </button>
@@ -86,7 +91,7 @@ function ConflictDialog({ conflict, onReloadDisk, onKeepMine, onShowCopy, onClos
   );
 }
 
-function CloseDialog({ edits, onKeepMine, onCloseAnyway, onCancel }) {
+function CloseDialog({ edits, canDownload = true, onKeepMine, onCloseAnyway, onCancel }) {
   const ref = useRef(null);
   useFocusTrap(ref, true, onCancel);
   return (
@@ -100,9 +105,11 @@ function CloseDialog({ edits, onKeepMine, onCloseAnyway, onCancel }) {
           You typed {edits > 0 ? `${edits} edit${edits > 1 ? "s" : ""}` : "edits"} that were never sent. They live only in this page, so closing the session loses them.
         </p>
         <div className="dialog-actions">
-          <button type="button" className="btn primary" onClick={onKeepMine} data-testid="close-download">
-            Download my edits
-          </button>
+          {canDownload && (
+            <button type="button" className="btn primary" onClick={onKeepMine} data-testid="close-download">
+              Download my edits
+            </button>
+          )}
           <button type="button" className="btn" onClick={onCancel} data-testid="close-cancel">
             Keep editing
           </button>
@@ -171,7 +178,7 @@ function Elapsed({ batch }) {
   );
 }
 
-export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, noticeAction = null, onStop = () => {}, stopping = false, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, onCopyComments, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
+export function Banners({ readOnly, onTakeOver, session, canDownload = session.format !== "html", heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, noticeAction = null, onStop = () => {}, stopping = false, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, onCopyComments, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
   const s = session.state;
   const agent = session.agent || null;
   const failed = agent?.state === "failed" && agent.failure ? failureCopy(agent.failure) : null;
@@ -292,7 +299,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
                 This session is closed. To continue, run <code>onionskin {/^[\w.-]+$/.test(session.name || "") ? session.name : `"${session.name || "<file>"}"`}</code> in a terminal, in the folder that holds the file.
               </span>
             )}
-            {unsentEdits > 0 && (
+            {unsentEdits > 0 && canDownload && (
               <button type="button" className="btn" onClick={onKeepMine} data-testid="closed-download">
                 Download my edits
               </button>
@@ -324,7 +331,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
               <strong>Someone changed this file outside Onionskin</strong>
               <span>
                 Your original file was left untouched.{" "}
-                {session.conflict.copyName ? `A copy with ${session.conflict.local ? "the change" : "the agent's edits"} was saved as ${session.conflict.copyName} in the same folder, so you can open both in Word and combine them yourself.` : session.conflict.local ? "The change made on this Mac was not applied." : "The agent's write was not applied."}
+                {session.conflict.copyName ? `A copy with ${session.conflict.local ? "the change" : "the agent's edits"} was saved as ${session.conflict.copyName} in the same folder, so you can open both in ${appName(session.format)} and combine them yourself.` : session.conflict.local ? "The change made on this Mac was not applied." : "The agent's write was not applied."}
               </span>
             </span>
             {session.conflict.copyName && session.canReveal && (
@@ -332,7 +339,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
                 Show in folder
               </button>
             )}
-            {session.conflict.copyName && !session.canReveal && <CopyButton text={session.conflict.copyPath || ""} />}
+            {session.conflict.copyName && !session.canReveal && <CopyButton text={session.conflict.copyPath || ""} ariaLabel="Copy file path" />}
             {!session.locked && (
               <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-agent">
                 Reload the changed file
@@ -352,7 +359,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
                 Copy my comments
               </button>
             )}
-            {unsentEdits > 0 && (
+            {unsentEdits > 0 && canDownload && (
               <button type="button" className="btn" onClick={onKeepMine} data-testid="error-download">
                 Download my edits
               </button>
@@ -376,7 +383,7 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
                     {x.text && (
                       <span className="held-text">
                         <q>{x.text}</q>
-                        <CopyButton text={x.text} />
+                        <CopyButton text={x.text} ariaLabel="Copy edited text" />
                       </span>
                     )}
                   </li>
@@ -401,8 +408,8 @@ export function Banners({ readOnly, onTakeOver, session, heldBack = null, heldCo
           </div>
         )}
       </div>
-      {closeAsk && <CloseDialog edits={unsentEdits} onKeepMine={onKeepMine} onCloseAnyway={onCloseAnyway} onCancel={onCloseCancel} />}
-      {problem?.kind === "conflict" && <ConflictDialog conflict={problem} onReloadDisk={onReloadDisk} onKeepMine={onKeepMine} onShowCopy={onShowCopy} onClose={onDismiss} />}
+      {closeAsk && <CloseDialog edits={unsentEdits} canDownload={canDownload} onKeepMine={onKeepMine} onCloseAnyway={onCloseAnyway} onCancel={onCloseCancel} />}
+      {problem?.kind === "conflict" && <ConflictDialog conflict={problem} format={session.format} canDownload={canDownload} onReloadDisk={onReloadDisk} onKeepMine={onKeepMine} onShowCopy={onShowCopy} onClose={onDismiss} />}
     </>
   );
 }

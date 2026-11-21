@@ -271,11 +271,12 @@ export function suggestions(evidence, style) {
   const hits = Array.isArray(ev.hits) ? ev.hits.filter((h) => h && typeof h === "object" && COMMENT_TRAITS.includes(h.trait)) : [];
   const answers = ev.answers && typeof ev.answers === "object" && !Array.isArray(ev.answers) ? ev.answers : {};
   const on = new Set(Array.isArray(style?.traits) ? style.traits : []);
+  const totalPairs = Number.isInteger(ev.totalPairs) ? ev.totalPairs : pairs.length;
   const held = (trait) => {
     const a = Object.hasOwn(answers, trait) ? answers[trait] : null;
     if (!a || typeof a !== "object") return false;
     if (a.never === true) return true;
-    return Number.isInteger(a.later) && pairs.length - a.later < LATER_AFTER;
+    return Number.isInteger(a.later) && totalPairs - a.later < LATER_AFTER;
   };
   const found = [];
   const win = pairs.slice(-WINDOW);

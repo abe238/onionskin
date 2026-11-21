@@ -35,7 +35,7 @@ import { readDocxParagraphs } from "../../src/docx.js";
 import { compareBytes } from "../../src/history.js";
 import { hasControlChars, untrusted } from "../../src/sanitize.js";
 import { escText } from "../../src/xml-tree.js";
-import { openZip } from "../../src/zip.js";
+import { crc32, openZip } from "../../src/zip.js";
 import { CANONICAL } from "./canonical.mjs";
 import { DEMO } from "./demo-scenario.mjs";
 
@@ -346,7 +346,7 @@ export function packingProblems(buf, label) {
     if (r.engine.bytesWritten !== data.length) return bad("bytes after a part's compressed data");
     const content = r.buffer;
     if (!zlib.deflateRawSync(content).equals(data)) return bad("a part's compressed data is not the standard encoding of its content");
-    if (content.length !== c.size || zlib.crc32(content) !== c.crc) return bad("a part's size or checksum is wrong");
+    if (content.length !== c.size || crc32(content) !== c.crc) return bad("a part's size or checksum is wrong");
     next = start + c.comp;
     p += 46 + c.nameLen;
   }

@@ -36,10 +36,12 @@ function rawZip(entries) {
   let offset = 0;
   for (const [name, { data, method = 8, declaredSize }] of Object.entries(entries)) {
     const comp = method === 8 ? zlib.deflateRawSync(data) : data;
+    const crc = zlib.crc32(data) >>> 0;
     const nameBuf = Buffer.from(name);
     const lh = Buffer.alloc(30);
     lh.writeUInt32LE(0x04034b50, 0);
     lh.writeUInt16LE(method, 8);
+    lh.writeUInt32LE(crc, 14);
     lh.writeUInt32LE(comp.length, 18);
     lh.writeUInt32LE(declaredSize ?? data.length, 22);
     lh.writeUInt16LE(nameBuf.length, 26);
@@ -47,6 +49,7 @@ function rawZip(entries) {
     const ch = Buffer.alloc(46);
     ch.writeUInt32LE(0x02014b50, 0);
     ch.writeUInt16LE(method, 10);
+    ch.writeUInt32LE(crc, 16);
     ch.writeUInt32LE(comp.length, 20);
     ch.writeUInt32LE(declaredSize ?? data.length, 24);
     ch.writeUInt16LE(nameBuf.length, 28);

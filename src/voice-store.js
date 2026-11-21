@@ -96,12 +96,15 @@ export function readEvidence() {
   const raw = readObject(evidenceFile());
   if (raw === "missing") return emptyEvidence();
   if (!raw || typeof raw.learning !== "boolean") return { ...emptyEvidence(), learning: false };
+  const pairs = list(raw.pairs, cleanPair, MAX_PAIRS);
   const examples = list(raw.examples, cleanExample, Infinity);
   const unique = examples.filter((e, i) => examples.findLastIndex((x) => x.id === e.id) === i).slice(-MAX_EXAMPLES);
+  const totalPairs = Number.isSafeInteger(raw.totalPairs) && raw.totalPairs >= pairs.length ? raw.totalPairs : undefined;
   return {
     v: 1,
     learning: raw.learning,
-    pairs: list(raw.pairs, cleanPair, MAX_PAIRS),
+    pairs,
+    ...(totalPairs !== undefined ? { totalPairs } : {}),
     hits: list(raw.hits, cleanHit, MAX_HITS),
     examples: unique,
     answers: cleanAnswers(raw.answers),
@@ -123,10 +126,13 @@ export function appendRecords({ pairs = [], hits = [], examples = [] } = {}, now
   const ev = readEvidence();
   if (!ev.learning) return ev;
   const add = (items, clean) => (Array.isArray(items) ? items.map((x) => clean(plain(x) ? { ...x, at: now } : x)).filter(Boolean) : []);
+  const newPairs = add(pairs, cleanPair);
   const newHits = add((Array.isArray(hits) ? hits : []).map((trait) => ({ trait })), cleanHit);
+  const prevTotal = Number.isSafeInteger(ev.totalPairs) && ev.totalPairs >= ev.pairs.length ? ev.totalPairs : ev.pairs.length;
   const next = {
     ...ev,
-    pairs: [...ev.pairs, ...add(pairs, cleanPair)].slice(-MAX_PAIRS),
+    pairs: [...ev.pairs, ...newPairs].slice(-MAX_PAIRS),
+    totalPairs: prevTotal + newPairs.length,
     hits: [...ev.hits, ...newHits].slice(-MAX_HITS),
     examples: [...ev.examples, ...add(examples, cleanExample)],
   };
@@ -134,12 +140,13 @@ export function appendRecords({ pairs = [], hits = [], examples = [] } = {}, now
   return save(next);
 }
 
-/** "Not now" ({later: pairs kept now}) or "Don't suggest this" ({never}) for one trait. An unknown trait or action is a 400, nothing written. */
+/** "Not now" ({later: total pairs seen so far}) or "Don't suggest this" ({never}) for one trait. An unknown trait or action is a 400, nothing written. */
 export function setAnswer(trait, action) {
   if (typeof trait !== "string" || !TRAIT_IDS.includes(trait)) throw new VoiceError(`trait must be one of: ${TRAIT_IDS.join(", ")}`);
   if (typeof action !== "string" || !ANSWERS.includes(action)) throw new VoiceError(`action must be one of: ${ANSWERS.join(", ")}`);
   const ev = readEvidence();
-  return save({ ...ev, answers: { ...ev.answers, [trait]: action === "never" ? { never: true } : { later: ev.pairs.length } } });
+  const total = Number.isSafeInteger(ev.totalPairs) && ev.totalPairs >= ev.pairs.length ? ev.totalPairs : ev.pairs.length;
+  return save({ ...ev, answers: { ...ev.answers, [trait]: action === "never" ? { never: true } : { later: total } } });
 }
 
 /** Forget the kept edits, comment hits and examples. The learning switch stays; "never" answers stay (a choice, not evidence); "later" goes (it counted kept pairs). */

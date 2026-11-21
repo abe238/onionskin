@@ -10,7 +10,7 @@ import { Icon } from "./Icons.jsx";
  * Props: view ({version, plain, reason, stats, texts, editable, ident, copy, forced} or {error}), mode, marks, locked (a run: D5), edits (how
  * many pending text edits), onHost, onWant(plain: boolean) (the plain copy after a crash, or the full view again).
  */
-export function HtmlHost({ view, mode, marks, locked, edits, onHost, onWant }) {
+export function HtmlHost({ view, mode, marks, hoverId, onHover, locked, edits, onHost, onWant }) {
   if (view.error) {
     const e = view.error;
     return (
@@ -28,7 +28,7 @@ export function HtmlHost({ view, mode, marks, locked, edits, onHost, onWant }) {
           <span>{edits === 1 ? "1 unsent text edit" : `${edits} unsent text edits`}: Send takes them with your comments.</span>
         </div>
       )}
-      <HtmlViewer copy={view.copy} texts={view.texts} stats={view.stats} plain={plain} version={view.version} editable={view.editable} ident={view.ident} mode={mode} marks={marks} readOnly={!!locked} onHost={onHost} onPlain={(why) => onWant(why === "crash")} />
+      <HtmlViewer copy={view.copy} texts={view.texts} stats={view.stats} plain={plain} version={view.version} editable={view.editable} ident={view.ident} mode={mode} marks={marks} hoverId={hoverId} onHover={onHover} readOnly={!!locked} onHost={onHost} onPlain={(why) => onWant(why === "crash")} />
     </div>
   );
 }

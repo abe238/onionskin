@@ -115,6 +115,38 @@ test("during a Send: what it carried is read only, a new comment stays a draft a
   }
 });
 
+test("words added to an existing blank draft during Send survive reload", { timeout: 240_000 }, async () => {
+  const w = makeWorld();
+  const page = await br.page();
+  try {
+    await page.goto(await w.open(w.doc("long.docx")));
+    await waitDoc(page);
+    await comment(page, "Paragraph 015:", "");
+    await page.locator(q("overall-note")).fill("Check the date.");
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/send?*", async (route) => { await gate; await route.continue(); });
+    const request = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/send");
+    await page.locator(q("send")).click();
+    assert.equal((await request).postDataJSON().comments[0].text, "");
+    const box = page.locator(`${q("comment-card")} textarea`);
+    // A save on the way out consumes the pending timer even if the page stays and that request is lost.
+    await page.route("**/api/draft?*", (route) => route.abort("failed"), { times: 1 });
+    await box.fill("Keep the last sentence.");
+    const lost = page.waitForEvent("requestfailed", (r) => new URL(r.url()).pathname === "/api/draft");
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await lost;
+    release();
+    await until(() => storedOf(w)().comments.some((c) => c.status === "draft" && c.text === "Keep the last sentence."), "the draft autosave");
+    await page.reload();
+    await waitDoc(page);
+    assert.equal(await box.inputValue(), "Keep the last sentence.");
+  } finally {
+    await page.close();
+    await w.cleanup();
+  }
+});
+
 // The review of 3c7d3a6 (H2): a note typed after a Send and Take back pressed within the 350 ms autosave delay lost the new words: the
 // answer carried the stored older note and the page put it in the box. Take back now saves what is typed first, then joins.
 test("a note typed just before Take back stays in the box with the withdrawn note, and survives a reload", { timeout: 240_000 }, async () => {

@@ -223,12 +223,17 @@ describe("Quick fixes (DOCX)", () => {
     await stamp(page, "Shorter").click();
     await page.locator(q("suggestion-use")).waitFor({ timeout: 10000 });
     const s0 = await scroll(page);
+    const box = page.locator(q("quick-ask-text"));
+    await box.focus();
+    await page.keyboard.type("Keep the date.");
+    assert.equal(await box.inputValue(), "", "the card cannot accept words that its actions would drop");
     await page.keyboard.press("Escape");
     await page.locator(q("suggestion")).waitFor({ state: "detached", timeout: 3000 });
     assert.ok(await page.locator(q("quick-ask")).isVisible(), "the box is still open: Esc closed only the card");
     await stamp(page, "Shorter").waitFor({ timeout: 3000 });
     assert.deepEqual(await state(page), st0);
     assert.equal(sha(file), hash);
+    assert.equal(await box.isEditable(), true, "closing the card unlocks the box");
     near(s0, await scroll(page), "after Esc");
     await stamp(page, "Shorter").click();
     await page.locator(q("suggestion-use")).waitFor({ timeout: 10000 });

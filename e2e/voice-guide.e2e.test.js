@@ -266,6 +266,51 @@ describe("the request", () => {
       await w.cleanup();
     }
   });
+
+  test("W5: Build my voice guide disables the paste box, file controls and tick boxes while Ask the agent is in flight", async () => {
+    const { w, page } = await open({
+      seeded: {
+        guide: "## In short\nShort and plain.",
+        draft: draftText(),
+        examples: [{ agent: "A long sentence from the agent.", mine: "Short." }],
+      },
+    });
+    try {
+      const txt = path.join(w.root, "sample.txt");
+      fs.writeFileSync(txt, "Short lines. Plain words.");
+      await ask(page, { paste: "I keep it short.", files: [txt], send: false });
+      await T(page, "voice-build-file-0").waitFor({ timeout: 5000 });
+      let release;
+      const gate = new Promise((r) => (release = r));
+      let held = false;
+      await page.route("**/api/voice/build*", async (route) => {
+        if (route.request().method() !== "POST" || held) return route.continue();
+        held = true;
+        await gate;
+        return route.continue();
+      });
+      await T(page, "voice-build-ask").click();
+      await until(() => held, "POST /api/voice/build held", 5000);
+      assert.equal(await T(page, "voice-build-text").isDisabled(), true, "paste box is disabled while asking");
+      assert.equal(await T(page, "voice-build-choose").isDisabled(), true, "Choose files button is disabled while asking");
+      assert.equal(await T(page, "voice-build-remove-0").isDisabled(), true, "file Remove button is disabled while asking");
+      assert.equal(await T(page, "voice-build-open-file").isDisabled(), true, "open-file tick box is disabled while asking");
+      assert.equal(await T(page, "voice-build-edits").isDisabled(), true, "edits tick box is disabled while asking");
+      assert.equal(await T(page, "voice-build-comments").isDisabled(), true, "comments tick box is disabled while asking");
+      assert.equal(await T(page, "voice-build-improve").isDisabled(), true, "improve tick box is disabled while asking");
+      await T(page, "voice-build-cancel").click();
+      assert.equal(await T(page, "voice-guide-open").isEnabled(), true);
+      assert.equal(await T(page, "voice-review-draft").isEnabled(), true);
+      await T(page, "voice-build-open").click();
+      await T(page, "voice-build-text").fill("Keep my new sample.");
+      release();
+      await sentOk(page);
+      assert.equal(await T(page, "voice-build-text").inputValue(), "Keep my new sample.");
+      assert.equal(await T(page, "voice-guide-open").isEnabled(), true);
+    } finally {
+      await w.cleanup();
+    }
+  });
 });
 
 describe("the editor", () => {
@@ -296,7 +341,10 @@ describe("the editor", () => {
 
       // type into one section: it is saved exactly as typed
       const typed = "Saved tone.\nA new second line, typed by me.\n  Indented, with   spaces.";
+      const canLeave = () => page.evaluate(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true })));
+      assert.equal(await canLeave(), true);
       await T(page, "vg-text-tone").fill(typed);
+      assert.equal(await canLeave(), false, "an edited section guards the page");
       await T(page, "vg-tick-tone").check();
       await T(page, "vg-text-humor").scrollIntoViewIfNeeded();
       await until(async () => !(await T(page, "vg-tick-humor").isDisabled()), "humor readable");
@@ -305,6 +353,7 @@ describe("the editor", () => {
       assert.equal(await T(page, "vg-total").innerText().then((t) => /^\d+ of 7,000 characters$/.test(t)), true);
       await T(page, "vg-save").click();
       await T(page, "voice-guide-editor").waitFor({ state: "detached" });
+      assert.equal(await canLeave(), true, "saving releases the guard");
       const stored = readGuideFile(w).text;
       assert.ok(stored.includes(`## Sentences and rhythm\nSaved rhythm.`));
       assert.ok(stored.includes(`## Tone by situation\n${typed}`), stored);
@@ -576,6 +625,61 @@ describe("the editor", () => {
       await w.cleanup();
     }
   });
+
+  test("V2: section text boxes and tick boxes are disabled while Save guide is in flight", async () => {
+    const saved = SECTIONS.map((s) => `## ${s.title}\nSaved ${s.id}.`).join("\n\n");
+    const { w, page } = await open({ seeded: { guide: saved, draft: draftText(), on: true } });
+    try {
+      await openPanel(page);
+      await T(page, "voice-guide-open").click();
+      await T(page, "voice-guide-editor").waitFor();
+      await T(page, "vg-fold-rhythm").click();
+      const box = T(page, "vg-text-rhythm");
+      await box.fill("Earlier text typed before Save.");
+      let release;
+      const gate = new Promise((r) => (release = r));
+      let held = false;
+      await page.route("**/api/voice/guide*", async (route) => {
+        if (route.request().method() !== "POST" || held) return route.continue();
+        held = true;
+        await gate;
+        return route.continue();
+      });
+      await T(page, "vg-save").click();
+      await until(() => held, "POST /api/voice/guide held", 5000);
+      assert.equal(await box.isDisabled(), true, "section text box is disabled while saving");
+      assert.equal(await T(page, "vg-tick-rhythm").isDisabled(), true, "section tick box is disabled while saving");
+      assert.equal(await T(page, "vg-send").isDisabled(), true, "send tick box is disabled while saving");
+      assert.equal(await T(page, "vg-send-full").isDisabled(), true, "full guide radio is disabled while saving");
+      assert.equal(await T(page, "vg-send-short").isDisabled(), true, "short form radio is disabled while saving");
+      assert.equal(await T(page, "vg-use-all").isDisabled(), true, "Use all sections button is disabled while saving");
+      await T(page, "vg-cancel").click();
+      await T(page, "vg-close-anyway").click();
+      assert.equal(await T(page, "voice-guide-open").isDisabled(), true);
+      assert.equal(await T(page, "voice-review-draft").isDisabled(), true);
+      await T(page, "style-done").click();
+      assert.equal(await T(page, "voice-review-draft-line").isDisabled(), true);
+      await openPanel(page);
+      assert.equal(await T(page, "voice-guide-open").isDisabled(), true);
+      release();
+      await T(page, "voice-guide-open").click();
+      assert.equal(await box.inputValue(), "Earlier text typed before Save.");
+      await T(page, "vg-fold-tone").click();
+      await T(page, "vg-text-tone").fill("Keep this later edit.");
+      await page.route("**/api/voice/guide*", (route) => route.abort("failed"), { times: 1 });
+      await T(page, "vg-save").click();
+      await T(page, "vg-error").waitFor();
+      assert.equal(await T(page, "voice-guide-open").isEnabled(), true);
+      assert.equal(await T(page, "voice-review-draft").isEnabled(), true);
+      await T(page, "vg-save").click();
+      await T(page, "voice-guide-editor").waitFor({ state: "detached" });
+      const stored = readGuideFile(w).text;
+      assert.ok(stored.includes("Earlier text typed before Save."));
+      assert.ok(stored.includes("Keep this later edit."));
+    } finally {
+      await w.cleanup();
+    }
+  });
 });
 
 describe("the page around it", () => {
@@ -624,7 +728,19 @@ describe("the page around it", () => {
       await T(page, "voice-build-file-input").setInputFiles([docx, txt]);
       await T(page, "voice-build-file-1").waitFor({ timeout: 10000 });
       assert.equal(await T(page, "voice-build-files").locator("li").count(), 2);
+      await T(page, "voice-build-remove-1").click();
+      await page.evaluate(() => {
+        const read = FileReader.prototype.readAsDataURL;
+        FileReader.prototype.readAsDataURL = function (blob) {
+          FileReader.prototype.readAsDataURL = read;
+          window.finishSample = () => read.call(this, blob);
+        };
+      });
+      await T(page, "voice-build-file-input").setInputFiles(txt);
+      assert.equal(await T(page, "voice-build-ask").isDisabled(), true, "Ask waits for the chosen file");
       await T(page, "voice-build-remove-0").click();
+      await page.evaluate(() => window.finishSample());
+      await T(page, "voice-build-file-0").filter({ hasText: "note.txt" }).waitFor();
       assert.equal(await T(page, "voice-build-files").locator("li").count(), 1);
       assert.equal(await T(page, "voice-build").getByText("Word, PowerPoint or text files. Up to 5 in all.").count(), 1);
       assert.equal(await T(page, "voice-build-privacy").innerText(), "Your agent's AI service reads this writing, as it reads any request.");

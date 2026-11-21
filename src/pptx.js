@@ -1,6 +1,7 @@
 import { attrOf, local, readRels } from "./xlsx.js";
 import { readBudget, tooMany, walkXml } from "./xml.js";
-import { affords, hitsOf, normPaid, normText, searchCost, similarity, spend, textHash, weigh, weightOf } from "./text.js";
+import { OCCURRENCE, affords, hitsOf, normPaid, normText, searchCost, similarity, spend, textHash, weigh, weightOf } from "./text.js";
+import { nfc } from "./nfc.js";
 import { openZip } from "./zip.js";
 import { summarizeRuns } from "./fmt.js";
 import { untrusted } from "./sanitize.js";
@@ -66,8 +67,13 @@ function readSlide(zip, part, count = { shapes: 0, budget: deckBudget() }) {
   let inT = false;
   const seen = new Map();
   const at = []; // open element names, to tell a text color (rPr > solidFill > srgbClr) from any other color in the slide
+  let mcFallbackDepth = 0;
   walkXml(xml, {
     onOpen(n, a) {
+      if (n === "mc:Fallback" || mcFallbackDepth > 0) {
+        if (n === "mc:Fallback") mcFallbackDepth++;
+        return;
+      }
       const l = local(n);
       at.push(l);
       if (SHAPE_TAGS.has(l) && ++count.shapes > MAX_SHAPES) throw tooMany(count.budget, MAX_SHAPES, "shapes");
@@ -79,7 +85,7 @@ function readSlide(zip, part, count = { shapes: 0, budget: deckBudget() }) {
       else if (top.run && (l === "srgbClr" || l === "schemeClr") && at[at.length - 2] === "solidFill" && at[at.length - 3] === "rPr") top.run.p.color = String(a.val || "").toUpperCase();
       else if (top.run && l === "latin" && at[at.length - 2] === "rPr") top.run.p.font = a.typeface || "";
       if (l === "cNvPr" && top && top.id === null) {
-        top.id = a.id != null ? Number(a.id) : null;
+        top.id = /^\d+$/.test(a.id ?? "") ? Number(a.id) : null;
         top.name = a.name ?? "";
       } else if (l === "ph" && top) {
         top.ph = a.type || "object"; // no type = a content placeholder
@@ -91,9 +97,14 @@ function readSlide(zip, part, count = { shapes: 0, budget: deckBudget() }) {
       else if (l === "tc" && top) top.cellStart = true;
     },
     onText(t) {
+      if (mcFallbackDepth > 0) return;
       if (inT && para !== null) para += t;
     },
     onClose(n) {
+      if (mcFallbackDepth > 0) {
+        if (n === "mc:Fallback") mcFallbackDepth--;
+        return;
+      }
       const l = local(n);
       at.pop();
       if (l === "r" && stack.length) {
@@ -163,18 +174,220 @@ export function pptxDurable(deck, loc, ctx = {}) {
   // the anchor is the shape, without the text range
   const q = normPaid(ctx.quote) ?? "";
   const raw = q ? ctx.quote : "";
-  const at = q && spend(textCost(sh, raw)) ? sh.text.indexOf(raw) : -1;
+  const prefix = (normPaid(ctx.prefix) ?? "").slice(-CTX);
+  const suffix = (normPaid(ctx.suffix) ?? "").slice(0, CTX);
+  const hintStart = Number.isInteger(loc.start) ? loc.start : null;
+  const ctxOpts = { prefix, suffix, nth: ctx.nth ?? ctx.occ ?? null, hintStart };
+  let at = -1;
+  let len = raw.length;
+  let k = null;
+  if (q && !ctx.shapeWide) {
+    const preferNorm = raw !== q || (q.includes(" ") && HAS_NON_PLAIN_WS.test(sh.text));
+    if (preferNorm) {
+      const m = findNormMatch(sh, q, ctxOpts);
+      if (m) [at, len, k] = [m.start, m.end - m.start, m.k];
+    } else {
+      const exact = spend(textCost(sh, raw)) ? findExactMatch(sh, raw, ctxOpts) : null;
+      if (exact) [at, len, k] = [exact.start, exact.end - exact.start, exact.k];
+      else if (exact === undefined) {
+        const m = findNormMatch(sh, q, ctxOpts);
+        if (m) [at, len, k] = [m.start, m.end - m.start, m.k];
+      }
+    }
+  }
   return {
     ...base,
     shapeId: sh.id, shapeName: sh.name, ordinal: sh.ordinal, kind: sh.kind,
     text: spend(normCost(sh)) ? normShape(sh).slice(0, KEEP) : "", textHash: sh.hash,
     // a text range inside the shape: the quote and what surrounds it
     quote: ctx.shapeWide ? "" : q,
-    prefix: (normPaid(ctx.prefix) ?? "").slice(-CTX),
-    suffix: (normPaid(ctx.suffix) ?? "").slice(0, CTX),
+    prefix,
+    suffix,
     start: !ctx.shapeWide && at >= 0 ? at : null,
-    end: !ctx.shapeWide && at >= 0 ? at + raw.length : null,
+    end: !ctx.shapeWide && at >= 0 ? at + len : null,
+    nth: !ctx.shapeWide && at >= 0 ? k : null,
   };
+}
+
+const MARK = /\p{M}/u;
+const WS_CHAR = /\s/;
+export const HAS_NON_PLAIN_WS = /[\t\r\n\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]|  /;
+/**
+ * May a window start (or end) right before text[i]? Yes below U+0300 (no such character joins the one before it under NFC); never inside a
+ * surrogate pair or before a combining mark; otherwise when the character normalizes the same after the three before it as on its own
+ * (the longest chain of starters that compose, Hangul L V T and its like, is three: test/parse-limits.test.js checks every code point).
+ * Exported for src/docx.js and its test.
+ */
+export function cuttable(text, i) {
+  if (i <= 0 || i >= text.length) return true;
+  const c = text.charCodeAt(i);
+  if (c < 0x300) return true;
+  if (c >= 0xdc00 && c <= 0xdfff) return false;
+  const ch = String.fromCodePoint(text.codePointAt(i));
+  if (MARK.test(ch)) return false;
+  const before = text.slice(Math.max(0, i - 3), i);
+  return (before + ch).normalize("NFC") === before.normalize("NFC") + ch.normalize("NFC");
+}
+
+function buildNormMap(text) {
+  const parts = [];
+  const starts = [];
+  const ends = [];
+  let seenNonWs = false;
+  for (let i = 0; i < text.length; ) {
+    if (WS_CHAR.test(text[i])) {
+      let j = i + 1;
+      while (j < text.length && WS_CHAR.test(text[j])) j++;
+      if (seenNonWs && j < text.length) {
+        parts.push(" ");
+        starts.push(i);
+        ends.push(j);
+      }
+      i = j;
+      continue;
+    }
+    let j = i + (text.codePointAt(i) > 0xffff ? 2 : 1);
+    while (j < text.length && !WS_CHAR.test(text[j]) && !cuttable(text, j)) {
+      j += text.codePointAt(j) > 0xffff ? 2 : 1;
+    }
+    const chunk = nfc(text.slice(i, j));
+    if (chunk) {
+      parts.push(chunk);
+      for (let k = 0; k < chunk.length; k++) {
+        starts.push(i);
+        ends.push(j);
+      }
+      seenNonWs = true;
+    }
+    i = j;
+  }
+  return { norm: parts.join(""), starts: Int32Array.from(starts), ends: Int32Array.from(ends) };
+}
+
+const NORM_MAP = new WeakMap();
+const NORM_HITS = new WeakMap();
+const NORM_OCC = new WeakMap();
+const RAW_OCC = new WeakMap();
+const OCC_KEEP = 16;
+export function normMapFor(unit) {
+  let map = NORM_MAP.get(unit);
+  if (map === undefined) {
+    if (!spend(weigh(unit.text))) return null;
+    NORM_MAP.set(unit, (map = buildNormMap(unit.text)));
+  }
+  return map;
+}
+export function normOccurrences(unit, q, max = Infinity) {
+  const nq = normText(q);
+  if (!nq) return [];
+  if (max === Infinity) {
+    const cached = NORM_OCC.get(unit)?.get(nq);
+    if (cached) return cached;
+  }
+  const map = normMapFor(unit);
+  if (!map) return null;
+  if (!spend(searchCost(map.norm.length, nq, hitsOf(NORM_HITS, unit, map.norm, nq)))) return null;
+  const out = [];
+  for (let i = map.norm.indexOf(nq); i >= 0 && out.length < max; i = map.norm.indexOf(nq, i + nq.length)) {
+    if (!spend(OCCURRENCE)) return null;
+    out.push({ start: map.starts[i], end: map.ends[i + nq.length - 1], normStart: i, normEnd: i + nq.length });
+  }
+  if (max === Infinity) {
+    let m = NORM_OCC.get(unit);
+    if (!m) NORM_OCC.set(unit, (m = new Map()));
+    if (m.size >= OCC_KEEP) m.delete(m.keys().next().value);
+    m.set(nq, out);
+  }
+  return out;
+}
+
+function exactOccurrencesIn(sh, raw, first, second, ctxPerOcc = 0) {
+  let m = RAW_OCC.get(sh);
+  const cached = m?.get(raw);
+  if (cached) return cached;
+  if (!spend(2 * OCCURRENCE)) return null;
+  const occ = [first, second];
+  for (let i = sh.text.indexOf(raw, second + raw.length); i >= 0; i = sh.text.indexOf(raw, i + raw.length)) {
+    if (ctxPerOcc && !affords((occ.length + 1) * ctxPerOcc)) return null;
+    if (!spend(OCCURRENCE)) return null;
+    occ.push(i);
+  }
+  if (!m) RAW_OCC.set(sh, (m = new Map()));
+  if (m.size >= OCC_KEEP) m.delete(m.keys().next().value);
+  m.set(raw, occ);
+  return occ;
+}
+
+function findExactMatch(sh, raw, { prefix = "", suffix = "", nth = null, hintStart = null } = {}) {
+  const first = sh.text.indexOf(raw);
+  if (first < 0) return undefined;
+  const second = sh.text.indexOf(raw, first + raw.length);
+  if (second < 0) return { start: first, end: first + raw.length, k: 0 };
+  if (Number.isInteger(hintStart) && hintStart >= 0 && sh.text.slice(hintStart, hintStart + raw.length) === raw) {
+    let k = 0;
+    let found = false;
+    for (let i = first; i >= 0 && i <= hintStart; i = sh.text.indexOf(raw, i + raw.length)) {
+      if (!spend(OCCURRENCE)) {
+        k = null;
+        break;
+      }
+      if (i === hintStart) {
+        found = true;
+        break;
+      }
+      k++;
+    }
+    return { start: hintStart, end: hintStart + raw.length, k: found ? k : null };
+  }
+  const pre = normText(prefix).slice(-CTX);
+  const suf = normText(suffix).slice(0, CTX);
+  const ctxPerOcc = pre || suf ? 2 * (pre.length + suf.length + 16) : 0;
+  const occ = exactOccurrencesIn(sh, raw, first, second, ctxPerOcc);
+  if (!occ) return null;
+  if (ctxPerOcc && !spend(occ.length * ctxPerOcc)) return null;
+  const guarded = [];
+  for (let i = 0; i < occ.length; i++) {
+    const at = occ[i];
+    const okPre = !pre || normText(sh.text.slice(Math.max(0, at - 4 * pre.length - 16), at)).endsWith(pre);
+    const okSuf = !suf || normText(sh.text.slice(at + raw.length, at + raw.length + 4 * suf.length + 16)).startsWith(suf);
+    if (okPre && okSuf) guarded.push(i);
+  }
+  const validNth = Number.isInteger(nth) && nth >= 0 && nth < occ.length ? nth : null;
+  let idx;
+  if (guarded.length === 1) idx = guarded[0];
+  else if (validNth !== null && guarded.includes(validNth)) idx = validNth;
+  else if (Number.isInteger(hintStart) && guarded.length) {
+    idx = guarded.reduce((best, i) => (Math.abs(occ[i] - hintStart) < Math.abs(occ[best] - hintStart) ? i : best), guarded[0]);
+  } else if (guarded.length) idx = guarded[0];
+  else idx = validNth !== null ? validNth : 0;
+  return { start: occ[idx], end: occ[idx] + raw.length, k: idx };
+}
+
+function findNormMatch(sh, q, { prefix = "", suffix = "", nth = null, hintStart = null } = {}) {
+  const pre = normText(prefix).slice(-CTX);
+  const suf = normText(suffix).slice(0, CTX);
+  const needAll = !!(pre || suf || Number.isInteger(nth) || Number.isInteger(hintStart));
+  const occ = normOccurrences(sh, q, needAll ? Infinity : 1);
+  if (!occ?.length) return null;
+  if (occ.length === 1) return { ...occ[0], k: 0 };
+  const validNth = Number.isInteger(nth) && nth >= 0 && nth < occ.length ? nth : null;
+  if ((pre || suf) && !spend(occ.length * 2 * (pre.length + suf.length + 16))) return null;
+  const map = normMapFor(sh);
+  const guarded = [];
+  for (let i = 0; i < occ.length; i++) {
+    const o = occ[i];
+    const okPre = !pre || !map || map.norm.slice(Math.max(0, o.normStart - pre.length - 1), o.normStart).trimEnd().endsWith(pre);
+    const okSuf = !suf || !map || map.norm.slice(o.normEnd, o.normEnd + suf.length + 1).trimStart().startsWith(suf);
+    if (okPre && okSuf) guarded.push(i);
+  }
+  let idx;
+  if (guarded.length === 1) idx = guarded[0];
+  else if (validNth !== null && guarded.includes(validNth)) idx = validNth;
+  else if (Number.isInteger(hintStart) && guarded.length) {
+    idx = guarded.reduce((best, i) => (Math.abs(occ[i].start - hintStart) < Math.abs(occ[best].start - hintStart) ? i : best), guarded[0]);
+  } else if (guarded.length) idx = guarded[0];
+  else idx = validNth !== null ? validNth : 0;
+  return { ...occ[idx], k: idx };
 }
 
 // A shape's normalized text, kept per shape of a reading: every anchor on a shape normalized all of it again (50 comments on a shape of
@@ -249,8 +462,31 @@ export function resolvePptx(deck, d) {
   const stext = spend(normCost(sh)) ? normShape(sh) : "";
   const q = d.quote || "";
   const searched = !!q && spend(textCost(sh, q)); // a shape-wide comment has no quote, and no search to pay for
-  const at = searched ? sh.text.indexOf(q) : -1;
-  return { ...out, method: method === "id" ? how : `${method}+${how}`, shapeId: sh.id, shapeName: sh.name, start: at >= 0 ? at : null, end: at >= 0 ? at + q.length : null, changed: sh.hash !== d.textHash, text: stext.slice(0, 200), quoteLost: searched && at < 0 };
+  const ctxOpts = { prefix: d.prefix ?? d.before ?? "", suffix: d.suffix ?? d.after ?? "", nth: d.nth ?? d.occ ?? null };
+  let at = -1;
+  let len = q.length;
+  let k = null;
+  if (searched) {
+    const preferNorm = q.includes(" ") && HAS_NON_PLAIN_WS.test(sh.text);
+    if (preferNorm) {
+      if (stext) {
+        const m = findNormMatch(sh, q, ctxOpts);
+        if (m) [at, len, k] = [m.start, m.end - m.start, m.k];
+      }
+    } else {
+      const exact = findExactMatch(sh, q, ctxOpts);
+      if (exact && !(Number.isInteger(ctxOpts.nth) && ctxOpts.nth > 0 && exact.k !== ctxOpts.nth)) {
+        [at, len, k] = [exact.start, exact.end - exact.start, exact.k];
+      } else if (exact !== null && stext) {
+        const m = findNormMatch(sh, q, ctxOpts);
+        if (m) [at, len, k] = [m.start, m.end - m.start, m.k];
+        else if (exact) [at, len, k] = [exact.start, exact.end - exact.start, exact.k];
+      } else if (exact) {
+        [at, len, k] = [exact.start, exact.end - exact.start, exact.k];
+      }
+    }
+  }
+  return { ...out, method: method === "id" ? how : `${method}+${how}`, shapeId: sh.id, shapeName: sh.name, start: at >= 0 ? at : null, end: at >= 0 ? at + len : null, nth: at >= 0 ? k : null, changed: sh.hash !== d.textHash, text: stext.slice(0, 200), quoteLost: searched && at < 0 };
 }
 
 /** Locator fields for the batch: the names the `apply` targets use. */

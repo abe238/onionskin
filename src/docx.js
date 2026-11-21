@@ -4,6 +4,9 @@ import { readBudget, tooMany, walkXml } from "./xml.js";
 import { OCCURRENCE, affords, bigramCodes, diceOf, hitsOf, normPaid, normText, searchCost, similarity, spend, textHash, weigh, weightOf } from "./text.js";
 import { openZip } from "./zip.js";
 import { summarizeRuns } from "./fmt.js";
+import { HAS_NON_PLAIN_WS, cuttable, normOccurrences } from "./pptx.js";
+
+export { cuttable };
 
 // One classifier for `protected`: the engine's own (default deny), bundled for Node. The batch, `apply` and the editor agree because they ask the same code.
 const { protectReasons } = await import(pathToFileURL(engineNodePath()).href);
@@ -74,7 +77,9 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
   let tableCount = 0; // 1-based order among top-level tables (the label users read), unlike body_path[0] which counts every body item
   let cellK = 0;
   let cur = null;
-  let delDepth = 0;
+  const revStack = [];
+  let mcFallbackDepth = 0;
+  const visible = () => !revStack.includes("del") && (revStack.length === 0 || revStack[revStack.length - 1] !== "moveFrom");
   let inT = false;
   let inInstr = false;
   let inBody = false;
@@ -87,9 +92,14 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
   walkXml(xml, {
     onOpen(name, attrs) {
       stack.push(name);
+      if (name === "mc:Fallback") {
+        mcFallbackDepth++;
+        return;
+      }
+      if (mcFallbackDepth > 0) return;
       if (name === "w:body") inBody = true;
       if (!inBody) return;
-      if (name === "w:tbl") {
+      if (name === "w:tbl" && pDepth === 0) {
         tblDepth++;
         if (tblDepth === 1) {
           bodyIndex++;
@@ -98,16 +108,15 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
           info.row = -1;
           info.col = -1;
         }
-      } else if (name === "w:tr" && tblDepth === 1) {
+      } else if (name === "w:tr" && tblDepth === 1 && pDepth === 0) {
         info.row++;
         info.col = -1;
-      } else if (name === "w:tc" && tblDepth === 1) {
+      } else if (name === "w:tc" && tblDepth === 1 && pDepth === 0) {
         info.col++;
         cellK = 0;
       } else if (name === "w:p") {
         pDepth++;
-        const nested = stack.slice(0, -1).includes("w:p"); // a text box paragraph inside a paragraph
-        if (nested) return;
+        if (pDepth > 1) return;
         let path = null;
         let tableNo = null;
         if (tblDepth === 0) {
@@ -121,15 +130,15 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
         cur = { ordinal: paragraphs.length, path, tableNo, paraId: /^[0-9A-Fa-f]{8}$/.test(attrs["w14:paraId"] || "") ? attrs["w14:paraId"].toUpperCase() : null, text: "", instr: "", protected: false, style: null, align: "", runs: [] };
         if (detail) (Object.assign(cur, { spans: [], list: null, ppr: [], sect: false, loose: false }), (marks = new Set()), (pprTop = null));
         paragraphs.push(cur);
-      } else if (cur) {
+      } else if (cur && pDepth === 1) {
         if (detail) {
           const n = stack.length;
-          if (pDepth === 1 && stack[n - 2] === "w:pPr" && stack[n - 3] === "w:p") {
+          if (stack[n - 2] === "w:pPr" && stack[n - 3] === "w:p") {
             pprTop = name;
             if (name === "w:sectPr") cur.sect = true;
           }
           if (pprTop && !PPR_OWN.has(pprTop)) cur.ppr.push(written(name, attrs));
-          else if (pprTop === "w:numPr" && pDepth === 1 && stack[n - 2] === "w:numPr" && (name === "w:numId" || name === "w:ilvl")) (cur.list ||= { numId: "", ilvl: 0 })[name === "w:numId" ? "numId" : "ilvl"] = name === "w:numId" ? attrs["w:val"] || "" : Number(attrs["w:val"]) || 0;
+          else if (pprTop === "w:numPr" && stack[n - 2] === "w:numPr" && (name === "w:numId" || name === "w:ilvl")) (cur.list ||= { numId: "", ilvl: 0 })[name === "w:numId" ? "numId" : "ilvl"] = name === "w:numId" ? attrs["w:val"] || "" : Number(attrs["w:val"]) || 0;
           const mark = RANGE.exec(name);
           if (mark && "w:id" in attrs) {
             const key = `${mark[1]} ${attrs["w:id"]}`;
@@ -147,35 +156,33 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
         else if (name === "w:r" && !run) run = { text: false, p: {}, at: cur.text.length, depth: stack.length, set: {}, rest: [] };
         else if (name === "w:rPr") rprDepth++;
         else if (run && rprDepth === 1 && stack.includes("w:rPr")) runProp(run.p, name, attrs);
-        if (name === "w:del") delDepth++;
-        else if (name === "w:t" && delDepth === 0) (inT = true, run && (run.text = true));
+        if (name === "w:del") revStack.push("del");
+        else if (name === "w:moveFrom") revStack.push("moveFrom");
+        else if (name === "w:ins") revStack.push("ins");
+        else if (name === "w:t" && visible()) (inT = true, run && (run.text = true));
         else if (name === "w:instrText") inInstr = true;
-        else if (name === "w:tab" && delDepth === 0) cur.text += "\t";
+        else if (name === "w:tab" && visible()) cur.text += "\t";
         else if (name === "w:br" || name === "w:cr") {
-          if (delDepth === 0 && attrs["w:type"] !== "page" && attrs["w:type"] !== "column") cur.text += "\n";
+          if (visible() && attrs["w:type"] !== "page" && attrs["w:type"] !== "column") cur.text += "\n";
         } else if (name === "w:drawing" || name === "w:pict") {
-          if (delDepth === 0) cur.text += OBJ;
+          if (visible()) cur.text += OBJ;
         }
       }
     },
     onText(t) {
-      if (cur && inT) cur.text += t;
-      else if (cur && inInstr && cur.instr.length < 200) cur.instr += t;
+      if (mcFallbackDepth > 0) return;
+      if (cur && pDepth === 1 && inT) cur.text += t;
+      else if (cur && pDepth === 1 && inInstr && cur.instr.length < 200) cur.instr += t;
     },
     onClose(name) {
       stack.pop();
-      if (name === "w:t") inT = false;
-      else if (name === "w:instrText") inInstr = false;
-      else if (name === "w:del") delDepth = Math.max(0, delDepth - 1);
-      else if (name === "w:tbl") tblDepth--;
-      else if (name === "w:rPr") rprDepth = Math.max(0, rprDepth - 1);
-      else if (name === "w:r" && run) {
-        if (run.text && cur) cur.runs.push(run.p);
-        if (detail && cur && cur.text.length > run.at) cur.spans.push({ n: cur.text.length - run.at, set: run.set, rest: run.rest.join(" ") });
-        run = null;
-      } else if (name === "w:p") {
+      if (mcFallbackDepth > 0) {
+        if (name === "mc:Fallback") mcFallbackDepth--;
+        return;
+      }
+      if (name === "w:p") {
         pDepth--;
-        if (stack.includes("w:p")) return;
+        if (pDepth > 0) return;
         if (cur) (cur.fmt = summarizeRuns(cur.runs), delete cur.runs);
         if (cur && detail) {
           if (cur.spans.reduce((n, x) => n + x.n, 0) !== cur.text.length) cur.spans = null;
@@ -183,8 +190,21 @@ export function parseDocxParagraphs(xml, { detail = false, budget = docxBudget()
           cur.loose = marks.size > 0;
         }
         cur = null;
+        revStack.length = 0;
+      } else if (name === "w:tbl" && pDepth === 0) {
+        tblDepth--;
+      } else if (cur && pDepth === 1) {
+        if (name === "w:t") inT = false;
+        else if (name === "w:instrText") inInstr = false;
+        else if (name === "w:del" || name === "w:moveFrom" || name === "w:ins") revStack.pop();
+        else if (name === "w:rPr") rprDepth = Math.max(0, rprDepth - 1);
+        else if (name === "w:r" && run) {
+          if (run.text && cur) cur.runs.push(run.p);
+          if (detail && cur && cur.text.length > run.at) cur.spans.push({ n: cur.text.length - run.at, set: run.set, rest: run.rest.join(" ") });
+          run = null;
+        }
+        if (detail && name === pprTop && stack[stack.length - 1] === "w:pPr") pprTop = null;
       }
-      if (detail && name === pprTop && stack[stack.length - 1] === "w:pPr") pprTop = null;
     },
   }, budget);
   for (const p of paragraphs) p.hash = textHash(p.text);
@@ -587,23 +607,6 @@ function normHead(text, n) {
 // Once the window holds at least as many normalized characters as the prefix, it answers for the whole text; else it doubles.
 // Every character read (the walk to a cut and the window normalized) is spent from the budget of the request (src/text.js): null when it
 // runs out. An outside review: CJK text has no character below U+0300, every window grew to the whole paragraph, 3.65 s for one anchor.
-const MARK = /\p{M}/u;
-/**
- * May a window start (or end) right before text[i]? Yes below U+0300 (no such character joins the one before it under NFC); never inside a
- * surrogate pair or before a combining mark; otherwise when the character normalizes the same after the three before it as on its own
- * (the longest chain of starters that compose, Hangul L V T and its like, is three: test/parse-limits.test.js checks every code point).
- * Exported with the two window readers for that test.
- */
-export function cuttable(text, i) {
-  if (i <= 0 || i >= text.length) return true;
-  const c = text.charCodeAt(i);
-  if (c < 0x300) return true;
-  if (c >= 0xdc00 && c <= 0xdfff) return false;
-  const ch = String.fromCodePoint(text.codePointAt(i));
-  if (MARK.test(ch)) return false;
-  const before = text.slice(Math.max(0, i - 3), i);
-  return (before + ch).normalize("NFC") === before.normalize("NFC") + ch.normalize("NFC");
-}
 /** The nearest place at or before (dir -1) or after (dir 1) i where a window may be cut, each character walked spent; null past the budget. */
 function cutNear(text, i, dir) {
   let n = 0;
@@ -635,6 +638,15 @@ export function startsWithNorm(text, from, suffix) {
  * `nth` is the occurrence index remembered at capture. Returns {at: the offset, k: which occurrence it is}, or {at: -1, k: null} when the
  * text does not occur or the budget ran out.
  */
+/** does the text around the occurrence at `at` (of `qLen` UTF-16 units) read as prefix and suffix (normalized, as an anchor keeps them)? null: the budget ran out */
+function fitsAt(text, qLen, at, { prefix = "", suffix = "" }) {
+  prefix = String(prefix || "").slice(-CTX); // what an anchor keeps (durableFor); a longer one from elsewhere is read as its last CTX
+  suffix = String(suffix || "").slice(0, CTX);
+  const pre = !prefix || endsWithNorm(text, at, prefix);
+  if (pre === null) return null;
+  const suf = pre && (!suffix || startsWithNorm(text, at + qLen, suffix));
+  return suf === null ? null : !!(pre && suf);
+}
 function pickOccurrence(p, q, opts = {}) {
   const text = p.text;
   // the remembered occurrence first, listing only the occurrences up to it: when its surroundings still fit, it is the answer every rule
@@ -649,29 +661,45 @@ function pickOccurrence(p, q, opts = {}) {
     const head = occurrences(p, q, remembered + 1);
     if (head === null) return { at: -1, k: null };
     if (head.length === remembered + 1) {
-      const ok = fitsAt(text, q, head[remembered], opts);
+      const ok = fitsAt(text, q.length, head[remembered], opts);
       if (ok === null) return { at: -1, k: null };
       if (ok) return { at: head[remembered], k: remembered };
     }
   }
   const occ = occurrencesIn(p, q);
-  const at = occ?.length ? pickFrom(text, q, occ, { ...opts, nth: remembered }) : -1;
+  const at = occ?.length ? pickFrom(text, q.length, occ, { ...opts, nth: remembered }) : -1;
   return at < 0 ? { at: -1, k: null } : { at, k: occ.indexOf(at) };
 }
-/** does the text around the occurrence at `at` read as prefix and suffix (normalized, as an anchor keeps them)? null: the budget ran out */
-function fitsAt(text, q, at, { prefix = "", suffix = "" }) {
-  prefix = String(prefix || "").slice(-CTX); // what an anchor keeps (durableFor); a longer one from elsewhere is read as its last CTX
-  suffix = String(suffix || "").slice(0, CTX);
-  const pre = !prefix || endsWithNorm(text, at, prefix);
-  if (pre === null) return null;
-  const suf = pre && (!suffix || startsWithNorm(text, at + q.length, suffix));
-  return suf === null ? null : !!(pre && suf);
+function pickNormOccurrence(p, q, opts = {}) {
+  const occ = normOccurrences(p, q);
+  if (!occ?.length) return { at: -1, len: 0, k: null };
+  let { nth = null } = opts;
+  if (!(Number.isInteger(nth) && nth >= 0 && nth < occ.length)) nth = null;
+  const prefix = String(opts.prefix || "").slice(-CTX);
+  const suffix = String(opts.suffix || "").slice(0, CTX);
+  if ((prefix || suffix) && occ.length > 1 && !spend(occ.length * 2 * (prefix.length + suffix.length + 16))) return { at: -1, len: 0, k: null };
+  const guarded = [];
+  for (let i = 0; i < occ.length; i++) {
+    const o = occ[i];
+    const ok = fitsAt(p.text, o.end - o.start, o.start, { prefix, suffix });
+    if (ok === null) return { at: -1, len: 0, k: null };
+    if (ok) guarded.push(i);
+  }
+  let idx;
+  if (guarded.length === 1) idx = guarded[0];
+  else if (nth != null && guarded.includes(nth)) idx = nth;
+  else if (Number.isInteger(opts.hintStart) && guarded.length) {
+    idx = guarded.reduce((best, i) => (Math.abs(occ[i].start - opts.hintStart) < Math.abs(occ[best].start - opts.hintStart) ? i : best), guarded[0]);
+  } else if (guarded.length) idx = guarded[0];
+  else idx = nth != null ? nth : 0;
+  const hit = occ[idx];
+  return { at: hit.start, len: hit.end - hit.start, k: idx };
 }
-function pickFrom(text, q, occ, { prefix = "", suffix = "", nth = null }) {
+function pickFrom(text, qLen, occ, { prefix = "", suffix = "", nth = null, hintStart = null }) {
   if (!(Number.isInteger(nth) && nth >= 0 && nth < occ.length)) nth = null;
   prefix = String(prefix || "").slice(-CTX);
   suffix = String(suffix || "").slice(0, CTX);
-  const fits = (at) => fitsAt(text, q, at, { prefix, suffix });
+  const fits = (at) => fitsAt(text, qLen, at, { prefix, suffix });
   // each occurrence reads about CTX characters on each side, out of the budget of the request (src/text.js): a paragraph of 100,000
   // "a" read the whole text before every one of them and took 10 seconds in an outside review. Past the budget, no offset.
   if ((prefix || suffix) && occ.length > 1 && !spend(occ.length * 2 * (prefix.length + suffix.length + 16))) return -1;
@@ -683,6 +711,9 @@ function pickFrom(text, q, occ, { prefix = "", suffix = "", nth = null }) {
   }
   if (guarded.length === 1) return guarded[0];
   if (nth != null && nth < occ.length && guarded.includes(occ[nth])) return occ[nth];
+  if (Number.isInteger(hintStart) && guarded.length) {
+    return guarded.reduce((best, at) => (Math.abs(at - hintStart) < Math.abs(best - hintStart) ? at : best), guarded[0]);
+  }
   if (guarded.length) return guarded[0];
   return nth != null && nth < occ.length ? occ[nth] : occ[0];
 }
@@ -697,12 +728,31 @@ function durableFor(paragraphs, p, engineTop, ctx, loc = {}) {
   let nth = null;
   if (q) {
     // the engine's own offsets when they point at the quote; else the occurrence whose surroundings match prefix and suffix
-    const own = Number.isInteger(loc.start) && Number.isInteger(loc.end) && p.text.slice(loc.start, loc.end) === ctx.quote;
-    const k = own ? occurrencesIn(p, ctx.quote)?.indexOf(loc.start) ?? -1 : -1;
-    const picked = own ? { at: loc.start, k: k >= 0 ? k : null } : pickOccurrence(p, ctx.quote, { prefix, suffix });
+    const hintStart = Number.isInteger(loc.start) ? loc.start : null;
+    const preferNorm = (ctx.quote !== q && ctx.quote.trim() !== q) || (q.includes(" ") && HAS_NON_PLAIN_WS.test(p.text));
+    const own = hintStart !== null && Number.isInteger(loc.end) && p.text.slice(loc.start, loc.end) === ctx.quote;
+    let picked;
+    if (own) {
+      let k = -1;
+      if (preferNorm) {
+        const nocc = normOccurrences(p, q);
+        if (nocc) {
+          k = nocc.findIndex((o) => o.start === loc.start && o.end === loc.end);
+          if (k < 0) k = nocc.findIndex((o) => o.start >= loc.start && o.end <= loc.end);
+        }
+      } else {
+        k = occurrencesIn(p, ctx.quote)?.indexOf(loc.start) ?? -1;
+      }
+      picked = { at: loc.start, k: k >= 0 ? k : null, len: ctx.quote.length };
+    } else if (preferNorm) {
+      picked = pickNormOccurrence(p, q, { prefix, suffix, hintStart });
+    } else {
+      picked = { ...pickOccurrence(p, ctx.quote, { prefix, suffix, hintStart }), len: ctx.quote.length };
+      if (picked.at < 0) picked = pickNormOccurrence(p, q, { prefix, suffix, hintStart });
+    }
     if (picked.at >= 0) {
       start = picked.at;
-      end = picked.at + ctx.quote.length;
+      end = picked.at + picked.len;
       nth = picked.k;
     }
   }
@@ -739,10 +789,27 @@ export function resolveDurable(paragraphs, d) {
   const q = d.quote || "";
   let start = null;
   let end = null;
-  const { at, k } = q ? pickOccurrence(p, q, { prefix: d.prefix, suffix: d.suffix, nth: d.nth }) : { at: -1, k: null };
+  const ctxOpts = { prefix: d.prefix ?? d.before ?? "", suffix: d.suffix ?? d.after ?? "", nth: d.nth ?? d.occ ?? null };
+  const preferNorm = !!q && q === normText(q) && q.includes(" ") && HAS_NON_PLAIN_WS.test(p.text);
+  let at = -1;
+  let len = q.length;
+  let k = null;
+  if (q) {
+    if (preferNorm) {
+      const picked = pickNormOccurrence(p, q, ctxOpts);
+      if (picked.at >= 0) ({ at, len, k } = picked);
+      else ({ at, k } = pickOccurrence(p, q, ctxOpts));
+    } else {
+      ({ at, k } = pickOccurrence(p, q, ctxOpts));
+      if (at < 0 || (Number.isInteger(ctxOpts.nth) && ctxOpts.nth > 0 && k !== ctxOpts.nth)) {
+        const picked = pickNormOccurrence(p, q, ctxOpts);
+        if (picked.at >= 0) ({ at, len, k } = picked);
+      }
+    }
+  }
   if (at >= 0) {
     start = at;
-    end = at + q.length;
+    end = at + len;
   }
   return { method: hit.method, score: hit.score, ordinal: p.ordinal, path: p.path, tableNo: p.tableNo ?? null, paraId: p.paraId, textHash: p.hash, protected: !!p.protected, ...(p.protected ? { protectInfo: protectInfo(p) } : {}), dupCount: indexOf(paragraphs).byHash.get(p.hash)?.length ?? 0, nth: at >= 0 ? k : null, prevHash: paragraphs[p.ordinal - 1]?.hash || null, nextHash: paragraphs[p.ordinal + 1]?.hash || null, text: normHead(p.text, PARA_TEXT_KEEP) ?? "", start, end, engineDelta: d.engineDelta || 0 };
 }

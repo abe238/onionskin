@@ -90,6 +90,15 @@ const run = (cmd, args, env) => {
   }
 };
 
+/** Parse the target cli.js path from an installer-written launcher (single- or double-quoted). */
+export function parseLauncherTarget(text) {
+  const sq = text.match(/exec node '((?:[^']|'\\'')+)'/);
+  if (sq) return sq[1].replace(/'\\''/g, "'");
+  const dq = text.match(/exec node "([^"]+)"/);
+  if (dq) return dq[1];
+  return null;
+}
+
 /**
  * @param {object} o  home, appRoot, env, verbose: where to look. probes: injectable `defaultBrowser()` and `freeBytes(dir)` for tests.
  * @returns {Promise<{schema:string, ok:boolean, version:string|null, checks:Array<{status:string,name:string,detail:string,fix?:string,required:boolean}>}>}
@@ -149,8 +158,8 @@ export async function runDoctor(o = {}) {
   const found = which(BIN);
   const launcher = found || path.join(home, ".local", "bin", BIN);
   if (fs.existsSync(launcher)) {
-    const target = ((fs.readFileSync(launcher, "utf8").match(/exec node "([^"]+)"/)) || [])[1];
-    // the installer writes `exec node "<app>/src/cli.js"`; any other launcher (a symlink, npm link) is judged by whether it runs
+    const target = parseLauncherTarget(fs.readFileSync(launcher, "utf8"));
+    // the installer writes `exec node '<app>/src/cli.js'` (or double-quoted in older versions); any other launcher (a symlink, npm link) is judged by whether it runs
     add(!target || fs.existsSync(target) ? "OK" : "MISSING", "launcher", `${launcher}${target ? ` -> ${target}` : " (custom launcher)"}`, { required: true, fix: REINSTALL_FIX });
     const v = run(launcher, ["--version"], env);
     add(v ? "OK" : "MISSING", `${BIN} --version`, v || "the launcher did not run", { required: true, fix: REINSTALL_FIX });
@@ -166,7 +175,7 @@ export async function runDoctor(o = {}) {
   };
   const runs = (p) => {
     try {
-      const t = (fs.readFileSync(p, "utf8").slice(0, 400).match(/exec node "([^"]+)"/) || [])[1]; // the installer's 2-line launcher
+      const t = parseLauncherTarget(fs.readFileSync(p, "utf8").slice(0, 400)); // the installer's 2-line launcher
       return real(t || p);
     } catch {
       return real(p);

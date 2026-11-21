@@ -25,6 +25,7 @@ for a in "$@"; do [ "$prev" = "--outdir" ] && out="$a"; prev="$a"; last="$a"; do
 echo "$$" >> "${marks}/invoked"
 case "$STUB_MODE" in
   hang) echo "$$" > "${marks}/hang.pid"; sleep 300 ;;
+  stopped_checker) echo "$$" > "${marks}/hang.pid"; sleep 0.1; kill -STOP "$PPID"; exec sleep 30 ;;
   slow) echo s >> "${marks}/conc"; sleep 0.3; echo e >> "${marks}/conc"; b=$(basename "$last"); printf PDF > "$out/\${b%.*}.pdf" ;;
   failafter) case "$last" in *before*) printf PDF > "$out/before.pdf" ;; esac ;;
   *) b=$(basename "$last"); printf PDF > "$out/\${b%.*}.pdf" ;;
@@ -70,6 +71,72 @@ const until = async (fn, ms = 8000) => {
   return false;
 };
 const waitLate = (pre, post) => new Promise((resolve) => startLateSoffice(pre, post, "docx", resolve));
+
+test("stopping the checker before it records the process group cannot start LibreOffice", { skip: SKIP }, async () => {
+  const groupFile = path.join(marks, "unreported.pid");
+  const pause = path.join(root, "pause-after-spawn.py");
+  fs.writeFileSync(pause, `import os, pathlib, runpy, signal, subprocess, sys
+popen = subprocess.Popen
+def pause(*args, **kwargs):
+    child = popen(*args, **kwargs)
+    pathlib.Path(${JSON.stringify(groupFile)}).write_text(str(child.pid))
+    os.kill(os.getpid(), signal.SIGSTOP)
+    return child
+subprocess.Popen = pause
+sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+`);
+  const wrapper = path.join(root, "paused-python");
+  fs.writeFileSync(wrapper, `#!/bin/sh\nexec "${python}" -I "${pause}" "$@"\n`, { mode: 0o755 });
+  const prevTo = process.env.ONIONSKIN_CHECK_TIMEOUT_MS;
+  process.env.ONIONSKIN_PYTHON = wrapper;
+  process.env.ONIONSKIN_CHECK_TIMEOUT_MS = "1500";
+  process.env.STUB_MODE = "hang";
+  const before = invoked();
+  try {
+    const { runDeepCheck } = await import("../src/checker.js");
+    const bytes = fs.readFileSync(path.join(repo, "test", "fixtures", "engine", "sample.docx"));
+    assert.equal(runDeepCheck(bytes, bytes, "docx").code, "timed_out");
+    const pid = Number(fs.readFileSync(groupFile, "utf8"));
+    assert.equal(invoked(), before, "LibreOffice never started");
+    assert.ok(await until(() => !alive(pid), 2000), "the unreported group exited");
+  } finally {
+    if (fs.existsSync(groupFile)) {
+      const pid = Number(fs.readFileSync(groupFile, "utf8"));
+      if (pid > 1 && alive(pid)) process.kill(-pid, "SIGKILL");
+    }
+    process.env.ONIONSKIN_PYTHON = python;
+    if (prevTo === undefined) delete process.env.ONIONSKIN_CHECK_TIMEOUT_MS;
+    else process.env.ONIONSKIN_CHECK_TIMEOUT_MS = prevTo;
+    delete process.env.STUB_MODE;
+  }
+});
+
+test("a hard-stopped checker leaves no LibreOffice process group", { skip: SKIP }, async () => {
+  const { runDeepCheck, deepRedline } = await import("../src/checker.js");
+  const bytes = fs.readFileSync(path.join(repo, "test", "fixtures", "engine", "sample.docx"));
+  const before = process.env.ONIONSKIN_CHECK_TIMEOUT_MS;
+  process.env.ONIONSKIN_CHECK_TIMEOUT_MS = "1500";
+  process.env.STUB_MODE = "stopped_checker";
+  try {
+    for (const check of [() => runDeepCheck(bytes, bytes, "docx"), () => waitLate(bytes, bytes), () => deepRedline(bytes, bytes, bytes)]) {
+      fs.rmSync(path.join(marks, "hang.pid"), { force: true });
+      try {
+        await check();
+        const pid = stubPid();
+        assert.ok(pid > 1, "the checker started LibreOffice");
+        assert.ok(await until(() => !alive(pid), 6500), "the hard stop also stopped LibreOffice");
+      } finally {
+        const pid = stubPid();
+        if (pid > 1 && alive(pid)) process.kill(-pid, "SIGKILL");
+      }
+    }
+  } finally {
+    if (before === undefined) delete process.env.ONIONSKIN_CHECK_TIMEOUT_MS;
+    else process.env.ONIONSKIN_CHECK_TIMEOUT_MS = before;
+    delete process.env.STUB_MODE;
+  }
+});
 
 /** A finished run whose done used the deferred check; returns what the server would hand to startLateSoffice. */
 async function finishedRun(S, name) {

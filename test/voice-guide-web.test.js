@@ -3,6 +3,27 @@ import { test } from "node:test";
 import { SECTIONS as SRC, GUIDE_MAX as SRC_MAX } from "../src/voice-guide.js";
 import { GUIDE_MAX, SECTIONS, addSpan, composeGuide, covered, hasHeadingLine, lineDiff, parseGuide } from "../web/src/voice-guide.js";
 import { GUIDE_MAX as UI_MAX } from "../web/src/voice-ui.js";
+import { beginGuideRequest, onReviewDraft, reviewDraft } from "../web/src/voice-bus.js";
+
+test("activity can open the draft again once the last guide request settles", () => {
+  let opened = 0;
+  const unsubscribe = onReviewDraft(() => opened++);
+  try {
+    const finishFirstSave = beginGuideRequest();
+    const finishSecondSave = beginGuideRequest();
+    reviewDraft();
+    assert.equal(opened, 0);
+    finishFirstSave();
+    finishFirstSave();
+    reviewDraft();
+    assert.equal(opened, 0, "finishing the first save twice must leave the second save pending");
+    finishSecondSave();
+    reviewDraft();
+    assert.equal(opened, 1);
+  } finally {
+    unsubscribe();
+  }
+});
 
 // The page's copy of the guide's sections (web/src/voice-guide.js) must be the server's list, and its pure helpers.
 test("the page's SECTIONS and caps are the server's", () => {

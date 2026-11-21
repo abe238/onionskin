@@ -96,6 +96,7 @@ function req(options, body) {
       res.on("close", () => !res.complete && reject(new Error("server connection closed")));
     });
     r.on("error", reject);
+    if (options.timeout) r.on("timeout", () => r.destroy(new Error("request timed out")));
     if (options.signal) options.signal.addEventListener("abort", () => r.destroy(new Error("aborted")), { once: true });
     // `deadline` (ms): the whole request, answer included, or it ends with `deadlineError`
     if (options.deadline) {
@@ -120,11 +121,12 @@ const json = (t) => {
   }
 };
 
-async function healthy() {
+async function healthy({ reportMismatch = false } = {}) {
   try {
     const r = await req({ method: "GET", path: "/health", timeout: 1500 });
     const j = json(r.text);
-    return r.status === 200 && j.protocol === SERVER_PROTOCOL;
+    if (r.status === 200 && j?.protocol === SERVER_PROTOCOL) return true;
+    return reportMismatch && r.status === 200 ? "incompatible" : false;
   } catch {
     return false;
   }
@@ -162,7 +164,14 @@ async function removeStaleSocket() {
         continue;
       }
     }
-    if (!Number.isInteger(pid)) continue;
+    if (!Number.isInteger(pid) || pid <= 0) {
+      if (f.endsWith("start.lock")) {
+        try {
+          if (Date.now() - fs.statSync(f).mtimeMs <= 2000) return false;
+        } catch {}
+      }
+      continue;
+    }
     try {
       process.kill(pid, 0);
       return false; // that process is alive: it may be starting up on this socket
@@ -178,47 +187,179 @@ async function removeStaleSocket() {
   }
 }
 
-/** `stop` (and `update`): asks a running server to stop, waits for its process to end, then removes a leftover socket. */
-async function stopServer() {
-  if (await healthy()) {
-    const pid = json((await req({ method: "GET", path: "/health", timeout: 1500 }).catch(() => ({ text: "" }))).text).pid;
-    await req({ method: "POST", path: "/cli/stop" }, {});
-    // the server answers first and exits a moment later: "stopped" is printed only once its process is gone (waits at most 5 s)
-    const gone = () => {
+/** True when `pid` exists (EPERM also means it exists, owned by another user). */
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+
+/** True when a Unix socket or TCP endpoint accepts a connection within `timeoutMs`. */
+function canConnect(opts, timeoutMs = 400) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
       try {
-        process.kill(pid, 0);
-        return false;
-      } catch {
-        return true;
-      }
+        s.destroy();
+      } catch {}
+      resolve(ok);
     };
-    for (let i = 0; i < 100 && Number.isInteger(pid) && !gone(); i++) await new Promise((r) => setTimeout(r, 50));
+    const s = net.createConnection(opts);
+    const t = setTimeout(() => finish(false), timeoutMs);
+    t.unref?.();
+    s.once("connect", () => finish(true));
+    s.once("error", () => finish(false));
+  });
+}
+
+/** True when `pid`'s command line looks like an Onionskin server process. */
+function looksLikeOnionskinPid(pid) {
+  const r = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: 1000 });
+  if (r.status !== 0) return false;
+  return /server-entry\.js|onionskin/i.test((r.stdout || "").trim());
+}
+
+/**
+ * Inspects server.json / start.lock when /health did not answer.
+ * Treats a recorded pid as the server ONLY when identity is confirmed (the socket or recorded port accepts
+ * connections, or the process command matches Onionskin); otherwise removes the stale record(s).
+ */
+async function inspectRecordedServer() {
+  let staleRemoved = false;
+  let sockAccepts = null;
+  const checkSock = async () => {
+    if (sockAccepts === null) sockAccepts = await canConnect({ path: socketPath() });
+    return sockAccepts;
+  };
+  for (const f of [serverRecordPath(), path.join(stateDir(), "start.lock")]) {
+    let raw;
+    try {
+      raw = fs.readFileSync(f, "utf8");
+    } catch {
+      continue;
+    }
+    let pid = null;
+    let port = null;
+    try {
+      const obj = JSON.parse(raw);
+      pid = Number.parseInt(obj?.pid ?? raw, 10);
+      if (Number.isInteger(obj?.port) && obj.port > 0 && obj.port <= 65535) port = obj.port;
+    } catch {
+      pid = Number.parseInt(raw, 10);
+    }
+    if (Number.isInteger(pid) && pid > 0 && pidAlive(pid)) {
+      const confirmed =
+        (await checkSock()) ||
+        (port !== null && (await canConnect({ host: "127.0.0.1", port }))) ||
+        looksLikeOnionskinPid(pid);
+      if (confirmed) return { pid, staleRemoved };
+      // If a socket file is still present alongside a live PID, leave both untouched (a server may be starting up; test/stop.test.js)
+      // while still returning pid: null so `stop` does not wait 5s or report an unrelated process as stuck.
+      if (fs.existsSync(socketPath())) continue;
+    }
+    try {
+      if (f.endsWith("start.lock") && Date.now() - fs.statSync(f).mtimeMs <= 2000) continue;
+      fs.unlinkSync(f);
+      staleRemoved = true;
+    } catch {}
+  }
+  return { pid: null, staleRemoved };
+}
+
+/** `stop` (and `update`): asks a running server to stop, waits for its process to end, then removes a leftover socket. */
+async function stopServer({ waitMs = 5000 } = {}) {
+  let pid = null;
+  let staleRemoved = false;
+  let shouldStop = await healthy();
+  if (shouldStop) {
+    pid = json((await req({ method: "GET", path: "/health", timeout: 1500 }).catch(() => ({ text: "" }))).text).pid;
+  } else {
+    const r = await req({ method: "GET", path: "/health", timeout: 1500 }).catch(() => null);
+    const j = r?.status === 200 ? json(r.text) : null;
+    if (j && Number.isInteger(j.pid) && j.pid > 0) {
+      pid = j.pid;
+      shouldStop = true;
+    }
+  }
+  if (!Number.isInteger(pid) || pid <= 0) {
+    const rec = await inspectRecordedServer();
+    staleRemoved = rec.staleRemoved;
+    if (rec.pid) {
+      pid = rec.pid;
+      shouldStop = true;
+    }
+  }
+  if (shouldStop) {
+    await req({ method: "POST", path: "/cli/stop", timeout: 2000 }, {}).catch(() => {});
+    // the server answers first and exits a moment later: "stopped" is printed only once its process is gone (waits at most waitMs)
+    const gone = () => !pidAlive(pid);
+    const steps = Math.max(1, Math.ceil(waitMs / 50));
+    for (let i = 0; i < steps && Number.isInteger(pid) && pid > 0 && !gone(); i++) await new Promise((r) => setTimeout(r, 50));
+    if (Number.isInteger(pid) && pid > 0 && !gone()) {
+      throw new Error(`server (pid ${pid}) did not stop within ${Math.round(waitMs / 1000)}s`);
+    }
   }
   await removeStaleSocket(); // a socket file nothing answers on is no use to anyone, and `doctor` would keep reporting it
+  return { staleRemoved, stopped: shouldStop };
 }
 
 /** Starts the detached server and waits (event-based) for its "ready" line. */
 async function ensureServer() {
   ensureStateDir();
   if (await healthy()) return;
-  const child = spawn(process.execPath, [path.join(here, "server-entry.js")], { detached: true, stdio: ["ignore", "pipe", "ignore"], env: process.env });
-  await new Promise((resolve, reject) => {
-    const to = setTimeout(() => reject(new Error(`could not start the ${PRODUCT.name} server`)), 15000);
-    child.stdout.once("data", () => (clearTimeout(to), resolve()));
-    child.once("exit", () => (clearTimeout(to), resolve())); // lost a race to another server: it is healthy now
-    child.once("error", (e) => (clearTimeout(to), reject(e)));
+  const child = spawn(process.execPath, [path.join(here, "server-entry.js")], { detached: true, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  const errChunks = [];
+  let errLen = 0;
+  child.stderr.on("data", (d) => {
+    if (errLen >= 4096) return;
+    const slice = d.length > 4096 - errLen ? d.subarray(0, 4096 - errLen) : d;
+    errChunks.push(slice);
+    errLen += slice.length;
   });
-  child.stdout.destroy();
-  child.unref();
-  if (!(await healthy())) throw new Error(`the ${PRODUCT.name} server did not come up`);
+  const detail = () => {
+    const s = Buffer.concat(errChunks).toString("utf8").trim();
+    return s ? `: ${s}` : "";
+  };
+  try {
+    await new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error(`could not start the ${PRODUCT.name} server${detail()}`)), 15000);
+      child.stdout.once("data", () => (clearTimeout(to), resolve()));
+      child.once("exit", () => (clearTimeout(to), resolve())); // lost a race to another server: it is healthy now
+      child.once("error", (e) => (clearTimeout(to), reject(new Error(`${e.message}${detail()}`))));
+    });
+    if (!(await healthy())) {
+      if (child.exitCode !== null && !child.stderr.readableEnded) {
+        await Promise.race([new Promise((r) => child.stderr.once("end", r)), new Promise((r) => setTimeout(r, 50))]);
+      }
+      throw new Error(`the ${PRODUCT.name} server did not come up${detail()}`);
+    }
+  } finally {
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.unref();
+  }
+}
+
+export function openBrowserArgs(url, platform = process.platform) {
+  if (platform === "darwin") return ["open", [url]];
+  if (platform === "win32") return ["cmd", ["/c", "start", "", url.replace(/&/g, "^&")]];
+  return ["xdg-open", [url]];
 }
 
 function openBrowser(url) {
-  const cmd = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
-  const c = spawn(cmd[0], cmd[1], { detached: true, stdio: "ignore" });
+  const [bin, args] = openBrowserArgs(url);
+  const c = spawn(bin, args, { detached: true, stdio: "ignore" });
   c.on("error", () => {});
   c.unref();
 }
+
+export { req, stopServer, ensureServer };
 
 /** `config background <preset|default>`, `config background --image <file> [--strength N] [--no-blur]`, `config get background` */
 export function parseConfigArgs(args) {
@@ -276,7 +417,7 @@ export function configCommand(args) {
     return `Background set to your image. It is copied as it is; the page scales it (and the copy keeps its metadata on disk). Reload the page to see it.\n`;
   }
   writeBackground({ kind: "preset", name: a.value, ...keep });
-  return `Background set to ${a.value}. Reload the page to see it.\n`;
+  return `Background set to ${a.reset ? `the default (${a.value})` : a.value}. Reload the page to see it.\n`;
 }
 
 const out = (text) => new Promise((r) => process.stdout.write(text, r));
@@ -416,7 +557,7 @@ async function main() {
     process.exit(r.exit);
   }
   if (argv[0] === "setup-checker") {
-    const py = setupChecker();
+    const py = await setupChecker();
     return out(`checker ready: ${py}\n`);
   }
   if (argv[0] === "setup-rewriter") {
@@ -460,9 +601,8 @@ async function main() {
       print: (line) => process.stdout.write(line + "\n"),
       server: { healthy, openWork: async () => { const r = await req({ method: "GET", path: "/cli/open-work", timeout: 3000 }); return { status: r.status, body: json(r.text) }; } },
       stop: stopServer,
-      runGetSh: (base) => runGetShDefault(base),
+      runGetSh: (base, opts) => runGetShDefault(base, process.env, opts),
       launcherVersion: (route, root) => (route === "npm" ? versionOf(process.execPath, [path.join(root, "src", "cli.js"), "--version"]) : versionOf(path.join(home, ".local", "bin", BIN), ["--version"])),
-      run: (cmd, args) => spawnSync(cmd, args, { stdio: ["ignore", "inherit", "inherit"] }).status ?? 1,
     });
     process.exit(code);
   }
@@ -557,8 +697,8 @@ async function main() {
     if (a.summary) return out(JSON.stringify({ ok: !!j.ok, flags: (j.flags || []).map((f) => ({ code: f.code, severity: f.severity })), ...(j.checks?.notice ? { checks_notice: j.checks.notice } : {}) }) + "\n");
     return out(JSON.stringify(j, null, 2) + "\n");
   } else if (a.cmd === "stop") {
-    await stopServer();
-    return out("stopped\n");
+    const res = await stopServer();
+    return out(res?.staleRemoved ? "no running server (stale record removed)\n" : res?.stopped ? "stopped\n" : "no server was running\n");
   } else throw new Error(`unknown command ${a.cmd}\n${HELP}`);
 }
 

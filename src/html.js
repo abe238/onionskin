@@ -55,7 +55,9 @@ const WINDOWS_1252 = new Set(["ansi_x3.4-1968", "ascii", "cp1252", "cp819", "csi
 
 /** The charset a page declares in its first 1,024 bytes (a meta charset, or a meta http-equiv content-type), lowercased; null when none. */
 function declaredCharset(bytes) {
-  const head = Buffer.from(bytes.buffer, bytes.byteOffset, Math.min(bytes.length, 1024)).toString("latin1");
+  const head = Buffer.from(bytes.buffer, bytes.byteOffset, Math.min(bytes.length, 1024))
+    .toString("latin1")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "");
   for (const m of head.matchAll(/<meta\b[^>]*>/gi)) {
     const cs = /\bcharset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)/i.exec(m[0]);
     if (cs) return cs[1].toLowerCase();

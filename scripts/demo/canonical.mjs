@@ -7,7 +7,7 @@
 //   source's inflated bytes, deflated here with Node's zlib at its default level (the encoding scan.mjs re-creates to check it).
 // Reuses openZip (src/zip.js) for reading; the header layout is the one src/zip-write.js writes. No ZIP64, like both.
 import zlib from "node:zlib";
-import { openZip, ZipError } from "../../src/zip.js";
+import { crc32, openZip, ZipError } from "../../src/zip.js";
 
 /** 1980-01-01 00:00:00, the first moment a DOS time stamp can hold: DOS date 0x0021 (year 0 = 1980, month 1, day 1), time 0. */
 export const CANONICAL_DOS_DATE = 0x0021;
@@ -27,7 +27,7 @@ export function canonicalZip(bytes) {
     const e = src.entries.get(name);
     if (e.flags & 0x1) throw new ZipError(`encrypted ZIP entry ${JSON.stringify(name)}`);
     const content = src.read(name);
-    if ((zlib.crc32(content) >>> 0) !== e.crc >>> 0 || content.length !== e.size) throw new ZipError(`ZIP entry ${JSON.stringify(name)} does not match its stored checksum or size`);
+    if (crc32(content) !== e.crc >>> 0 || content.length !== e.size) throw new ZipError(`ZIP entry ${JSON.stringify(name)} does not match its stored checksum or size`);
     parts.push({ name, content, crc: e.crc >>> 0 });
   }
   const locals = [];
@@ -82,7 +82,7 @@ export function canonicalZip(bytes) {
   if (back.names.length !== parts.length || back.names.some((n, i) => n !== parts[i].name)) throw new ZipError("the repack changed the entries or their order");
   for (const { name, content, crc } of parts) {
     const got = back.read(name);
-    if (!got.equals(content) || back.entries.get(name).crc >>> 0 !== crc || (zlib.crc32(got) >>> 0) !== crc) throw new ZipError(`the repack changed ${JSON.stringify(name)}`);
+    if (!got.equals(content) || back.entries.get(name).crc >>> 0 !== crc || crc32(got) !== crc) throw new ZipError(`the repack changed ${JSON.stringify(name)}`);
   }
   return out;
 }

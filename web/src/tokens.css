@@ -140,6 +140,7 @@
 
   /* status */
   --ok: rgb(0, 92, 59);
+  --ok-on: rgb(252, 252, 252);
   --ok-soft: rgba(0, 135, 88, 0.14);
   --warn: rgb(127, 74, 0);
   --warn-soft: rgba(211, 143, 0, 0.18);
@@ -232,6 +233,7 @@
   --accent-on: rgb(11, 15, 24);
 
   --ok: rgb(90, 214, 155);
+  --ok-on: rgb(5, 22, 13);
   --ok-soft: rgba(75, 201, 143, 0.16);
   --warn: rgb(235, 189, 87);
   --warn-soft: rgba(228, 183, 80, 0.16);

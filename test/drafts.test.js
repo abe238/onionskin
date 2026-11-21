@@ -8,6 +8,23 @@ import { Drafts, mergeNote } from "../web/src/drafts.js";
 const c = (id, text, status = "draft") => ({ id, kind: "element", text, status, anchor: { location: { blockPath: [0] }, quote: "q" } });
 const view = (seq, comments, note = "") => ({ seq, comments, note });
 
+test("a Send that stored a blank draft requests an autosave for words typed into it during the wait", () => {
+  const d = new Drafts();
+  const blank = c("blank", "");
+  const typed = c("blank", "Keep the last sentence.");
+  d.loaded("", [blank], 1);
+  const at = d.begin({ note: "Check this.", carriesNote: true, sends: new Set(), wire: 1, comments: [blank] });
+  d.typed("blank");
+  d.end(at, true);
+  const r = d.reconcile({ comments: [typed], note: "Check this." }, view(2, [blank]), at);
+  assert.equal(r.comments[0].text, typed.text);
+  assert.equal(r.unsaved, true, "schedule the autosave after Send");
+  const save = d.begin({ carriesNote: true, wire: 2, comments: r.comments });
+  d.end(save, true);
+  assert.equal(d.reconcile(r, view(3, [typed]), save).unsaved, false);
+  assert.equal(d.dirty(r.comments), false);
+});
+
 test("a comment the server says was sent with other words keeps the page's newer words as a new draft after it", () => {
   const d = new Drafts();
   d.loaded("", [], 0);

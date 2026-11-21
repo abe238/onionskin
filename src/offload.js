@@ -13,21 +13,36 @@ export function startWorker(name, { workerData, ...opts } = {}) {
   const flag = new Int32Array(loaded);
   const worker = new Worker(new URL("./worker-host.js", import.meta.url), { ...opts, workerData: { data: workerData, loaded }, argv: [name] });
   let exited = false;
-  worker.once("exit", () => (exited = true));
+  let onExit = null;
+  worker.once("exit", () => {
+    exited = true;
+    onExit?.();
+  });
   const stop = worker.terminate.bind(worker);
   let stopping = null;
   worker.terminate = () =>
     (stopping ??= new Promise((resolve) => {
       let marked = false;
+      let timer = null;
+      const done = () => {
+        clearTimeout(timer);
+        onExit = null;
+        resolve();
+      };
+      onExit = done;
+      const deadline = Date.now() + 10_000;
       const tryStop = () => {
-        if (exited) return resolve();
+        if (exited) return done();
         if (Atomics.load(flag, 0) === 1) {
           marked = true;
           // from here on the worker enters no zlib call; it may still be inside one
-          if ((Atomics.or(flag, 1, STOPPING) & ~STOPPING) === 0) return stop().then(resolve, resolve);
+          if ((Atomics.or(flag, 1, STOPPING) & ~STOPPING) === 0) return stop().then(done, done);
         }
-        setTimeout(tryStop, marked ? 2 : 10);
+        if (Date.now() >= deadline) return stop().then(done, done);
+        timer = setTimeout(tryStop, marked ? 2 : 10);
+        timer.unref?.();
       };
+      worker.ref?.();
       tryStop();
     }));
   return worker;
@@ -331,8 +346,6 @@ function anchorWorker() {
 function runAnchor(w, job) {
   clearTimeout(w.idle);
   w.job = job;
-  const msg = { id: job.id, job: job.data };
-  w.worker.postMessage(msg);
   job.onDone = () => {
     w.job = null;
     if (w.dead) return;
@@ -342,6 +355,12 @@ function runAnchor(w, job) {
     }
     nextAnchor();
   };
+  const msg = { id: job.id, job: job.data };
+  try {
+    w.worker.postMessage(msg);
+  } catch (err) {
+    w.fail("crashed", String(err?.message || err).slice(0, 200));
+  }
 }
 
 function nextAnchor() {

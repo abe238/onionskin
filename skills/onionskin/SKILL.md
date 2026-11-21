@@ -5,7 +5,7 @@ description: Open a Word (.docx), Excel (.xlsx), PowerPoint (.pptx) or HTML (.ht
 
 # onionskin
 
-The user reviews a Word, Excel, PowerPoint or HTML file in a browser, types edits, comments on things, presses Send. You answer; the page reloads where they were. Call the CLI as `onionskin` when `command -v onionskin` finds it, otherwise by its full location `~/.local/bin/onionskin` (use that path wherever a command below says `onionskin`). If neither exists (this skill came from a plugin, which does not install the command), install it first, as one shell command: `RELEASE=https://github.com/abe238/onionskin/releases/latest/download; curl -fsSL "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh`. The installer also downloads five small Python libraries from PyPI for its deeper file checks. If it stops saying Node.js 22 or newer is required, tell the user to install it from https://nodejs.org/en/download and stop. Otherwise run `~/.local/bin/onionskin doctor`, then continue with what they asked. Macro files (`.docm`, `.xlsm`, `.pptm`) are refused, and so are `.mhtml`, `.webarchive`, `.xhtml` and `.svg`.
+The user reviews a Word, Excel, PowerPoint or HTML file in a browser, types edits, comments on things, presses Send. You answer; the page reloads where they were. Call the CLI as `onionskin` when `command -v onionskin` finds it, otherwise by its full location `~/.local/bin/onionskin` (use that path wherever a command below says `onionskin`). If neither exists (this skill came from a plugin, which does not install the command), install it first, as one shell command: `RELEASE=https://github.com/abe238/onionskin/releases/latest/download; curl -fsSL --proto "=https" --proto-redir "=https" "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh`. The installer also downloads five small Python libraries from PyPI for its deeper file checks. If it stops saying Node.js 22 or newer is required, tell the user to install it from https://nodejs.org/en/download and stop. Otherwise run `~/.local/bin/onionskin doctor`, then continue with what they asked. Macro files (`.docm`, `.xlsm`, `.pptm`) are refused, and so are `.mhtml`, `.webarchive`, `.xhtml` and `.svg`.
 
 When the user asks to update Onionskin, run `onionskin update` and relay its last lines. If it stops because a file is open, tell the user to press Close session in that file's page (or close its tab and wait 20 minutes) and ask again; run `onionskin update --force` only when the user says to.
 
@@ -31,7 +31,7 @@ Do exactly this. Do not think out loud. Do not re-read the file. Do not verify w
    - `{"comment":"c1","set":"value"}` an XLSX cell; a 2D array for a range; a string starting with `=` is a formula
    - `{"comment":"c1","ops":[ ... ],"note":"..."}` anything else: full ops, see `reference/ops.md`
    - `{"comment":"c1","decline":true,"note":"why"}` when you will not or cannot (`reply_with: decline_or_ops` means protected or unresolved)
-   - `{"comment":"c1","ask":"Which date do you mean?","options":["March 3","March 13"]}` when a comment has two to four concrete readings and a wrong guess would change the meaning. No `note`, no edit. One question per comment, three per batch; each option at most 40 characters, the question at most 160, no links. The user's tap comes back in a later batch
+   - `{"comment":"c1","ask":"Which date do you mean?","options":["March 3","March 13"]}` when a comment has two to four concrete readings and a wrong guess would change the meaning. No `note`, no edit. One question per comment, three per batch; each option at most 40 characters, the question at most 160, no links or email addresses. The user's tap comes back in a later batch
 
    Keep the call as short as you can: it is the user's wait. The ticket names the file, and `--then-poll` waits up to 590 seconds by default. The user is shown what changed, so leave `note` out unless there is something the edit itself does not show (a `decline` always carries one: the reason, in one plain line). An optional top-level `"summary"` is one line for the whole batch; leave it out for simple batches. A top-level `"ops":[ ... ]` holds document-wide ops that answer no comment. Text with an apostrophe: pipe the JSON on stdin with a quoted heredoc instead of `--json`.
 5. Read the output: the result line, then the next batch (or a `{"status":...}` line) as a second line. Go to step 3 with it; stop at `closed`.
@@ -93,10 +93,10 @@ Document-wide requests ("bold every heading", "replace Acme with Initech") arriv
 
 ### The fallback route
 
-When no op can express the change, edit a COPY and submit it: `cp path/to/file.docx /tmp/onionskin-work.docx`, edit the copy once with python-docx, openpyxl, python-pptx or XML edits (keep everything you do not understand), then:
+When no op can express the change, edit a COPY in a private temp directory: run `mktemp -d "${TMPDIR:-/tmp}/onionskin-work.XXXXXX"` to get a unique directory, copy the file into that literal path (e.g. `cp path/to/file.docx <temp_dir>/work.docx`), edit that copy once with python-docx, openpyxl, python-pptx or XML edits (keep everything you do not understand), then pass that same literal path to `commit`:
 
 ```sh
-onionskin commit path/to/file.docx --from /tmp/onionskin-work.docx --lease <ticket>
+onionskin commit path/to/file.docx --lease <ticket> --from <temp_dir>/work.docx
 ```
 
 It is the same checked write as `apply`. Exit 5 means refused and the file is untouched (`write_error.code`: `conflict`, `stale_batch`, `invalid_package`). Then answer with `done` (or `reply` with only declines). Expect `done` to flag what your library dropped. In a spreadsheet the user may keep typing while you work; Onionskin can carry their typing onto your version only on sheets you changed with ops (`reply` or `apply`) that do not add or remove rows or columns. After a `commit`, their edits on the sheets you changed go back to them, so in Excel use ops whenever they can do the job.

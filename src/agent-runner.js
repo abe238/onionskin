@@ -18,9 +18,10 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { env as cfg } from "./constants.js";
-import { stateDir, sub, writeStateFile } from "./paths.js";
+import { stateDir, sub, writeFully, writeStateFile } from "./paths.js";
 import * as settings from "./settings.js";
 import { DEFAULT_MODEL, POLL_TIMEOUT, agentsDisabled, bgHolder, buildArgv, cleanEnv, findClaude, findCodex, isBgHolder, preflight } from "./agent-detect.js";
 import { backgroundPrompt, readSkill, refDir, resumePrompt } from "./agent-prompt.js";
@@ -55,11 +56,30 @@ const fallbackEvents = {
 const loadedEvents = await import("./agent-events.js").catch(() => fallbackEvents);
 
 const HOUR = 60 * 60 * 1000;
+const TRANSCRIPT_MAX = 1024 * 1024;
 export const LIMITS = { maxAgents: 3, startsPerHour: 5, graceMs: 20_000, idleMs: 20 * 60 * 1000, killMs: 4000, closeGraceMs: 10_000, activity: 50 };
 const backoffMs = (n) => 1000 * 2 ** Math.min(Math.max(n, 1), 5); // 2, 4, 8, 16, 32 s
 
 const agentsDir = () => sub("agents");
 const recordFile = (key) => path.join(agentsDir(), `${key}.json`);
+
+// On overflow keep a bounded tail, starting on a line boundary when newer events are available.
+function appendTranscript(fd, chunk) {
+  const size = fs.fstatSync(fd).size;
+  if (size + chunk.length > TRANSCRIPT_MAX) {
+    if (chunk.length >= TRANSCRIPT_MAX) chunk = chunk.subarray(-TRANSCRIPT_MAX);
+    else {
+      const keep = Math.min(TRANSCRIPT_MAX / 2, TRANSCRIPT_MAX - chunk.length);
+      const tail = Buffer.alloc(keep);
+      const read = fs.readSync(fd, tail, 0, keep, size - keep);
+      chunk = Buffer.concat([tail.subarray(0, read), chunk]);
+    }
+    const newline = chunk.indexOf(10);
+    if (newline >= 0 && newline < chunk.length - 1) chunk = chunk.subarray(newline + 1);
+    fs.ftruncateSync(fd, 0);
+  }
+  writeFully(fd, chunk);
+}
 
 /**
  * deps: {spawn, execFile, kill(pid, sig), now, setTimeout, env, events, tabs(key) -> number of open tabs, open(file) -> opens a .command
@@ -81,7 +101,7 @@ export function agentRunner(sessions, deps = {}) {
   const entry = (key) => {
     let e = entries.get(key);
     if (!e) {
-      e = { key, holder: bgHolder(key), child: null, state: "none", failure: null, activity: [], starts: [], crashes: 0, nextStartAt: 0, strandedAt: 0, idleSince: 0, waiting: false, external: false, sessionId: null, resumable: false, lastBatch: null, resumeNext: false };
+      e = { key, holder: bgHolder(key), child: null, gen: 0, state: "none", failure: null, activity: [], starts: [], crashes: 0, nextStartAt: 0, strandedAt: 0, idleSince: 0, waiting: false, external: false, sessionId: null, resumable: false, lastBatch: null, resumeNext: false };
       entries.set(key, e);
     }
     return e;
@@ -171,6 +191,7 @@ export function agentRunner(sessions, deps = {}) {
   }
 
   async function launch(e, { counted, resume = false }) {
+    const gen = e.gen;
     const s = sessionOf(e.key);
     if (!s || s.closed) {
       e.state = "none";
@@ -199,6 +220,7 @@ export function agentRunner(sessions, deps = {}) {
       const binDir = ensureBin();
       const childEnv = cleanEnv({ binDir, stateDir: fs.realpathSync(stateDir()), holder: e.holder, workDir, env });
       const pre = await preflight(bin, { env: childEnv, execFile });
+      if (e.gen !== gen || e.state === "handover") return;
       if (pre) return fail(e, pre.code, pre.update ? { update: true } : {});
       if (!sessionOf(e.key) || sessionOf(e.key).closed || stoppingAll) {
         e.state = "none";
@@ -217,7 +239,7 @@ export function agentRunner(sessions, deps = {}) {
     } catch (err) {
       fail(e, "crashed");
     } finally {
-      e.launching = false;
+      if (e.gen === gen) e.launching = false;
     }
   }
 
@@ -266,34 +288,83 @@ export function agentRunner(sessions, deps = {}) {
     });
     let transcript = null;
     try {
-      transcript = fs.openSync(path.join(workDir, "transcript.jsonl"), "a", 0o600);
+      transcript = fs.openSync(path.join(workDir, "transcript.jsonl"), "a+", 0o600);
+      appendTranscript(transcript, Buffer.alloc(0));
     } catch {}
-    let buf = "";
-    child.stdout?.on("data", (d) => {
+    const closeTranscript = () => {
       if (transcript !== null) {
         try {
-          fs.writeSync(transcript, d);
+          fs.closeSync(transcript);
         } catch {}
+        transcript = null;
       }
-      buf += d.toString("utf8");
+    };
+    const decoder = new StringDecoder("utf8");
+    let buf = "";
+    const flushLines = () => {
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
         onLine(e, line);
       }
-    });
-    child.stderr?.on("data", () => {}); // drained; Claude Code writes nothing there that the page needs
-    child.on("error", () => {});
-    child.on("exit", (code, signal) => {
+    };
+    child.stdout?.on("data", (d) => {
       if (transcript !== null) {
         try {
-          fs.closeSync(transcript);
+          appendTranscript(transcript, d);
         } catch {}
       }
-      if (buf) onLine(e, buf);
-      if (e.child === child) onExit(e, code, signal);
+      buf += decoder.write(d);
+      flushLines();
     });
+    child.stderr?.on("data", () => {}); // drained; Claude Code writes nothing there that the page needs
+    let finished = false;
+    let exitTimer = null;
+    const finish = (code, signal) => {
+      if (finished) return;
+      finished = true;
+      if (exitTimer) {
+        clearTimeout(exitTimer);
+        exitTimer = null;
+      }
+      closeTranscript();
+      buf += decoder.end();
+      flushLines();
+      if (buf) onLine(e, buf);
+      buf = "";
+      if (e.child === child) onExit(e, code, signal);
+    };
+    child.on("error", () => {
+      if (finished) return;
+      finished = true;
+      if (exitTimer) {
+        clearTimeout(exitTimer);
+        exitTimer = null;
+      }
+      closeTranscript();
+      if (e.child === child) {
+        e.child = null;
+        fs.rmSync(recordFile(e.key), { force: true });
+        fail(e, "crashed");
+        startWaiting();
+      }
+    });
+    child.on("exit", (code, signal) => {
+      if (finished || exitTimer) return;
+      exitTimer = setTimeout(() => {
+        exitTimer = null;
+        try {
+          child.stdout?.destroy();
+        } catch {}
+        try {
+          child.stderr?.destroy();
+        } catch {}
+        finish(code, signal);
+      }, 500);
+      exitTimer.unref();
+    });
+    child.on("close", (code, signal) => finish(code, signal));
     e.state = "starting";
     notify(e.key);
   }
@@ -399,6 +470,8 @@ export function agentRunner(sessions, deps = {}) {
   async function stop(key, why = "stop") {
     const e = entries.get(key);
     if (!e) return false;
+    e.gen++;
+    e.launching = false;
     e.waiting = false;
     e.nextStartAt = 0;
     e.strandedAt = 0;
@@ -436,7 +509,7 @@ export function agentRunner(sessions, deps = {}) {
   async function stopAll() {
     stoppingAll = true;
     const live = [...entries.values()].filter((e) => e.child);
-    const exits = live.map((e) => new Promise((r) => (e.child.once("exit", r), later(r, L.killMs + 500)?.unref?.())));
+    const exits = live.map((e) => new Promise((r) => (e.child.once("close", r), e.child.once("error", r), later(r, L.killMs + 500)?.unref?.())));
     await Promise.all(live.map((e) => stop(e.key, "shutdown")));
     await Promise.all(exits);
   }
@@ -463,6 +536,10 @@ export function agentRunner(sessions, deps = {}) {
   });
   sessions.on("closed", (s) => {
     const e = entries.get(s.key);
+    if (e) {
+      e.gen++;
+      e.launching = false;
+    }
     if (e?.child) {
       // its poll was answered "closed", so it ends by itself (and writes its last result); the group is stopped only if it has not after 10 s.
       // The cleanup runs after the process is gone, so nothing writes into the folder again.
@@ -566,11 +643,13 @@ export function agentRunner(sessions, deps = {}) {
   /** Open in Terminal: the background agent stops and the same conversation opens in Terminal with the same limits. */
   async function handover(s) {
     const e = entry(s.key);
+    e.gen++;
+    e.launching = false;
     const bin = findClaude(env);
     if (!bin || agentsDisabled(env)) return fail(e, "not_installed");
     if (e.state === "failed" && e.failure?.code === "signed_out") return signIn(e, bin);
     // the background process is gone before Terminal opens the same conversation (two processes never share one), at most 5 s
-    const gone = e.child ? new Promise((r) => (e.child.once("exit", r), later(r, L.killMs + 1000)?.unref?.())) : null;
+    const gone = e.child ? new Promise((r) => (e.child.once("close", r), e.child.once("error", r), later(r, L.killMs + 1000)?.unref?.())) : null;
     await stop(s.key, "handover");
     if (gone) await gone;
     e.state = "handover";

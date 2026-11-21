@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildAppleHelper } from "./build-apple-helper.mjs";
+import { collectNpmFiles, scanPackagedFiles, verifyVendor } from "./package.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const die = (m) => {
@@ -25,6 +26,21 @@ if (!process.env.ONIONSKIN_PREPACK_SKIP_BUILD) {
     die(`the helper for Apple's model did not build: ${e.message}`);
   }
 }
-for (const f of ["web/dist/index.html", "scripts/rewriter/apple/onionskin-fm", "scripts/rewriter/apple/onionskin-fm.json", "vendor/engine/index.js", "skills/onionskin/SKILL.md"]) {
+try {
+  verifyVendor(root);
+} catch (e) {
+  die(e.message);
+}
+for (const f of [
+  "web/dist/index.html",
+  "scripts/rewriter/apple/onionskin-fm",
+  "scripts/rewriter/apple/onionskin-fm.json",
+  "vendor/engine/index.js",
+  "vendor/engine-node/engine-node.mjs",
+  "vendor/parse5/parse5.mjs",
+  "skills/onionskin/SKILL.md",
+]) {
   if (!fs.existsSync(path.join(root, f))) die(`missing: ${f}`);
 }
+const problems = scanPackagedFiles(collectNpmFiles(root), { helperRel: "scripts/rewriter/apple/onionskin-fm" });
+if (problems.length) die(problems.map((p) => `  - ${p}`).join("\n"));

@@ -66,6 +66,9 @@ function world({ env = {}, tabs = () => 0, lstart = (pid) => `start-${pid}` } = 
     c.die = async (code = 1, signal = null) => {
       await flush();
       c.emit("exit", code, signal);
+      c.stdout.end();
+      await flush();
+      c.emit("close", code, signal);
       await flush();
     };
     spawned.push({ bin, argv, opts, child: c });
@@ -266,7 +269,10 @@ test("9. stopAll signals every running agent and waits for them", async () => {
   const done = w.R.stopAll();
   await flush();
   assert.deepEqual(w.signals.map((x) => x[1]), ["SIGTERM", "SIGTERM"]);
-  for (const x of w.spawned) x.child.emit("exit", null, "SIGTERM");
+  for (const x of w.spawned) {
+    x.child.emit("exit", null, "SIGTERM");
+    x.child.emit("close", null, "SIGTERM");
+  }
   await done;
   w.R.ensure(a.key);
   await flush();
@@ -569,6 +575,33 @@ test("14. the reserved holder is bound to its own file; Open in Terminal stops t
   assert.equal(w.spawned.length, 1, "no restart while it is open in Terminal");
 });
 
+test("the helper transcript keeps recent complete events within one megabyte", async () => {
+  const w = world();
+  const s = await stranded(w);
+  const c = w.spawned[0].child;
+  const text = "x".repeat(64 * 1024);
+  for (let i = 0; i < 24; i++) c.lines({ type: "test", i, text });
+  await c.die(0);
+  const file = path.join(process.env.ONIONSKIN_STATE_DIR, "agents", s.key, "transcript.jsonl");
+  assert.ok(fs.statSync(file).size <= 1024 * 1024);
+  const rows = fs.readFileSync(file, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+  assert.ok(rows[0].i > 0);
+  assert.deepEqual(rows.slice(-2).map((r) => r.i), [22, 23]);
+});
+
+test("the newest bytes of a long unfinished helper event stay visible in the transcript", async () => {
+  const w = world();
+  const s = await stranded(w);
+  const c = w.spawned[0].child;
+  const chunk = "x".repeat(1024 * 1024) + "newest";
+  c.stdout.write(chunk);
+  const file = path.join(process.env.ONIONSKIN_STATE_DIR, "agents", s.key, "transcript.jsonl");
+  const bytes = fs.readFileSync(file);
+  assert.equal(bytes.length, 1024 * 1024);
+  assert.equal(bytes.subarray(-6).toString(), "newest");
+  await c.die(0);
+});
+
 test("15. Close session stops the agent and removes its folder (transcript, reply files)", async () => {
   const w = world();
   const s = await stranded(w);
@@ -621,6 +654,7 @@ test("16. at most N agents at once: the next one waits as starting and starts wh
   assert.equal(S.view(b).agent.state, "starting", "it waits for a slot");
   await R.stop(a.key);
   spawned[0].emit("exit", null, "SIGTERM");
+  spawned[0].emit("close", null, "SIGTERM");
   await flush();
   assert.equal(spawned.length, 2, "the waiting one started when the slot freed");
 });
@@ -1129,4 +1163,27 @@ test("37. a Send while the Terminal agent is still starting waits the grace for 
   w3.advance(1);
   await w3.tick();
   assert.equal(w3.spawned.length, 2, "nobody polled in Terminal: the background agent starts for the pending batch");
+});
+
+test("38. late stdout chunks between exit and close are decoded and processed before onExit", async () => {
+  const w = world();
+  const s = await stranded(w);
+  const c = w.spawned[0].child;
+  // emit exit first, then deliver a final JSON line split across multi-byte UTF-8 chunks before close
+  c.emit("exit", 1, null);
+  await flush();
+  const lateLine = JSON.stringify({ type: "assistant", error: "authentication_failed", note: "café" }) + "\n";
+  const raw = Buffer.from(lateLine, "utf8");
+  const splitAt = raw.indexOf(0xc3) + 1; // split inside the 2-byte UTF-8 'é'
+  c.stdout.write(raw.subarray(0, splitAt));
+  await flush();
+  c.stdout.write(raw.subarray(splitAt));
+  c.stdout.end();
+  await flush();
+  c.emit("close", 1, null);
+  await flush();
+  assert.equal(w.S.view(s).agent.state, "failed");
+  assert.deepEqual(w.S.view(s).agent.failure, { code: "signed_out" });
+  const transcript = fs.readFileSync(path.join(process.env.ONIONSKIN_STATE_DIR, "agents", s.key, "transcript.jsonl"), "utf8");
+  assert.ok(transcript.includes("café"));
 });

@@ -53,7 +53,13 @@ function Summary({ text }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el && !all) setClipped(el.scrollHeight > el.clientHeight + 1);
+    if (!el || all) return;
+    const check = () => setClipped(el.scrollHeight > el.clientHeight + 1);
+    check();
+    if (typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [text, all]);
   if (!text) return null;
   return (

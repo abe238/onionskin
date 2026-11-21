@@ -140,7 +140,7 @@ Worked example (a comment asks to change "24%" to "31%" in one paragraph, and th
 Target is a cell or range: `{"anchor_id": "a2"}`, or `{"sheet": "Data", "range": "B2:D9"}` (never both).
 
 ### set_cells
-Writes `values` like a user typing: a string starting with `=` is a formula, text that looks like a number becomes a number, `null` clears. A date string stays text: write the serial number and set `number_format` with `format_cells`. `values` is a scalar for one cell, or rows of cells with the same shape as the range.
+Writes `values` like a user typing: a string starting with `=` is a formula, text that looks like a number becomes a number, `null` clears. A date string stays text: write the serial number and set `number_format` with `format_cells`. `values` is a scalar for one cell, or rows of cells with the same shape as the range. A string that would become a number and lose part of itself, a leading zero before another digit (`"00123"`) or digits the number cannot hold exactly (`"12345678901234567890"`), is refused as `number_would_change`, and so is a `replace_all_text` whose result in a cell is such a string: nothing is written. A value that is meant as a number goes as a JSON number. In a cell with a date format, a string that names a day or a time that does not exist (`"31/02/2026"`, `"2026-01-28 24:00"`) is refused as `invalid_date`. Any write to a sheet whose cells are stored without their addresses is refused as `cells_without_address`: tell the user this sheet cannot be edited in this version. A value that must stay text exactly as written (an ID, a postal code) cannot be stored by this version: tell the user.
 
 ### format_cells
 `set` takes `number_format`, `bold`, `italic`, `fill` (`#rrggbb`) and `font_color` (`#rrggbb`).

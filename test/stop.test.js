@@ -36,6 +36,18 @@ async function socketIn(state, keep = false) {
 }
 const serverLine = (state) => JSON.parse(run(state, ["doctor", "--json"]).stdout).checks.find((c) => c.name === "server");
 
+test("stop keeps a new empty start lock and removes it once it is stale", () => {
+  const state = freshState();
+  const lock = path.join(state, "start.lock");
+  fs.writeFileSync(lock, "");
+  assert.equal(run(state, ["stop"]).status, 0);
+  assert.ok(fs.existsSync(lock), "the starting server can still write its pid");
+  const earlier = new Date(Date.now() - 3000);
+  fs.utimesSync(lock, earlier, earlier);
+  assert.equal(run(state, ["stop"]).status, 0);
+  assert.equal(fs.existsSync(lock), false);
+});
+
 test("stop removes a leftover socket file that nothing answers on, and doctor then reads the server as not running", async () => {
   const state = freshState();
   const { sock } = await socketIn(state);
@@ -44,10 +56,10 @@ test("stop removes a leftover socket file that nothing answers on, and doctor th
   assert.match(before.detail, /^a leftover socket file exists but nothing answers$/);
   const r = run(state, ["stop"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "stopped\n");
+  assert.equal(r.stdout, "no server was running\n");
   assert.equal(fs.existsSync(sock), false, "the leftover is gone");
   assert.match(serverLine(state).detail, /^not running/);
-  assert.equal(run(state, ["stop"]).stdout, "stopped\n", "a second stop with nothing there is still fine");
+  assert.equal(run(state, ["stop"]).stdout, "no server was running\n", "a second stop with nothing there is still fine");
 });
 
 test("stop leaves alone a socket something still listens on, one whose server record names a live process, and a file that is not a socket", async () => {
@@ -73,4 +85,21 @@ test("stop leaves alone a socket something still listens on, one whose server re
   fs.writeFileSync(path.join(plain, "s.sock"), "not a socket");
   run(plain, ["stop"]);
   assert.equal(fs.readFileSync(path.join(plain, "s.sock"), "utf8"), "not a socket", "a file that is not a socket is never touched");
+});
+
+test("V8: stop prints 'no server was running' when nothing was started and after a real stop, and 'stopped' when it stops a running server", () => {
+  const state = freshState();
+  const first = run(state, ["stop"]);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout, "no server was running\n");
+  const doc = path.join(root, "v8.html");
+  fs.writeFileSync(doc, "<!doctype html><p>hello</p>\n");
+  const opened = run(state, ["open", doc, "--no-open"]);
+  assert.equal(opened.status, 0, opened.stderr);
+  const second = run(state, ["stop"]);
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(second.stdout, "stopped\n");
+  const third = run(state, ["stop"]);
+  assert.equal(third.status, 0, third.stderr);
+  assert.equal(third.stdout, "no server was running\n");
 });

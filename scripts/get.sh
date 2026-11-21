@@ -74,7 +74,10 @@ main() {
   fi
 
   TMPD=$(mktemp -d "${TMPDIR:-/tmp}/onionskin-get.XXXXXX") || { die "could not make a temp folder"; return 1; }
-  trap 'rm -rf "$TMPD"' EXIT INT TERM HUP
+  trap 'rm -rf "$TMPD"' EXIT
+  trap 'rm -rf "$TMPD"; exit 143' TERM
+  trap 'rm -rf "$TMPD"; exit 130' INT
+  trap 'rm -rf "$TMPD"; exit 129' HUP
   CURL="curl -fsSL --connect-timeout 20 --max-time 300 --proto-redir =https"
   say "Downloading"
   $CURL --proto "$(proto "$ZIP_URL")" -o "$TMPD/onionskin.zip" "$ZIP_URL" || { die "could not download $ZIP_URL"; return 1; }
@@ -94,9 +97,11 @@ main() {
   fi
   say "  checksum ok ($GOT)"
 
-  # The zip holds one top folder, onionskin/. Refuse anything that would unpack elsewhere.
+  # The zip holds one top folder, onionskin/. Refuse anything that would unpack elsewhere, traverse paths, or hold symlinks.
   unzip -Z1 "$TMPD/onionskin.zip" > "$TMPD/list" 2>/dev/null || { die "the download is not a readable zip"; return 1; }
-  if /usr/bin/grep -qv '^onionskin/' "$TMPD/list" || /usr/bin/grep -q '\.\./' "$TMPD/list"; then die "the zip holds files outside its onionskin/ folder; refusing to unpack it"; return 1; fi
+  unzip -Z "$TMPD/onionskin.zip" > "$TMPD/zlist" 2>/dev/null || { die "the download is not a readable zip"; return 1; }
+  if /usr/bin/grep -q '^l' "$TMPD/zlist"; then die "the zip holds a symlink; refusing to unpack it"; return 1; fi
+  if /usr/bin/grep -qv '^onionskin/' "$TMPD/list" || /usr/bin/grep -Eq '(^|/)\.\.(/|$)' "$TMPD/list"; then die "the zip holds files outside its onionskin/ folder; refusing to unpack it"; return 1; fi
   mkdir "$TMPD/x" && unzip -q "$TMPD/onionskin.zip" -d "$TMPD/x" || { die "could not unzip"; return 1; }
   [ -f "$TMPD/x/onionskin/install.sh" ] || { die "the zip has no install.sh"; return 1; }
 

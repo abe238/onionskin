@@ -205,7 +205,11 @@ export function verifyTracked({ before, after, out, counts, author, date }) {
     const zb = openZip(before);
     const zo = openZip(out);
     if (zo.names.join("\0") !== za.names.join("\0")) fail("the copy's parts differ from the agent's version");
-    for (const n of za.names) if (n !== "word/document.xml" && !zo.read(n).equals(za.read(n))) fail(`a part other than the main text differs: ${n}`);
+    for (const n of za.names) {
+      if (n === "word/document.xml") continue;
+      const sameRaw = zo.entries.get(n)?.method === za.entries.get(n)?.method && zo.raw(n).equals(za.raw(n));
+      if (!sameRaw && !zo.read(n).equals(za.read(n))) fail(`a part other than the main text differs: ${n}`);
+    }
     const xa = za.readText("word/document.xml");
     const xb = zb.readText("word/document.xml");
     const xo = zo.readText("word/document.xml");
@@ -221,7 +225,13 @@ export function verifyTracked({ before, after, out, counts, author, date }) {
       return n;
     };
     if (revCount(xo) !== ours.size + revCount(xa)) fail("the copy has revisions that are neither ours nor the file's own");
-    const maxIn = Math.max(0, ...[...inputIds].filter((v) => /^\d+$/.test(v)).map(Number));
+    let maxIn = 0;
+    for (const v of inputIds) {
+      if (/^\d+$/.test(v)) {
+        const n = Number(v);
+        if (n > maxIn) maxIn = n;
+      }
+    }
     for (const id of ours) if (Number(id) <= maxIn) fail("a revision id is not above every id in the file");
 
     const A = parseDocxParagraphs(xa);

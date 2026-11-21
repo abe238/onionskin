@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "./Icons.jsx";
 import { useMedia } from "./hooks.js";
 import { Shortcuts } from "./Shortcuts.jsx";
@@ -15,7 +16,7 @@ const STATE_TEXT = {
 const STATE_TEXT_MAC = { working: "Working on this Mac", queued: "Working on this Mac, batch queued" }; // a run done on this Mac (session.stage "local"): no agent in it
 const STATE_SHORT = { idle: "Idle", listening: "Listening", working: "Working", queued: "Working", stranded: "No agent", closed: "Closed" };
 
-function syncText(session, counts, sending, readOnly) {
+function syncText(session, counts, sending, readOnly, hasNote = false) {
   if (readOnly) return { text: "Read-only: open for editing in another tab", tone: "muted", icon: "lock" };
   if (session.state === "closed") return { text: "Session closed", tone: "muted", icon: "lock" };
   if (sending) return { text: "Sending to the agent", tone: "busy", icon: "sync" };
@@ -23,6 +24,14 @@ function syncText(session, counts, sending, readOnly) {
   const wait = pendingWords(session); // a batch is saved and no agent has it yet
   if (wait) return { text: wait, tone: "busy", icon: "sync" };
   if (counts.edits) return { text: `${counts.edits} unsent edit${counts.edits > 1 ? "s" : ""}`, tone: "warn", icon: "edit" };
+  const drafts = (counts.comments || 0) + (counts.pins || 0);
+  if (drafts) {
+    const parts = [];
+    if (counts.comments) parts.push(`${counts.comments} comment${counts.comments > 1 ? "s" : ""}`);
+    if (counts.pins) parts.push(`${counts.pins} pin${counts.pins > 1 ? "s" : ""}`);
+    return { text: `${parts.join(", ")} unsent`, tone: "warn", icon: "comment" };
+  }
+  if (hasNote) return { text: "Overall note unsent", tone: "warn", icon: "comment" };
   return { text: "No unsent edits", tone: "ok", icon: "check" };
 }
 
@@ -39,24 +48,46 @@ function Mark() {
   );
 }
 
-export function TopBar({ readOnly, product, session, counts, pending, sending, theme, onTheme, onBackground, bgOpen, sideOpen, onSidebar, onClose, keysOpen, onKeys }) {
+export function TopBar({ readOnly, product, session, counts, hasNote, pending, sending, theme, onTheme, onBackground, bgOpen, sideOpen, onSidebar, onClose, keysOpen, onKeys }) {
   const compact = useMedia("(max-width: 719px)");
+  const finePointer = useMedia("(pointer: fine)");
   const [menu, setMenu] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
     if (!menu) return;
+    menuRef.current?.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
     const away = (e) => !menuRef.current?.contains(e.target) && setMenu(false);
-    const esc = (e) => e.key === "Escape" && setMenu(false);
+    const esc = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(false);
+      menuRef.current?.querySelector('[data-testid="more-menu"]')?.focus();
+    };
     document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", esc);
+    document.addEventListener("keydown", esc, true);
     return () => {
       document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("keydown", esc, true);
     };
   }, [menu]);
+  const onMenuKey = (e) => {
+    const items = [...(menuRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])];
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement);
+    let next = -1;
+    if (e.key === "ArrowDown") next = i < 0 ? 0 : (i + 1) % items.length;
+    else if (e.key === "ArrowUp") next = i < 0 ? items.length - 1 : (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    items[next].focus();
+  };
   const state = session.state;
   const stateText = (session.local && STATE_TEXT_MAC[state]) || STATE_TEXT[state] || state;
-  const sync = syncText(session, counts, sending, readOnly);
+  const sync = syncText(session, counts, sending, readOnly, hasNote);
   const nextTheme = theme === "dark" ? "light" : "dark";
   const themeBtn = (
     <button type="button" className="iconbtn" onClick={onTheme} data-testid="theme-toggle" aria-label={`Switch to ${nextTheme} theme`} title={`Switch to ${nextTheme} theme`}>
@@ -84,7 +115,6 @@ export function TopBar({ readOnly, product, session, counts, pending, sending, t
           <button type="button" className={`iconbtn ${keysOpen ? "on" : ""}`} onClick={onKeys} data-testid="shortcuts-button" aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-expanded={!!keysOpen} title="Keyboard shortcuts (?)">
             <Icon name="keyboard" />
           </button>
-          {keysOpen && <Shortcuts onClose={onKeys} />}
         </span>
       )}
       {!compact && (
@@ -109,14 +139,23 @@ export function TopBar({ readOnly, product, session, counts, pending, sending, t
             <Icon name="more" size={18} />
           </button>
           {menu && (
-            <div className="menu glass-pop" role="menu">
+            <div className="menu glass-pop" role="menu" onKeyDown={onMenuKey}>
+              <div className={`menu-status sync-${sync.tone}`} data-testid="menu-sync-state" role="presentation">
+                <Icon name={sync.icon} size={14} />
+                <span>{sync.text}</span>
+              </div>
+              {finePointer && (
+                <button type="button" role="menuitem" className="menuitem" onClick={() => (setMenu(false), onKeys())} data-testid="shortcuts-menu-item">
+                  <Icon name="keyboard" /> Keyboard shortcuts
+                </button>
+              )}
               <button type="button" role="menuitem" className="menuitem" onClick={() => (onTheme(), setMenu(false))} data-testid="theme-toggle">
                 <Icon name={theme === "dark" ? "sun" : "moon"} /> {theme === "dark" ? "Light theme" : "Dark theme"}
               </button>
               <button type="button" role="menuitem" className="menuitem" onClick={() => (onBackground(), setMenu(false))} data-bgopener="1" data-testid="bg-menu-item">
                 <Icon name="image" /> Background
               </button>
-              <button type="button" role="menuitem" className="menuitem" onClick={onClose} data-testid="close">
+              <button type="button" role="menuitem" className="menuitem" onClick={() => (setMenu(false), onClose())} data-testid="close">
                 <Icon name="close" /> Close session
               </button>
             </div>
@@ -127,6 +166,7 @@ export function TopBar({ readOnly, product, session, counts, pending, sending, t
           Close session
         </button>
       )}
+      {keysOpen && createPortal(<Shortcuts onClose={onKeys} />, document.body)}
     </header>
   );
 }
@@ -151,17 +191,30 @@ function Modes({ mode, onMode, readOnly }) {
 }
 
 /** Desktop and tablet: the mode switch and the format toolbar share one glass bar. Phone: only the format strip (it shows in Edit mode); the modes live in the dock. */
-export function Toolbar({ mode, onMode, setBar, readOnly, phone }) {
+export function Toolbar({ mode, onMode, setBar, readOnly, phone, format }) {
+  const tbRef = useRef(null);
+  const [detectedHtml, setDetectedHtml] = useState(false);
+  useLayoutEffect(() => {
+    if (format) return;
+    const badge = tbRef.current?.closest(".stage")?.querySelector('[data-testid="format-badge"]')?.textContent?.trim();
+    setDetectedHtml(badge === "HTML");
+  }, [format]);
+  const isHtml = format ? format === "html" : detectedHtml;
   return (
-    <div className="toolbar glass" data-hidden={phone && mode !== "edit" ? "1" : "0"}>
+    <div ref={tbRef} className="toolbar glass" data-hidden={phone && mode !== "edit" ? "1" : "0"}>
       {!phone && <Modes mode={mode} onMode={onMode} readOnly={readOnly} />}
-      {!phone && <span className="tb-sep" aria-hidden="true" />}
+      {!phone && (!isHtml || readOnly) && <span className="tb-sep" aria-hidden="true" />}
       {readOnly && (
         <span className="locked-note" role="status" data-testid="readonly-note">
           <Icon name="lock" size={14} /> Read-only in this tab
         </span>
       )}
-      <div className="editbar" ref={setBar} data-testid="editbar" aria-label="Formatting" hidden={readOnly} />
+      <div className="editbar" ref={setBar} data-testid="editbar" aria-label="Formatting" hidden={readOnly || isHtml} />
+      {isHtml && (
+        <span className="badge tb-still" data-testid="html-still-badge">
+          Still view · scripts off
+        </span>
+      )}
     </div>
   );
 }
@@ -172,8 +225,9 @@ export function Dock({ mode, onMode, readOnly, counts, pending, sideOpen, onSide
   return (
     <nav className="dock glass" aria-label="Actions">
       <Modes mode={mode} onMode={onMode} readOnly={readOnly} />
-      <button type="button" className="send-pill" data-testid="sidebar-toggle" data-empty={pending ? "0" : "1"} onClick={onSidebar} aria-expanded={sideOpen} aria-controls="review-panel" aria-label={`Review and send${pending ? `, ${parts || 1} to send` : ""}`}>
-        <span>{sending ? "Sending" : "Send"}</span>
+      <button type="button" className="send-pill" data-testid="sidebar-toggle" data-mobile-review="1" data-empty={pending ? "0" : "1"} onClick={onSidebar} aria-expanded={sideOpen} aria-controls="review-panel" aria-label={`Review panel${pending ? `, ${parts || 1} to send` : ""}`}>
+        <Icon name="panel" size={16} />
+        <span>{sending ? "Sending" : "Review"}</span>
         {pending > 0 && <span className="cnt" aria-hidden="true">{parts || 1}</span>}
       </button>
     </nav>

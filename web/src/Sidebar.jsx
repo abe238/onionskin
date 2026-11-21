@@ -21,6 +21,12 @@ const STATUS = { draft: "Draft", sent: "Waiting", queued: "Queued", done: "Done"
 const waitingOn = (c, session) => !c.batchId || c.batchId === session.deliveredBatchId || c.batchId === session.pendingBatchId;
 const KIND = { text: "Text", cell: "Cell", format: "Formatting", undo: "Undo", redo: "Redo", "paragraph.insert": "New paragraph", "paragraph.delete": "Deleted paragraph", table: "Table", "table.insert": "New table", "table.delete": "Deleted table" };
 const kindLabel = (k) => KIND[k] || k.replace(/^(sheet|book|shape|slide)\./, (m) => `${m.slice(0, -1)} `).replace(/^./, (c) => c.toUpperCase());
+const STACK_EMPTY = {
+  xlsx: "Edit a cell, or click a cell or drag a range in Comment mode. Each thing you do lands here, newest at the bottom, with the agent's answers.",
+  pptx: "Edit a slide, or click a shape or slide in Comment mode. Each thing you do lands here, newest at the bottom, with the agent's answers.",
+  html: "Click text to edit, or select text and press Comment. Each thing you do lands here, newest at the bottom, with the agent's answers.",
+  docx: "Edit the document, or select text and press Comment. Each thing you do lands here, newest at the bottom, with the agent's answers.",
+};
 
 function Diff({ before, after }) {
   const d = diffParts(before, after);
@@ -45,13 +51,14 @@ function Num({ n, pin, done }) {
   );
 }
 
-function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus, onFocused, onText, onDelete, onGoto, onBack, onAnswer, format, activeSheet, open, canFold, onToggle }) {
+function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus, hovered, noteHasWords, onFocused, onText, onDelete, onGoto, onBack, onAnswer, onHover, format, activeSheet, open, canFold, onToggle }) {
   const ta = useRef(null);
   const li = useRef(null);
   useEffect(() => {
     // a folded card that is asked for is opened by the panel first; this runs again once it is open
     if (focus && open) {
-      ta.current?.focus();
+      if (ta.current && !ta.current.disabled) ta.current.focus();
+      else li.current?.querySelector("button:not(:disabled):not([hidden])")?.focus();
       li.current?.scrollIntoView({ block: "nearest" });
       onFocused();
     }
@@ -71,7 +78,7 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
   return (
     <li
       ref={li}
-      className={`card st-${c.status} ${moved ? "moved" : ""} ${prot ? "prot" : ""}`}
+      className={`card st-${c.status} ${moved ? "moved" : ""} ${prot ? "prot" : ""} ${hovered ? "hovered" : ""}`}
       data-testid="comment-card"
       data-comment-id={c.id}
       data-kind={c.kind}
@@ -88,6 +95,12 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
       data-changed={rz?.changed ? "1" : undefined}
       data-open={open ? "1" : "0"}
       data-held={held ? "1" : undefined}
+      onMouseEnter={() => onHover?.(c.id)}
+      onMouseLeave={() => onHover?.((cur) => (cur === c.id ? null : cur))}
+      onFocus={() => onHover?.(c.id)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) onHover?.((cur) => (cur === c.id ? null : cur));
+      }}
     >
       <div className="card-h">
         <Num n={n} pin={pin} />
@@ -171,6 +184,11 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
         {ack && editable && c.text.trim() && (
           <span className="ack" data-testid="card-ack" data-ack={ack}>
             {ack === "saved" ? <Icon name="check" size={11} /> : <Icon name="alert" size={11} />} {ack === "saved" ? "Saved" : "Not saved"}
+          </span>
+        )}
+        {editable && !c.text.trim() && !(pin && noteHasWords) && (
+          <span className="empty-draft" data-testid="empty-draft-hint">
+            Empty draft
           </span>
         )}
         <button type="button" className="iconbtn sm danger" onClick={() => onDelete(c.id)} data-testid="delete-comment" disabled={readOnly || c.status === "sent" || c.status === "queued"} aria-label={`Delete ${pin ? "pin" : "comment"} ${n}`} title={c.status === "sent" || c.status === "queued" ? "On its way to the agent: Take back to change it" : "Delete"}>
@@ -426,6 +444,19 @@ export function Sidebar(p) {
   const cardFold = (c) => ["done", "declined"].includes(c.status);
   const cardOpen = (c) => !cardFold(c) || (manual[c.id] ?? (!!tailRun && c.batchId === tailRun.batchId));
   const runOpen = (a) => manual[a.id] ?? (a === tailRun || (a === latest && hasError(a)) || (a.kind === "voice" && a === session.activity.find((x) => x.kind === "voice"))); // the newest voice entry holds "Review draft"
+  const foldableCards = stack.filter((it) => it.t === "comment" && cardFold(it.c)).map((it) => it.c);
+  const foldableRuns = stack.filter((it) => it.t === "run").map((it) => it.a);
+  const canToggleResolved = foldableCards.length >= 2 || foldableRuns.length >= 2;
+  const anyResolvedOpen = foldableCards.some((c) => cardOpen(c)) || foldableRuns.some((a) => runOpen(a));
+  const toggleAllResolved = () => {
+    const nextOpen = !anyResolvedOpen;
+    setManual((m) => {
+      const next = { ...m };
+      for (const c of foldableCards) next[c.id] = nextOpen;
+      for (const a of foldableRuns) next[a.id] = nextOpen;
+      return next;
+    });
+  };
   useEffect(() => {
     // a folded card that is asked for (its mark was clicked in the document) opens; a draft is open already and is not remembered as opened by hand
     const c = p.focusId && byId.get(p.focusId);
@@ -545,13 +576,20 @@ export function Sidebar(p) {
           {p.agentPanel}
           {stack.length === 0 && (
             <p className="empty stack-empty" data-testid="stack-empty">
-              Edit the document, or select text and press Comment. Each thing you do lands here, newest at the bottom, with the agent's answers.
+              {STACK_EMPTY[session.format] || STACK_EMPTY.docx}
             </p>
+          )}
+          {canToggleResolved && (
+            <div className="stack-tools">
+              <button type="button" className="btn quiet sm" data-testid="toggle-resolved" aria-expanded={anyResolvedOpen} onClick={toggleAllResolved}>
+                {anyResolvedOpen ? "Collapse all" : "Expand all"}
+              </button>
+            </div>
           )}
           <ul className="list stack" data-testid="panel-stack" aria-label="Your edits and comments and the agent's answers, oldest first">
             {stack.map((it) =>
               it.t === "comment" ? (
-                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} held={!!p.held?.ids.has(it.c.id)} checking={!!p.held?.checking} slow={p.sending} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
+                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} held={!!p.held?.ids.has(it.c.id)} checking={!!p.held?.checking} slow={p.sending} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} hovered={p.hoverId === it.c.id} noteHasWords={!!p.note.trim()} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} onHover={p.onHover} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
               ) : it.t === "edit" ? (
                 <li key={it.key} className="change" data-testid="change-item" data-kind={it.e.kind}>
                   <div className="change-h">
@@ -595,7 +633,7 @@ export function Sidebar(p) {
           <label htmlFor="overall">Overall instructions</label>
           <textarea id="overall" data-testid="overall-note" rows={3} value={p.note} disabled={p.readOnly} readOnly={!!p.held?.note || !!p.rewriting} maxLength={NOTE_MAX} onChange={(e) => p.onNote(e.target.value)} placeholder="Anything the agent should know about this whole batch" />
           <QuickChange match={p.quickMatch} agent={p.quickAgent} onAgent={p.onQuickAgent} />
-          <StylePrefs sid={p.sid} session={session} readOnly={p.readOnly} />
+          <StylePrefs guideDirtyRef={p.guideDirtyRef} sid={p.sid} session={session} readOnly={p.readOnly} />
           <button type="button" className="btn primary send" data-testid="send" disabled={!canSend} onClick={p.onSend} title={`${label} (${MOD}+Enter)`} aria-keyshortcuts="Meta+Enter Control+Enter" aria-describedby="send-hint" data-busy={p.busy ? "1" : "0"} data-slow={p.sending ? "1" : "0"}>
             <Icon name="send" size={16} />
             <span className="send-label">{label}</span>

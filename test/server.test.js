@@ -54,6 +54,31 @@ before(async () => {
 });
 after(() => srv.shutdown());
 
+test("a poll disconnected during outline preparation leaves its batch pending", async (t) => {
+  const file = path.join(root, "interrupted-poll.docx");
+  fs.writeFileSync(file, docxBytes(["Read me."]));
+  const s = srv.sessions.open(file);
+  srv.sessions.send(s.key, { baseSha: s.baseSha, comments: [], note: "Check this file." });
+  let release, started;
+  const waiting = new Promise((resolve) => { started = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.mock.method(srv.sessions, "outlineAhead", () => { started(); return gate; });
+  const disconnected = new Promise((resolve) => srv.unix.once("request", (_req, res) => res.once("close", resolve)));
+  const request = http.get({ socketPath: socketPath(), path: "/cli/poll?file=" + encodeURIComponent(file) });
+  request.on("error", () => {});
+  try {
+    await waiting;
+    request.destroy();
+    await disconnected;
+  } finally {
+    release();
+  }
+  await viaSocket("GET", "/health");
+  assert.ok(s.pending, "the next poller can still take the batch");
+  assert.equal(s.delivered, null);
+  assert.equal(s.pollers.length, 0);
+});
+
 test("state dir is 0700, socket 0600, server record 0600; a symlinked or foreign-mode state dir is not trusted", () => {
   const dir = process.env.ONIONSKIN_STATE_DIR;
   assert.equal(fs.statSync(dir).mode & 0o777, 0o700);

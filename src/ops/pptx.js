@@ -297,6 +297,7 @@ export function replaceInRuns(runs, s, e, replacement) {
 
 export async function exec(st, b) {
   const { op } = b;
+  let mutated = 0;
   try {
     if (op.op === "set_shape_text") {
       const f = await findShape(st, b.target);
@@ -347,6 +348,7 @@ export async function exec(st, b) {
         }
         return models.get(slide).get(sid);
       };
+      const writes = [];
       for (const [key, hs] of bySlide) {
         const [slideId, sid] = key.split(":");
         const slide = indexOf(st, slideId); // by id: an earlier slide op of this file may have moved or removed it
@@ -368,14 +370,18 @@ export async function exec(st, b) {
           n += found.length;
           return replaceAllInRuns(runs, found.map((r) => r.start), found.map((r) => r.end - r.start), op.replace);
         });
-        await st.h.engine.call("pptx.setText", [slide, Number(sid), specs]);
+        writes.push({ slide, sid: Number(sid), specs });
       }
       if (n + skippedMatches !== b.total) return { ...refused("incomplete_replace", `replaced ${n} and listed ${skippedMatches} of ${b.total} match(es)`), dirty: true };
+      for (const w of writes) {
+        await st.h.engine.call("pptx.setText", [w.slide, w.sid, w.specs]);
+        mutated++;
+      }
       if (!n && skipped.length) return { status: "skipped_protected", reason: "every shape with a match is protected", detail: { skipped_protected: skipped } };
       return { status: "applied", detail: { replaced: n, ...(skipped.length ? { skipped_protected: skipped } : {}) } };
     }
   } catch (err) {
-    if (err instanceof RangeError) return refused("match_in_field", err.message);
+    if (err instanceof RangeError) return { ...refused("match_in_field", err.message), ...(mutated > 0 ? { dirty: true } : {}) };
     return engineFailure(err);
   }
   return refused("unsupported_op", op.op);

@@ -62,6 +62,37 @@ describe("Stamps (DOCX)", () => {
     await page.close();
   });
 
+  for (const [label, words] of [["Shorter", SHORTER], ["Translate", "Translate this into French."]]) {
+    test(`${label} sends the stamp words followed by the typed Quick ask text`, async () => {
+      const file = copy(`typed-${label}.docx`);
+      const p = w.spawnCli(["poll", file]);
+      const page = await open(file);
+      await page.locator(q("banner-listening")).waitFor({ timeout: 20000 });
+      await selectAndAsk(page, "Paragraph 020:", 20 / 300);
+      await page.locator(q("quick-ask-text")).fill("  Keep the last sentence  ");
+      await stamp(page, label).click();
+      if (label === "Translate") await page.locator(q("stamp-language"), { hasText: /^French$/ }).click();
+      const batch = await poll(p);
+      assert.equal(batch.instructions.comments[0].text, `${words} Keep the last sentence`);
+      await page.close();
+    });
+  }
+
+  test("a stamp that would cut typed words leaves Quick ask open and sends nothing", async () => {
+    const page = await open(copy("long-comment.docx"));
+    const sends = [];
+    page.on("request", (r) => { if (new URL(r.url()).pathname === "/api/send") sends.push(r); });
+    await selectAndAsk(page, "Paragraph 020:", 20 / 300);
+    const typed = "a".repeat(4990) + " LAST WORD";
+    const box = page.locator(q("quick-ask-text"));
+    await box.fill(typed);
+    await stamp(page, "Shorter").click();
+    await page.getByText(/stamp.*5,000 characters/i).waitFor();
+    assert.equal(await box.inputValue(), typed);
+    assert.equal(sends.length, 0);
+    await page.close();
+  });
+
   test("Translate asks for a language, then French sends the exact sentence", async () => {
     const file = copy("translate.docx");
     const p = w.spawnCli(["poll", file]);
@@ -73,6 +104,26 @@ describe("Stamps (DOCX)", () => {
     await page.locator(q("stamp-language"), { hasText: /^French$/ }).click();
     const batch = await poll(p);
     assert.equal(batch.instructions.comments[0].text, "Translate this into French.");
+    await page.close();
+  });
+
+  test("Edit stamps waits for the first load and warns before editing after a failure", async () => {
+    const page = await br.page();
+    let answer;
+    const held = new Promise((resolve) => { answer = resolve; });
+    await page.route("**/api/stamps", async (route) => {
+      await held;
+      await route.fulfill({ status: 503, body: "{}" });
+    });
+    await page.goto(await w.open(copy("load-stamps.docx")), { waitUntil: "domcontentloaded" });
+    await waitDoc(page);
+    await selectAndAsk(page, "Paragraph 020:", 20 / 300);
+    const edit = page.locator(q("stamp-edit"));
+    assert.equal(await edit.isDisabled(), true);
+    answer();
+    await edit.click();
+    await page.getByText(/could not load.*stamps/i).waitFor();
+    assert.equal(await page.locator(q("stamp-add")).isEnabled(), true);
     await page.close();
   });
 
@@ -126,7 +177,10 @@ describe("Stamps (DOCX)", () => {
     fs.rmSync(stampsFile(), { force: true });
     const page = await open(file);
     await selectAndAsk(page, "Paragraph 060:", 60 / 300);
+    const canLeave = () => page.evaluate(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true })));
+    assert.equal(await canLeave(), true);
     await addOwn(page, "Formal", "Make this more formal.");
+    assert.equal(await canLeave(), false, "unsaved stamps guard the page");
     await page.locator(q("stamp-done")).click();
     await stamp(page, "Formal").waitFor({ timeout: 5000 });
     assert.deepEqual(JSON.parse(readStampsFile()).stamps, [{ label: "Formal", words: "Make this more formal." }]);
@@ -134,6 +188,7 @@ describe("Stamps (DOCX)", () => {
     await page.locator(q("stamp-remove")).first().click();
     await page.locator(q("stamp-done")).click();
     await page.locator(q("stamp-edit")).waitFor({ timeout: 5000 });
+    assert.equal(await canLeave(), true, "saving releases the guard");
     assert.equal(await stamp(page, "Formal").count(), 0);
     assert.deepEqual(JSON.parse(readStampsFile()).stamps, []);
     await page.close();
@@ -209,6 +264,36 @@ describe("Stamps (DOCX)", () => {
     await page.waitForTimeout(1200);
     assert.deepEqual(await at(), before, "the page did not scroll as a side effect");
     assert.equal(p.child.exitCode, null, "no batch was sent: the poll is still waiting");
+    await page.close();
+  });
+
+  test("V1: label and words inputs are disabled while Save is in flight", async () => {
+    const file = copy("save-busy.docx");
+    fs.rmSync(stampsFile(), { force: true });
+    const page = await open(file);
+    await selectAndAsk(page, "Paragraph 040:", 40 / 300);
+    await page.locator(q("stamp-edit")).click();
+    await page.locator(q("stamp-add")).click();
+    await page.locator(q("stamp-name")).fill("Formal");
+    await page.locator(q("stamp-words")).fill("Original");
+    let release;
+    const gate = new Promise((r) => (release = r));
+    let held = false;
+    await page.route("**/api/stamps*", async (route) => {
+      if (route.request().method() !== "POST" || held) return route.continue();
+      held = true;
+      await gate;
+      return route.continue();
+    });
+    await page.locator(q("stamp-save")).click();
+    const deadline = Date.now() + 5000;
+    while (!held && Date.now() < deadline) await page.waitForTimeout(25);
+    assert.equal(held, true, "POST /api/stamps was held");
+    assert.equal(await page.locator(q("stamp-name")).isDisabled(), true, "label input is disabled while saving");
+    assert.equal(await page.locator(q("stamp-words")).isDisabled(), true, "words input is disabled while saving");
+    release();
+    await stamp(page, "Formal").waitFor({ timeout: 5000 });
+    assert.deepEqual(JSON.parse(readStampsFile()).stamps, [{ label: "Formal", words: "Original" }]);
     await page.close();
   });
 });

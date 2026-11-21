@@ -28,6 +28,7 @@ import { BG_PRESETS, MAX_IMAGE_BYTES, SettingsError, readCustomImage, readSettin
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_DIST = env("WEB_DIST", path.join(root, "web", "dist"));
 const MAX_BODY = 300 * 1024 * 1024; // base64 of a 200 MB document; ceiling: whole body buffered in memory. Upgrade path: binary upload route.
+const META_ROUTES = new Set(["/api/claim", "/api/answer", "/api/review", "/api/suggestion", "/api/takeback", "/api/revert", "/api/show-copy", "/api/dismiss-conflict", "/api/close"]);
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".ico": "image/x-icon", ".map": "application/json" };
 
 function secure(res) {
@@ -110,20 +111,44 @@ function serveIndex(res, launchToken) {
   res.end(raw);
 }
 
+function decodeUriPart(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw new HttpError(400, "invalid URL encoding");
+  }
+}
+
 function serveStatic(res, urlPath) {
-  const rel = decodeURIComponent(urlPath).replace(/^\/+/, "");
-  const file = path.resolve(WEB_DIST, rel);
-  if (file !== WEB_DIST && !file.startsWith(WEB_DIST + path.sep)) return sendText(res, 403, "forbidden");
+  const rel = decodeUriPart(urlPath).replace(/^\/+/, "");
+  const dist = path.resolve(WEB_DIST);
+  const file = path.resolve(dist, rel);
+  if (file !== dist && !file.startsWith(dist + path.sep)) return sendText(res, 403, "forbidden");
+  let realDist;
+  let realFile;
   let st;
   try {
-    st = fs.statSync(file);
+    realDist = fs.realpathSync(dist);
+    realFile = fs.realpathSync(file);
+  } catch {
+    return sendText(res, 404, "not found");
+  }
+  if (realFile !== realDist && !realFile.startsWith(realDist + path.sep)) return sendText(res, 403, "forbidden");
+  try {
+    st = fs.statSync(realFile);
   } catch {
     return sendText(res, 404, "not found");
   }
   if (!st.isFile()) return sendText(res, 404, "not found");
   secure(res);
   res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Content-Length": st.size });
-  fs.createReadStream(file).pipe(res);
+  const stream = fs.createReadStream(realFile);
+  stream.on("error", () => {
+    if (!res.headersSent) sendText(res, 404, "not found");
+    else res.destroy();
+  });
+  res.on("close", () => stream.destroy());
+  stream.pipe(res);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,14 +168,22 @@ async function withStartLock(fn) {
       break;
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
-      let alive = false;
+      let stale = false;
       try {
-        process.kill(Number(fs.readFileSync(lock, "utf8")), 0);
-        alive = true;
-      } catch (e) {
-        alive = e.code === "EPERM";
+        const pid = Number(fs.readFileSync(lock, "utf8"));
+        if (Number.isInteger(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+          } catch (e) {
+            stale = e.code !== "EPERM";
+          }
+        } else {
+          stale = Date.now() - fs.statSync(lock).mtimeMs > 2000;
+        }
+      } catch {
+        continue;
       }
-      if (!alive) {
+      if (stale) {
         try {
           fs.unlinkSync(lock);
         } catch {}
@@ -313,19 +346,27 @@ export async function startServer({ port = 0 } = {}) {
       }
       if (req.method === "GET" && p === "/api/stale") return sendJson(res, 200, sessions.staleCheck(key, url.searchParams.get("sha") || ""));
       if (req.method === "GET" && p === "/api/history") return sendJson(res, 200, await sessions.history(key));
-      if (req.method === "GET" && p.startsWith("/api/history/")) return sendJson(res, 200, await sessions.historyUpdate(key, decodeURIComponent(p.slice("/api/history/".length)).slice(0, 64)));
+      if (req.method === "GET" && p.startsWith("/api/history/")) return sendJson(res, 200, await sessions.historyUpdate(key, decodeUriPart(p.slice("/api/history/".length)).slice(0, 64)));
       if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
       // the preview of a quick change (src/quick-plan.js): read only, so no editor claim; it answers for the file as it is on disk now
       if (p === "/api/quick") return sendJson(res, 200, await quickPreview(s, String((await readJson(req, 8 * 1024))?.note ?? "")));
       // "Build my voice guide" (src/voice-learn.js): the editing tab only, with its own body cap (five 20 MB files in base64 plus 1 MB)
       if (p === "/api/voice/build") {
         sessions.requireEditor(key, tab);
-        return sendJson(res, 200, { ok: true, session: (await buildVoiceRequest(sessions, key, await readJson(req, VOICE_BUILD_MAX_BODY)), sessions.view(s)) });
+        const body = await readJson(req, VOICE_BUILD_MAX_BODY);
+        await buildVoiceRequest(sessions, key, body);
+        return sendJson(res, 200, { ok: true, session: sessions.view(s) });
       }
       // starts the writing helper of quick fixes if it is cold (src/suggest.js); carries no text, changes nothing
       if (p === "/api/suggest/warm") return sendJson(res, 200, (await readJson(req, 1024), warmSuggest()));
       // the export and the agent's buttons take ids only; a draft carries no document, so it is held to the cap of a request's own data
-      const body = await readJson(req, p === "/api/export-tracked" || p === "/api/agent" ? 1024 : p === "/api/suggest" ? 8 * 1024 : p === "/api/draft" || p === "/api/handover" ? REQUEST_MAX : MAX_BODY, p === "/api/draft" || p === "/api/handover" ? tooLarge("This draft") : null);
+      const bodyMax =
+        p === "/api/export-tracked" || p === "/api/agent" ? 1024 :
+        p === "/api/suggest" ? 8 * 1024 :
+        META_ROUTES.has(p) ? 16 * 1024 :
+        p === "/api/draft" || p === "/api/handover" ? REQUEST_MAX :
+        MAX_BODY;
+      const body = await readJson(req, bodyMax, p === "/api/draft" || p === "/api/handover" ? tooLarge("This draft") : null);
       // a Send or a quick fix's Use carries the document too: their comments, note, typed edits and view state are held to the same cap
       if ((p === "/api/send" || p === "/api/suggest/use") && requestSize([body.comments, body.note, body.edits, body.viewState, body.htmlEdits]) > REQUEST_MAX) throw tooLarge(p === "/api/send" ? "This Send" : "This request");
       if (p === "/api/claim" && !/^[\w-]{6,64}$/.test(tab)) return sendJson(res, 400, { error: "a tab id is required" });
@@ -349,8 +390,8 @@ export async function startServer({ port = 0 } = {}) {
       // a tap on a question card: an index (or null for "Something else"), never option text; checked against what the server stored
       if (p === "/api/answer") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(key, () => sessions.answer(key, { id: String(body.id || ""), choice: body.choice })), sessions.view(s)) });
       // review first (src/review.js): a button's kind, then taps on its cards (ids and an integer, never text)
-      if (p === "/api/review") return sendJson(res, 200, { ok: true, session: (sessions.requestReview(key, body.kind), sessions.view(s)) });
-      if (p === "/api/suggestion") return sendJson(res, 200, { ok: true, session: (sessions.answerSuggestions(key, { ids: body.ids, choice: body.choice }), sessions.view(s)) });
+      if (p === "/api/review") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(s.key, () => sessions.requestReview(key, body.kind)), sessions.view(s)) });
+      if (p === "/api/suggestion") return sendJson(res, 200, { ok: true, session: (await sessions.inTurn(s.key, () => sessions.answerSuggestions(key, { ids: body.ids, choice: body.choice })), sessions.view(s)) });
       // quick fixes (src/suggest.js): asking writes nothing; Use names the stored suggestion by id and writes it on this Mac
       if (p === "/api/suggest") return sendJson(res, 200, await suggest(sessions, key, body));
       if (p === "/api/suggest/use") return sendJson(res, 200, { ok: true, session: (await useSuggestion(sessions, key, { ...body, tab }), sessions.view(s)) });
@@ -423,27 +464,50 @@ export async function startServer({ port = 0 } = {}) {
     return sendJson(res, 200, await status());
   }
 
+  function dropSse(key, res) {
+    const set = sse.get(key);
+    if (!set) return;
+    if (set.delete(res)) tabSeen.set(key, Date.now());
+    if (!set.size) sse.delete(key);
+  }
+  function writeSse(key, res, chunk) {
+    try {
+      res.write(chunk);
+      return true;
+    } catch {
+      dropSse(key, res);
+      try { res.destroy(); } catch {}
+      return false;
+    }
+  }
   function events(req, res, key, tab) {
     const s = sessions.get(key);
-    if (/^[\w-]{6,64}$/.test(tab)) {
-      sessions.claimEditor(key, tab);
-      req.on("close", () => sessions.releaseEditor(key, tab));
-    }
+    const hasTab = /^[\w-]{6,64}$/.test(tab);
+    if (hasTab) sessions.claimEditor(key, tab);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (hasTab) sessions.releaseEditor(key, tab);
+      dropSse(key, res);
+    };
+    req.on("close", cleanup);
+    res.on("error", cleanup);
+    res.on("close", cleanup);
     secure(res);
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
-    res.write(`event: state\ndata: ${JSON.stringify(sessions.view(s))}\n\n`);
     if (!sse.has(key)) sse.set(key, new Set());
     sse.get(key).add(res);
     tabSeen.set(key, Date.now());
-    req.on("close", () => (sse.get(key)?.delete(res), tabSeen.set(key, Date.now())));
+    writeSse(key, res, `event: state\ndata: ${JSON.stringify(sessions.view(s))}\n\n`);
   }
   sessions.on("change", (s, event) => {
     const set = sse.get(s.key);
     if (!set?.size) return;
     const view = JSON.stringify(sessions.view(s));
-    for (const res of set) {
-      if (event === "reload") res.write(`event: reload\ndata: ${view}\n\n`);
-      res.write(`event: state\ndata: ${view}\n\n`);
+    for (const res of [...set]) {
+      if (event === "reload" && !writeSse(s.key, res, `event: reload\ndata: ${view}\n\n`)) continue;
+      writeSse(s.key, res, `event: state\ndata: ${view}\n\n`);
     }
   });
 
@@ -504,6 +568,8 @@ export async function startServer({ port = 0 } = {}) {
       if (req.method === "GET" && p === "/cli/poll") {
         const f = url.searchParams.get("file") || "";
         checkBinding(f, url.searchParams.get("holder")); // before the file is looked up or opened
+        let handle;
+        res.once("close", () => handle?.cancel());
         let s;
         try {
           s = sessions.byFile(f);
@@ -511,8 +577,8 @@ export async function startServer({ port = 0 } = {}) {
           s = await sessions.openAsync(f); // a poller may start before (or after a server restart without) `open`
         }
         await sessions.outlineAhead(s.key, url.searchParams.get("holder") || "agent"); // the outline a delivery carries, built off this thread
-        const handle = sessions.poll(s.key, { ack: url.searchParams.get("ack") === "1", holder: url.searchParams.get("holder") || "agent", full: url.searchParams.get("full") === "1", compact: url.searchParams.get("compact") === "1" });
-        res.on("close", () => handle.cancel());
+        if (res.destroyed) return;
+        handle = sessions.poll(s.key, { ack: url.searchParams.get("ack") === "1", holder: url.searchParams.get("holder") || "agent", full: url.searchParams.get("full") === "1", compact: url.searchParams.get("compact") === "1" });
         const out = await handle.promise;
         if (res.destroyed) return;
         return sendJson(res, 200, out);
@@ -589,13 +655,16 @@ export async function startServer({ port = 0 } = {}) {
   const timer = setInterval(() => {
     sessions.tick();
     agent.tick();
-    for (const set of sse.values()) for (const r of set) r.write(": ping\n\n");
+    for (const [k, set] of [...sse]) for (const r of [...set]) writeSse(k, r, ": ping\n\n");
     // the background agent's own polls do not keep the server up (it stops after 20 minutes without a tab; then the server may stop too)
     const busy = [...sessions.map.values()].some((s) => s.pollers.some((p) => !isBgHolder(p.holder)) || s.delivered);
     if (!busy && ![...sse.values()].some((x) => x.size) && Date.now() - lastActivity > idleMs) shutdown();
   }, Number(env("TICK_MS", 1000)));
 
+  let shuttingDown = false;
   function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
     clearInterval(timer);
     watcher.close();
     for (const k of [...late.keys()]) cancelLate(k, "the server stopped"); // no soffice outlives the server

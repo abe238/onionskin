@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./lib.js";
 import { BUILT_IN, LANGUAGES, SELECT_ONE_SENTENCE, SUGGEST_TASKS, stampText } from "./stamps.js";
 import { SuggestOffer } from "./SuggestOffer.jsx";
@@ -11,17 +11,23 @@ const MAX_OWN = 8;
 /** The person's own stamps, loaded once. `save` resolves to the stored list or rejects with a plain message to show. */
 export function useStamps() {
   const [own, setOwn] = useState([]);
+  const [load, setLoad] = useState("loading");
   useEffect(() => {
     api("/api/stamps")
-      .then((r) => Array.isArray(r.stamps) && setOwn(r.stamps))
-      .catch(() => {}); // no stamps file or no answer: the built-in four still work
+      .then((r) => {
+        if (!Array.isArray(r.stamps)) return setLoad("failed");
+        setOwn(r.stamps);
+        setLoad("ready");
+      })
+      .catch(() => setLoad("failed"));
   }, []);
   const save = useCallback(async (list) => {
     const r = await api("/api/stamps", { method: "POST", body: { stamps: list } });
     setOwn(r.stamps);
+    setLoad("ready");
     return r.stamps;
   }, []);
-  return { own, save };
+  return { own, save, load };
 }
 
 
@@ -31,13 +37,15 @@ export function useStamps() {
  * (quick fixes on, one sentence selected, a built-in Shorter, Friendlier or Fix grammar) shows a suggestion first. `suggest` =
  * {on, format, onOn, oneSentence}: whether quick fixes are set up, what the one-time offer needs, and whether the selection is certainly not one sentence.
  */
-export function Stamps({ own, save, disabled, onStamp, suggest }) {
+export function Stamps({ own, save, load, dirtyRef, disabled, onStamp, suggest }) {
   const [mode, setMode] = useState("row"); // row | language | edit
   const [pending, setPending] = useState(null); // the stamp waiting for a language
   const [draft, setDraft] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [hot, setHot] = useState(null); // the stamp under the pointer or focus: the one-sentence notice is for a stamp that can suggest
+  const keyRef = useRef(0);
+  const stripKeys = (list) => list.map(({ _key, ...s }) => s);
 
   const tap = (stamp) => {
     if (stamp.language) {
@@ -47,7 +55,7 @@ export function Stamps({ own, save, disabled, onStamp, suggest }) {
     onStamp(stampText(stamp), stamp);
   };
   const edit = () => {
-    setDraft(own.map((s) => ({ ...s })));
+    setDraft(own.map((s) => ({ ...s, _key: ++keyRef.current })));
     setError("");
     setMode("edit");
   };
@@ -55,19 +63,30 @@ export function Stamps({ own, save, disabled, onStamp, suggest }) {
   const add = () => {
     if (draft.length >= MAX_OWN) return setError("You can keep up to 8 stamps.");
     setError("");
-    setDraft((d) => [...d, { label: "", words: "" }]);
+    setDraft((d) => [...d, { label: "", words: "", _key: ++keyRef.current }]);
   };
-  const dirty = JSON.stringify(draft) !== JSON.stringify(own);
+  const cancel = () => {
+    setDraft([]);
+    setError("");
+    setMode("row");
+  };
+  const dirty = mode === "edit" && JSON.stringify(stripKeys(draft)) !== JSON.stringify(own);
+  useLayoutEffect(() => {
+    dirtyRef.current = dirty;
+    return () => { dirtyRef.current = false; };
+  }, [dirtyRef, dirty]);
   const saveAll = async () => {
+    if (busy) return;
     setBusy(true);
     try {
-      await save(draft);
+      await save(stripKeys(draft));
       setError("");
       setMode("row");
     } catch (e) {
       setError(e?.message || "That did not save. Try again.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   if (mode === "language")
@@ -90,11 +109,12 @@ export function Stamps({ own, save, disabled, onStamp, suggest }) {
   if (mode === "edit")
     return (
       <div className="stamps" data-testid="stamps-edit">
+        {load === "failed" && <p className="stamps-err" role="alert">Could not load your stamps. Saving will replace any saved stamps.</p>}
         {draft.map((s, i) => (
-          <div className="stamp-edit" key={i}>
-            <input type="text" value={s.label} aria-label="Name" placeholder="Name" data-testid="stamp-name" onChange={(e) => change(i, "label", e.target.value)} />
-            <input type="text" value={s.words} aria-label="What it asks for" placeholder="What it asks for" data-testid="stamp-words" onChange={(e) => change(i, "words", e.target.value)} />
-            <button type="button" className="stamp stamp-quiet" data-testid="stamp-remove" onClick={() => setDraft((d) => d.filter((_, j) => j !== i))}>
+          <div className="stamp-edit" key={s._key ?? i}>
+            <input type="text" value={s.label} disabled={busy} aria-label="Name" placeholder="Name" data-testid="stamp-name" onChange={(e) => change(i, "label", e.target.value)} />
+            <input type="text" value={s.words} disabled={busy} aria-label="What it asks for" placeholder="What it asks for" data-testid="stamp-words" onChange={(e) => change(i, "words", e.target.value)} />
+            <button type="button" className="stamp stamp-quiet" disabled={busy} data-testid="stamp-remove" onClick={() => setDraft((d) => d.filter((_, j) => j !== i))}>
               Remove
             </button>
           </div>
@@ -105,14 +125,17 @@ export function Stamps({ own, save, disabled, onStamp, suggest }) {
           </p>
         )}
         <div className="stamps-row">
-          <button type="button" className="stamp" data-testid="stamp-add" onClick={add}>
+          <button type="button" className="stamp" disabled={busy} data-testid="stamp-add" onClick={add}>
             Add a stamp
           </button>
-          <button type="button" className="stamp stamp-go" disabled={busy} data-testid="stamp-save" onClick={saveAll}>
+          <button type="button" className="stamp stamp-go" disabled={!dirty || busy} data-testid="stamp-save" onClick={saveAll}>
             Save
           </button>
-          <button type="button" className="stamp stamp-quiet" data-testid="stamp-done" onClick={dirty ? saveAll : () => setMode("row")}>
+          <button type="button" className="stamp stamp-quiet" disabled={busy} data-testid="stamp-done" onClick={dirty ? saveAll : () => setMode("row")}>
             Done
+          </button>
+          <button type="button" className="stamp stamp-quiet" disabled={busy} data-testid="stamp-cancel" onClick={cancel}>
+            Cancel
           </button>
         </div>
       </div>
@@ -126,7 +149,7 @@ export function Stamps({ own, save, disabled, onStamp, suggest }) {
             {s.label}
           </button>
         ))}
-        <button type="button" className="stamp stamp-quiet" data-testid="stamp-edit" onClick={edit}>
+        <button type="button" className="stamp stamp-quiet" data-testid="stamp-edit" disabled={load === "loading"} onClick={edit}>
           Edit stamps
         </button>
       </div>

@@ -1,4 +1,5 @@
 import { untrusted } from "./sanitize.js";
+import { foldLinkText } from "./voice-guide.js";
 
 /**
  * A question the agent asks instead of declining: `{"comment":"c1","ask":"Which date?","options":["March 3","March 13"]}`.
@@ -16,7 +17,12 @@ export const QUESTION_FIX = "A question needs 2 to 4 short options (40 character
 /** The note on the card when `done` received a question it would not show. */
 export const BAD_QUESTION_NOTE = "The agent asked a question that could not be shown.";
 
-const LINK = /:\/\/|www\./i;
+// Refuse only ://, www., or email addresses (mailto: or a@b.c), after dot-folding and invisible-char stripping.
+// Bare domains without a scheme ("evil.com") are an accepted gap so ordinary text ("Finished.No", "Socket.IO", "main.py:42") always passes.
+// One character before @ proves the local part is nonempty without scanning each suffix.
+const LINK = /:\/\/|www\.|mailto:|[^\s@]@[^\s@.]+\.[^\s@.]/iu;
+// Invisible characters left after untrusted() cleans the displayed text.
+const visibleText = (s) => s.replace(/[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u2800\u3164\uFE0E\uFE0F\uFFA0]/gu, "");
 const len = (s) => [...s].length; // code points, as untrusted() and the schema count
 
 /** One string: cleaned, then refused when empty, over `max` or a link. Returns {text} or {reason}. */
@@ -25,7 +31,8 @@ function cleanOne(v, max, what) {
   const text = untrusted(v, Number.MAX_SAFE_INTEGER);
   if (!text) return { reason: `${what} is empty` };
   if (len(text) > max) return { reason: `${what} is longer than ${max} characters` };
-  if (LINK.test(text)) return { reason: `${what} contains a link` };
+  const folded = foldLinkText(visibleText(text));
+  if (LINK.test(folded)) return { reason: `${what} contains a link` };
   return { text };
 }
 
@@ -42,6 +49,6 @@ export function cleanQuestion({ ask, options } = {}) {
     if (c.reason) return refuse(c.reason);
     out.push(c.text);
   }
-  if (new Set(out.map((o) => o.toLowerCase())).size !== out.length) return refuse("two options are the same");
+  if (new Set(out.map((o) => visibleText(o).toLowerCase())).size !== out.length) return refuse("two options are the same");
   return { question: { text: q.text, options: out } };
 }

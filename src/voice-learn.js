@@ -65,6 +65,7 @@ export function voiceJob(s, { last = null, diskSha = null, writtenSha = null, se
 
 const running = new Set(); // live workers, ended by stopVoice
 let epoch = 0; // moved on by Forget and the learning switch: a job that started before either stores nothing
+let activeSampleToken = null; // concurrency cap of 1 active voice-sample-worker to avoid >450MB OOM spikes
 
 /** Runs src/voice-worker.js over three blob paths. Resolves {pairs, examples}, or null when it fails, crashes or times out (then it is ended). */
 function analyze(versions) {
@@ -106,6 +107,7 @@ export async function learnFromSend(job) {
 
 /** Ends every running learning worker (the server is stopping). */
 export function stopVoice() {
+  activeSampleToken = null;
   for (const w of [...running]) w.terminate();
   running.clear();
 }
@@ -221,8 +223,11 @@ function agentPairs(s) {
   return runs.slice(-AGENT_PAIRS_MAX).map((u) => ({ before: s.snapshots.blob(u.before), after: s.snapshots.blob(u.after) }));
 }
 
-/** Runs src/voice-sample-worker.js. Resolves {sources} or {error: code}; a crash or a timeout (60 s) is "unreadable" and the worker is ended. */
+/** Runs src/voice-sample-worker.js. Resolves {sources} or {error: code}; at most 1 active worker at a time. */
 function sampleInWorker(job) {
+  if (activeSampleToken !== null) return Promise.resolve({ error: "busy", busy: true });
+  const token = {};
+  activeSampleToken = token;
   return new Promise((resolve) => {
     let worker;
     let settled = false;
@@ -230,6 +235,7 @@ function sampleInWorker(job) {
     const finish = (r) => {
       if (settled) return;
       settled = true;
+      if (activeSampleToken === token) activeSampleToken = null;
       clearTimeout(timer);
       running.delete(worker);
       worker?.terminate();
@@ -276,6 +282,9 @@ export async function buildVoiceRequest(sessions, key, body) {
   const saved = readGuide();
   if (body.improve && !saved.text) throw new VoiceError("There is no saved guide to improve.");
 
+  if ((body.open_file || files.length || body.texts.length) && activeSampleToken !== null) {
+    throw httpError(429, "Another voice guide is being built right now. Wait a moment, then try again.", "busy");
+  }
   let open = null;
   if (body.open_file) {
     let bytes;
@@ -298,6 +307,7 @@ export async function buildVoiceRequest(sessions, key, body) {
   let sampled = { sources: [] };
   if (sources) {
     sampled = await sampleInWorker({ open, files, texts: body.texts, shares: shares.source });
+    if (sampled.busy) throw httpError(429, "Another voice guide is being built right now. Wait a moment, then try again.", "busy");
     if (sampled.error) throw new VoiceError(UNREADABLE);
   }
   const evidence = {

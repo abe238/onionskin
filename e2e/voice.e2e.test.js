@@ -251,6 +251,44 @@ describe("hostile text", () => {
 });
 
 describe("import", () => {
+  test("only the current file may fill the open guide, and typing waits for that read", async () => {
+    const { w, page } = await open();
+    try {
+      await openPanel(page);
+      await T(page, "voice-import-open").click();
+      await page.evaluate(() => {
+        const read = Blob.prototype.arrayBuffer;
+        window.reads = [];
+        Blob.prototype.arrayBuffer = function () {
+          const bytes = read.call(this);
+          return new Promise((resolve) => window.reads.push(async () => resolve(await bytes)));
+        };
+      });
+      const choose = (name) => T(page, "voice-import-file").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(name) });
+      const finish = (i) => page.evaluate(async (i) => {
+        await window.reads[i]();
+        await new Promise(requestAnimationFrame);
+      }, i);
+      const box = T(page, "voice-import-text");
+      await choose("first.txt");
+      assert.equal(await box.isDisabled(), true);
+      await choose("second.txt");
+      await finish(1);
+      await until(async () => (await box.inputValue()) === "second.txt", "the second file");
+      await box.fill("Second with edits");
+      await finish(0);
+      assert.equal(await box.inputValue(), "Second with edits");
+      await choose("third.txt");
+      await T(page, "voice-import-cancel").click();
+      await T(page, "voice-import-open").click();
+      await box.fill("Fresh typing");
+      await finish(2);
+      assert.equal(await box.inputValue(), "Fresh typing");
+    } finally {
+      await w.cleanup();
+    }
+  });
+
   test("a file fills the preview and stores nothing; Save guide stores it; 7,001 characters is refused; a bad file is refused", async () => {
     const { w, file, page } = await open();
     try {
@@ -335,6 +373,35 @@ describe("import", () => {
       const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 15000 }), T(page, "voice-export-save").click()]);
       const md = fs.readFileSync(await dl.path(), "utf8");
       assert.match(md, /\n## My guide\nWrite like a neighbor\.\n$/);
+    } finally {
+      await w.cleanup();
+    }
+  });
+
+  test("W4: Load a voice guide disables the textarea, file input and tick box while Save guide is in flight", async () => {
+    const { w, page } = await open();
+    try {
+      await openPanel(page);
+      await T(page, "voice-import-open").click();
+      await T(page, "voice-import").waitFor();
+      await T(page, "voice-import-text").fill("Write like a neighbor.");
+      let release;
+      const gate = new Promise((r) => (release = r));
+      let held = false;
+      await page.route("**/api/voice/guide*", async (route) => {
+        if (route.request().method() !== "POST" || held) return route.continue();
+        held = true;
+        await gate;
+        return route.continue();
+      });
+      await T(page, "voice-import-save").click();
+      await until(() => held, "POST /api/voice/guide held", 5000);
+      assert.equal(await T(page, "voice-import-text").isDisabled(), true, "textarea is disabled while saving");
+      assert.equal(await T(page, "voice-import-file").isDisabled(), true, "file input is disabled while saving");
+      assert.equal(await T(page, "voice-import-send").isDisabled(), true, "send tick box is disabled while saving");
+      release();
+      await T(page, "voice-import").waitFor({ state: "detached", timeout: 8000 });
+      assert.equal(JSON.parse(fs.readFileSync(path.join(w.state, "voice-guide.json"), "utf8")).text, "Write like a neighbor.");
     } finally {
       await w.cleanup();
     }

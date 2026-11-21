@@ -483,7 +483,7 @@ export class Sessions extends EventEmitter {
       const j = JSON.parse(fs.readFileSync(f, "utf8"));
       const s = { ...this.#fresh(key, j.file, j.format, j.baseSha), ...j, pollers: [] };
       // a hard kill can leave work in flight that no result will ever settle
-      if (s.delivered?.stage === "checking") s.delivered.stage = "writing";
+      if (s.delivered?.stage === "checking") (s.delivered.stage = "writing"), (s.delivered.checkingAt = null);
       if (s.delivered?.local) {
         // the local runner died with the server. Not yet writing: the batch waits for an agent, as if handed back. Writing: the lease
         // expires at the first tick, which records what was written (it needs the snapshots, which open() sets after this)
@@ -1674,7 +1674,16 @@ export class Sessions extends EventEmitter {
 
   /** Called on a timer: a delivered batch whose lease expired goes back to pending (stranded) and the document unlocks. */
   tick() {
-    for (const s of this.map.values()) if (s.delivered && s.delivered.lease.expiresAt <= this.now()) this.#expire(s);
+    const now = this.now();
+    const checkMax = Math.max(LEASE_MS(), 5 * 60_000);
+    for (const s of this.map.values()) {
+      if (!s.delivered || s.delivered.lease.expiresAt > now) continue;
+      if (s.delivered.stage === "checking") {
+        const since = s.delivered.checkingAt ?? s.delivered.lease.expiresAt;
+        if (now - since < checkMax) continue;
+      }
+      this.#expire(s);
+    }
   }
 
   /**
@@ -1710,6 +1719,7 @@ export class Sessions extends EventEmitter {
     const s = this.get(key);
     if (!s.delivered || s.delivered.stage === stage) return;
     s.delivered.stage = stage;
+    s.delivered.checkingAt = stage === "checking" ? this.now() : null;
     this.#changed(s);
   }
 
@@ -1854,6 +1864,7 @@ export class Sessions extends EventEmitter {
     if (!s.delivered) throw new HttpError(409, "no batch is in progress for this file (taken back or already finished)", { code: "no_batch" });
     this.#assertLease(s, claim, { staleOnHolder: true });
     this.setStage(key, "checking");
+    this.#renew(s);
     let post;
     let pre;
     try {

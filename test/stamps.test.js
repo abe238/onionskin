@@ -8,10 +8,17 @@ import { after, test } from "node:test";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "os-stamp-"));
 process.env.ONIONSKIN_STATE_DIR = path.join(root, "st");
 const { readStamps, writeStamps } = await import("../src/stamps.js");
-const { BUILT_IN, LANGUAGES, stampText } = await import("../web/src/stamps.js");
+const { BUILT_IN, LANGUAGES, stampText, stampComment } = await import("../web/src/stamps.js");
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 const file = () => path.join(process.env.ONIONSKIN_STATE_DIR, "stamps.json");
 const refused = (list) => assert.throws(() => writeStamps(list), (e) => e.status === 400);
+
+test("a stamp and typed words fit exactly or are refused together, including the space", () => {
+  const stamp = "Check.";
+  const typed = "a".repeat(4993);
+  assert.equal(stampComment(stamp, typed), stamp + " " + typed);
+  assert.equal(stampComment(stamp, typed + "b"), null);
+});
 
 test("a stored list reads back, and the file is private (0600)", () => {
   assert.deepEqual(readStamps(), [], "no file reads as an empty list");

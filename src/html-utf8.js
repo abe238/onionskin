@@ -28,7 +28,7 @@ export function utf8Bytes(bytes) {
   if (!d.copyable) return { ok: false, reason: NOT_READABLE_ENCODING };
   let text = new TextDecoder("windows-1252").decode(bytes);
   // the declaration sits in the first 1,024 bytes (src/html.js declaredCharset); those are one byte a character in windows-1252
-  const head = text.slice(0, 1024).replace(/(<meta\b[^>]*?\bcharset\s*=\s*["']?\s*)([A-Za-z0-9_.:-]+)/gi, "$1utf-8");
+  const head = text.slice(0, 1024).replace(/<!--[\s\S]*?(?:-->|$)|(<meta\b[^>]*?\bcharset\s*=\s*["']?\s*)([A-Za-z0-9_.:-]+)/gi, (m, pre) => (pre ? `${pre}utf-8` : m));
   text = head + text.slice(1024);
   const out = Buffer.from(text, "utf8");
   const check = decodeHtml(out);

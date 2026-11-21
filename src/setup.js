@@ -184,8 +184,26 @@ export async function runSetup(rest, { home = os.homedir(), source = SKILL_SOURC
       const tmp = path.join(parent, `.${PRODUCT.bin}.tmp-${process.pid}`);
       fs.rmSync(tmp, { recursive: true, force: true });
       copyTree(source, tmp);
-      if (st) fs.rmSync(target, { recursive: true });
-      fs.renameSync(tmp, target);
+      if (!st) fs.renameSync(tmp, target);
+      else {
+        const old = path.join(parent, `.${PRODUCT.bin}.old-${process.pid}`);
+        // Deliver Ctrl-C after the two synchronous renames, when the target is whole again.
+        const interrupt = () => process.kill(process.pid, "SIGINT");
+        const defer = process.listenerCount("SIGINT") === 0;
+        if (defer) process.once("SIGINT", interrupt);
+        try {
+          fs.renameSync(target, old);
+          try {
+            fs.renameSync(tmp, target);
+          } catch (err) {
+            fs.renameSync(old, target);
+            throw err;
+          }
+          await fs.promises.rm(old, { recursive: true });
+        } finally {
+          if (defer) process.off("SIGINT", interrupt);
+        }
+      }
     }
     say(`${dry}${target}: ${st ? "replaced" : "installed"}`);
   }

@@ -10,7 +10,7 @@
 .agent-panel .ap-track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink-2); transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast); }
 .agent-panel .ap-switch input:checked + .ap-track { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-edge); }
 .agent-panel .ap-switch input:checked + .ap-track::after { transform: translateX(12px); background: var(--accent-ink); }
-.agent-panel .ap-switch input:focus-visible + .ap-track { outline: var(--focus-ring, 2px) solid var(--focus); outline-offset: var(--focus-offset, 2px); }
+.agent-panel .ap-switch input:focus-visible + .ap-track { outline: var(--focus-ring); outline-offset: var(--focus-offset); }
 .agent-panel .ap-switch input:disabled ~ * { opacity: 0.55; }
 .agent-panel .ap-list { list-style: none; margin: 0; padding: 4px 6px; display: flex; flex-direction: column; gap: 3px; max-height: 132px; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--r-xs); background: var(--input); box-shadow: inset 0 0 0 1px var(--well-edge); }
 .agent-panel .ap-list li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }

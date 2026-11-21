@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { api, loadLaunchToken } from "./lib.js";
 import "./calm.js";
 import "./tokens.css";
@@ -32,7 +33,11 @@ async function boot() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { session, product, settings, suggest } = await res.json();
     document.title = `${session.name} - ${product}`;
-    root.render(<App sid={key} initial={session} product={product} settings={settings} suggest={suggest} />);
+    root.render(
+      <ErrorBoundary>
+        <App sid={key} initial={session} product={product} settings={settings} suggest={suggest} />
+      </ErrorBoundary>
+    );
   } catch (err) {
     root.render(<p className="fatal">Could not open this session ({String(err.message)}). Run <code>onionskin open &lt;file&gt;</code> again.</p>);
   }

@@ -74,7 +74,7 @@ export function rowGrid(tr) {
   return { cells, before, after };
 }
 
-const XML_BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/; // not allowed in XML 1.0
+const XML_BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/; // not allowed in XML 1.0
 /** One run's content: TAB and LF become w:tab and w:br, like the editor writes them. */
 function runContent(text) {
   return text
@@ -245,8 +245,10 @@ export class TableEdit {
       const total = widths.reduce((a, b) => a + b, 0);
       const all = [...widths.slice(0, pos), widths[cur], ...widths.slice(pos)];
       const sum = total + widths[cur];
-      next = all.map((w) => Math.max(1, Math.round((w * total) / sum)));
-      kidsNamed(grid, "w:gridCol").forEach((g, i) => setAttr(g, "w:w", String(next[i])));
+      if (total > 0 && sum > 0) {
+        next = all.map((w) => Math.max(1, Math.round((w * total) / sum)));
+        kidsNamed(grid, "w:gridCol").forEach((g, i) => setAttr(g, "w:w", String(next[i])));
+      }
     }
     for (const [i, tr] of rows.entries()) {
       const tcs = kidsNamed(tr, "w:tc");

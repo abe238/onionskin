@@ -16,7 +16,7 @@ import "./html-view.css";
  * "element" | "pin", location, pin?: {xFrac, yFrac}}]), readOnly (no typing: a run is on, D5), onHost(handle | null), onPlain(reason) (asked
  * for the plain copy after a crash with "crash", and for the full view again with null).
  */
-export function HtmlViewer({ copy, texts, stats, plain = null, version, editable, ident, mode = "edit", marks = [], onHost, onPlain, readOnly = false }) {
+export function HtmlViewer({ copy, texts, stats, plain = null, version, editable, ident, mode = "edit", marks = [], hoverId = null, onHover, onHost, onPlain, readOnly = false }) {
   const frameRef = useRef(null);
   const layerRef = useRef(null);
   const catchRef = useRef(null);
@@ -167,7 +167,7 @@ export function HtmlViewer({ copy, texts, stats, plain = null, version, editable
       <div className="hv-box" ref={boxRef} hidden={!!full}>
           <iframe ref={frameRef} className="hv-frame" sandbox="allow-same-origin" title={SAY.label} onLoad={() => ctl.loaded()} data-testid="html-frame" />
           <div className="hv-layer" ref={layerRef}>
-            <Overlay boxRef={overlayBox} paint={ui.paint} onPin={(id) => ctl.markClick(id)} onChip={() => {}} onQuickChip={() => {}} canQuick={false} />
+            <Overlay boxRef={overlayBox} paint={ui.paint} hoverId={hoverId} onHover={onHover} onPin={(id) => ctl.markClick(id)} onChip={() => {}} onQuickChip={() => {}} canQuick={false} />
             {ui.flash && <div className="hv-flash" data-testid="html-flash" style={{ left: ui.flash.x, top: ui.flash.y, width: ui.flash.w, height: ui.flash.h }} />}
             {mode !== "edit" && ui.phase === "ready" && (
               <div
@@ -178,6 +178,7 @@ export function HtmlViewer({ copy, texts, stats, plain = null, version, editable
                 // a press that moves selects text (comment mode: a text anchor), a press that does not is a click on the element
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
+                  e.currentTarget.focus({ preventScroll: true });
                   pressing.current = true;
                   e.currentTarget.setPointerCapture?.(e.pointerId);
                   ctl.press(...local(e));

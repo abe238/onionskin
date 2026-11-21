@@ -10,7 +10,7 @@ const FORMATS = { docx: "docx", pptx: "pptx", txt: "text", md: "text" };
 const NO_SAMPLE = "Choose at least one sample of your writing.";
 const UNREADABLE = "That file could not be read. Choose a Word, PowerPoint or text file.";
 // the server's own plain messages for this request; anything else is shown as a general failure
-const KNOWN = [NO_SAMPLE, UNREADABLE, "Each file can be up to 20 MB.", "You can add up to 5 in all.", "Pasted text can be up to 20,000 characters.", "Wait for the agent to finish, then try again.", "Excel files are not used as writing samples."];
+const KNOWN = [NO_SAMPLE, UNREADABLE, "Each file can be up to 20 MB.", "You can add up to 5 in all.", "Pasted text can be up to 20,000 characters.", "Wait for the agent to finish, then try again.", "Excel files are not used as writing samples.", "HTML pages are not used as writing samples.", "Another voice guide is being built right now. Wait a moment, then try again."];
 const chars = (s) => [...s].length;
 
 /**
@@ -30,26 +30,30 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const input = useRef(null);
+  const [reading, setReading] = useState(false);
   const hasPaste = paste.trim().length > 0;
   const count = files.length + (hasPaste ? 1 : 0);
   const pasteOver = chars(paste) > PASTE_MAX;
 
   async function add(list) {
     setError("");
-    const next = [...files];
-    for (const f of list) {
-      const format = FORMATS[(f.name.split(".").pop() || "").toLowerCase()];
-      if (!format) return setError(UNREADABLE);
-      if (f.size > FILE_MAX) return setError("Each file can be up to 20 MB.");
-      if (next.length + (hasPaste ? 1 : 0) >= ADDED_MAX) return setError("You can add up to 5 in all.");
-      try {
-        next.push({ name: f.name, format, bytesB64: await blobToBase64(f) });
-      } catch {
-        return setError(UNREADABLE);
+    if (count + list.length > ADDED_MAX) return setError("You can add up to 5 in all.");
+    setReading(true);
+    try {
+      const added = [];
+      for (const f of list) {
+        const format = FORMATS[(f.name.split(".").pop() || "").toLowerCase()];
+        if (!format) return setError(UNREADABLE);
+        if (f.size > FILE_MAX) return setError("Each file can be up to 20 MB.");
+        added.push({ name: f.name, format, bytesB64: await blobToBase64(f) });
       }
+      setFiles((current) => [...current, ...added]);
+    } catch {
+      setError(UNREADABLE);
+    } finally {
+      setReading(false);
+      if (input.current) input.current.value = ""; // the same file can be chosen again
     }
-    setFiles(next);
-    if (input.current) input.current.value = ""; // the same file can be chosen again
   }
 
   async function ask() {
@@ -75,7 +79,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
       <div className="vb-body">
         {!html && <div className="vb-group">
           <label className="vc-check">
-            <input type="checkbox" checked={openFile && !xlsx} disabled={xlsx} data-testid="voice-build-open-file" onChange={(e) => setOpenFile(e.target.checked)} />
+            <input type="checkbox" checked={openFile && !xlsx} disabled={xlsx || busy} data-testid="voice-build-open-file" onChange={(e) => setOpenFile(e.target.checked)} />
             <span>This file is my own writing</span>
           </label>
           <p className="vc-hint" data-testid="voice-build-open-help">
@@ -85,18 +89,18 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
         <div className="vb-group">
           <h3 className="vb-h">Add more of my writing</h3>
           <div className="vb-row">
-            <button type="button" className="btn sm" data-testid="voice-build-choose" disabled={count >= ADDED_MAX} onMouseDown={keep} onClick={() => input.current?.click()}>
+            <button type="button" className="btn sm" data-testid="voice-build-choose" disabled={busy || reading || count >= ADDED_MAX} onMouseDown={keep} onClick={() => input.current?.click()}>
               Choose files
             </button>
             <span className="vc-hint">Word, PowerPoint or text files. Up to 5 in all.</span>
           </div>
-          <input ref={input} type="file" multiple hidden accept=".docx,.pptx,.txt,.md" data-testid="voice-build-file-input" aria-label="Choose files" onChange={(e) => add([...(e.target.files || [])])} />
+          <input ref={input} type="file" multiple hidden disabled={busy || reading} accept=".docx,.pptx,.txt,.md" data-testid="voice-build-file-input" aria-label="Choose files" onChange={(e) => add([...(e.target.files || [])])} />
           {files.length > 0 && (
             <ul className="vc-list" data-testid="voice-build-files">
               {files.map((f, i) => (
                 <li key={`${f.name}-${i}`} className="vb-file" data-testid={`voice-build-file-${i}`}>
                   <span className="vb-name">{f.name}</span>
-                  <button type="button" className="btn quiet sm" data-testid={`voice-build-remove-${i}`} aria-label={`Remove ${f.name}`} onMouseDown={keep} onClick={() => setFiles(files.filter((_, k) => k !== i))}>
+                  <button type="button" className="btn quiet sm" data-testid={`voice-build-remove-${i}`} aria-label={`Remove ${f.name}`} disabled={busy} onMouseDown={keep} onClick={() => setFiles((current) => current.filter((_, k) => k !== i))}>
                     Remove
                   </button>
                 </li>
@@ -104,7 +108,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
             </ul>
           )}
           <label htmlFor="voice-build-paste">Paste some of my writing</label>
-          <textarea id="voice-build-paste" className="vc-text" data-testid="voice-build-text" rows={4} value={paste} aria-invalid={pasteOver} onChange={(e) => setPaste(e.target.value)} />
+          <textarea id="voice-build-paste" className="vc-text" data-testid="voice-build-text" rows={4} value={paste} disabled={busy} aria-invalid={pasteOver} onChange={(e) => setPaste(e.target.value)} />
           {pasteOver && (
             <p className="vc-err" role="alert">
               Pasted text can be up to 20,000 characters.
@@ -113,16 +117,16 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
         </div>
         <div className="vb-group">
           <label className="vc-check">
-            <input type="checkbox" checked={edits && examples > 0} disabled={examples === 0} data-testid="voice-build-edits" onChange={(e) => setEdits(e.target.checked)} />
+            <input type="checkbox" checked={edits && examples > 0} disabled={examples === 0 || busy} data-testid="voice-build-edits" onChange={(e) => setEdits(e.target.checked)} />
             <span>{examples > 0 ? `Use the changes I made to the agent's text (${examples} kept)` : "No changes kept yet"}</span>
           </label>
           <label className="vc-check">
-            <input type="checkbox" checked={comments} data-testid="voice-build-comments" onChange={(e) => setComments(e.target.checked)} />
+            <input type="checkbox" checked={comments} disabled={busy} data-testid="voice-build-comments" onChange={(e) => setComments(e.target.checked)} />
             <span>Use the comments I typed in this file</span>
           </label>
           {saved && (
             <label className="vc-check">
-              <input type="checkbox" checked={improve} data-testid="voice-build-improve" onChange={(e) => setImprove(e.target.checked)} />
+              <input type="checkbox" checked={improve} disabled={busy} data-testid="voice-build-improve" onChange={(e) => setImprove(e.target.checked)} />
               <span>Improve my saved guide instead of starting over</span>
             </label>
           )}
@@ -137,7 +141,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
         </p>
       )}
       <div className="dialog-actions">
-        <button type="button" className="btn primary" data-testid="voice-build-ask" disabled={busy} onClick={ask}>
+        <button type="button" className="btn primary" data-testid="voice-build-ask" disabled={busy || reading} onClick={ask}>
           Ask the agent
         </button>
         <button type="button" className="btn" data-testid="voice-build-cancel" onClick={onClose}>

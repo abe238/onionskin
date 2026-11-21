@@ -2,6 +2,7 @@
 // Stamps: a label plus fixed words. A tap sends the words as an ordinary Quick ask comment on the selection.
 // The built-in words are code. Own stamps are loaded from the local server (they are the person's own typing); nothing from the document is ever used here.
 
+import { COMMENT_TEXT_MAX } from "../../src/retain.js";
 import { sentenceSpan } from "../../src/sentence-span.js"; // pure, no imports: the server runs the same rule on its own reading of the paragraph
 
 export const BUILT_IN = [
@@ -16,6 +17,11 @@ export const LANGUAGES = ["Spanish", "French", "German", "Portuguese", "Italian"
 export function stampText(stamp, language) {
   if (!stamp.language) return stamp.words;
   return LANGUAGES.includes(language) ? stamp.words.replace("{language}", language) : null;
+}
+
+export function stampComment(words, typed) {
+  const text = `${words} ${typed}`;
+  return text.length <= COMMENT_TEXT_MAX ? text : null;
 }
 
 // ---- quick fixes (src/suggest.js): which stamp taps may show a suggestion first ----------------------------------------

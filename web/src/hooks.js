@@ -15,11 +15,21 @@ export function useMedia(query) {
 
 /** light | dark. The OS setting is the default; a choice made here is remembered for this browser. */
 export function useTheme() {
+  const overrideRef = useRef(!!store.get("localStorage", "onionskin.theme"));
   const [theme, setTheme] = useState(() => store.get("localStorage", "onionskin.theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
-  return [theme, (t) => (store.set("localStorage", "onionskin.theme", t), setTheme(t))];
+  useEffect(() => {
+    const m = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!m) return;
+    const onChange = () => {
+      if (!overrideRef.current && !store.get("localStorage", "onionskin.theme")) setTheme(m.matches ? "dark" : "light");
+    };
+    m.addEventListener("change", onChange);
+    return () => m.removeEventListener("change", onChange);
+  }, []);
+  return [theme, (t) => ((overrideRef.current = true), store.set("localStorage", "onionskin.theme", t), setTheme(t))];
 }
 
 export const SIDE_MIN = 320;
@@ -65,18 +75,25 @@ export function useFrame(fn) {
 let lastPress = null;
 if (typeof document !== "undefined") document.addEventListener("pointerdown", (e) => (lastPress = e.target?.closest?.("button, a[href], [tabindex]") || null), true);
 
+// Stack of active focus traps so only the topmost dialog handles Tab and Escape (R4d).
+const trapStack = [];
+
 /** Trap Tab inside a container while it is open (dialogs, drawer); Escape calls onClose; focus returns to the opener. */
 export function useFocusTrap(ref, active, onClose) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!active || !ref.current) return;
     const el = ref.current;
+    const entry = { el };
+    trapStack.push(entry);
     const ae = document.activeElement;
     const prev = ae && ae !== document.body && ae !== document.documentElement ? ae : lastPress?.isConnected ? lastPress : ae;
-    const focusables = () => [...el.querySelectorAll('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])')].filter((n) => n.offsetParent !== null);
+    const focusables = () => [...el.querySelectorAll('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])')].filter((n) => n.getClientRects().length > 0);
     if (!el.contains(document.activeElement)) (focusables()[0] || el).focus(); // a field inside that already has the focus (a comment just created) keeps it
-    const onKey = (e) => {
-      if (e.key === "Escape") return onClose?.();
-      if (e.key !== "Tab") return;
+    const isTop = () => trapStack[trapStack.length - 1] === entry;
+    const onTab = (e) => {
+      if (e.key !== "Tab" || !isTop()) return;
       const f = focusables();
       if (!f.length) return e.preventDefault();
       const first = f[0];
@@ -89,10 +106,22 @@ export function useFocusTrap(ref, active, onClose) {
         first.focus();
       }
     };
-    document.addEventListener("keydown", onKey, true);
+    // Escape runs in bubble phase so child handlers (e.g. a comment textarea returning focus to the document) run first and can preventDefault().
+    const onEsc = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented || !isTop()) return;
+      if (document.activeElement?.closest?.(".bgpop")) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onCloseRef.current?.();
+    };
+    document.addEventListener("keydown", onTab, true);
+    document.addEventListener("keydown", onEsc, false);
     return () => {
-      document.removeEventListener("keydown", onKey, true);
-      prev?.focus?.();
+      const idx = trapStack.lastIndexOf(entry);
+      if (idx >= 0) trapStack.splice(idx, 1);
+      document.removeEventListener("keydown", onTab, true);
+      document.removeEventListener("keydown", onEsc, false);
+      if (prev?.isConnected) prev.focus?.();
     };
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
 }

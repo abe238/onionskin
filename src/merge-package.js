@@ -468,7 +468,9 @@ export function docxUnits(xml, intern) {
   let inBody = false;
   let cur = null; // the listed paragraph open: {text, look, fmt, obj, box}
   let pDepth = 0;
-  let delDepth = 0;
+  const revStack = [];
+  let mcFallbackDepth = 0;
+  const visible = () => !revStack.includes("del") && (revStack.length === 0 || revStack[revStack.length - 1] !== "moveFrom");
   let inT = false;
   const runs = []; // open w:r: {rpr: [] | null, id}
   let rprDepth = 0; // > 0 while inside a run's own w:rPr (collected into the run's look)
@@ -486,13 +488,41 @@ export function docxUnits(xml, intern) {
     for (let k = 0; k < s.length; k++) chars.push(lookNow());
   };
   const token = (into, s) => into.push(`${cur.text.length}|${s}`);
+  const closeRpr = () => {
+    runs[runs.length - 1].rpr.push("</>");
+    if (--rprDepth === 0) {
+      const r = runs[runs.length - 1];
+      r.id = intern.id(r.rpr.join(""));
+    }
+  };
+  const closePpr = () => {
+    pprDepth--;
+    if (skipDepth) {
+      mod[1].push("</>");
+      if (--skipDepth === 0) cur.mod[mod[0]] = mod[1].join("");
+    } else token(cur.fmt, "</>");
+  };
   walkCanonical(xml, {
     open(name, a, tag) {
       stack.push(name);
+      if (name === "mc:Fallback" || mcFallbackDepth > 0) {
+        if (name === "mc:Fallback") mcFallbackDepth++;
+        if (!cur) skel.push(tag);
+        else if (rprDepth) (rprDepth++, runs[runs.length - 1].rpr.push(tag));
+        else if (pprDepth) {
+          pprDepth++;
+          if (skipDepth) skipDepth++, mod[1].push(tag);
+          else token(cur.fmt, tag);
+          quiet.push(false);
+        } else (quiet.push(false), token(cur.obj, `${runs.length ? `r${lookNow()}` : ""}${tag}`));
+        return;
+      }
       if (name === "w:body") inBody = true;
-      if (name === "w:tbl") cells.push({ t: tables++, row: -1, col: -1 });
-      else if (name === "w:tr" && cells.length) (cells[cells.length - 1].row++, (cells[cells.length - 1].col = -1));
-      else if (name === "w:tc" && cells.length) cells[cells.length - 1].col++;
+      if (!cur) {
+        if (name === "w:tbl") cells.push({ t: tables++, row: -1, col: -1 });
+        else if (name === "w:tr" && cells.length) (cells[cells.length - 1].row++, (cells[cells.length - 1].col = -1));
+        else if (name === "w:tc" && cells.length) cells[cells.length - 1].col++;
+      }
       if (name === "w:p") pDepth++;
       if (name === "w:p" && inBody && pDepth === 1) {
         // `own`: the paragraph's own attributes (revision stamps, its text id) but its id, which is how the proof pairs paragraphs
@@ -502,6 +532,7 @@ export function docxUnits(xml, intern) {
         return;
       }
       if (!cur) return void skel.push(tag);
+      if (pDepth > 1) return void (quiet.push(false), token(cur.obj, `${runs.length ? `r${lookNow()}` : ""}${tag}`));
       // inside a listed paragraph
       if (rprDepth) {
         rprDepth++;
@@ -513,19 +544,21 @@ export function docxUnits(xml, intern) {
         runs[runs.length - 1].rpr = [tag];
         return;
       }
-      if (name === "w:del") delDepth++;
+      if (name === "w:del") revStack.push("del");
+      else if (name === "w:moveFrom") revStack.push("moveFrom");
+      else if (name === "w:ins") revStack.push("ins");
       if (name === "w:r") {
         runs.push({ rpr: null, id: 0 });
         return void quiet.push(true);
       }
       // text, by the reader's rules (src/docx.js parseDocxParagraphs), wherever it stands in the paragraph
       let counted = false;
-      if (name === "w:t" && delDepth === 0) (inT = true), (counted = true), (tTrim = !/ \u0001\{[^}]*\}space="preserve"/.test(tag));
-      else if (name === "w:tab" && delDepth === 0) add("\t"), (counted = true);
-      else if ((name === "w:br" || name === "w:cr") && delDepth === 0 && a["w:type"] !== "page" && a["w:type"] !== "column") add("\n"), (counted = true);
+      if (name === "w:t" && visible()) (inT = true), (counted = true), (tTrim = !/ \u0001\{[^}]*\}space="preserve"/.test(tag));
+      else if (name === "w:tab" && visible()) add("\t"), (counted = true);
+      else if ((name === "w:br" || name === "w:cr") && visible() && a["w:type"] !== "page" && a["w:type"] !== "column") add("\n"), (counted = true);
       // a counted tab or break with attributes of its own (a w:br w:clear="all"): its tag, where it stands
       if (counted && name !== "w:t" && tag.includes(" ") && !pprDepth) token(cur.obj, `${runs.length ? `r${lookNow()}` : ""}${tag}</>`);
-      else if ((name === "w:drawing" || name === "w:pict") && delDepth === 0) add(OBJ); // one character, and an object too
+      else if ((name === "w:drawing" || name === "w:pict") && visible()) add(OBJ); // one character, and an object too
       if (pprDepth) {
         // the paragraph's own properties (a tab stop inside them is counted as text by the reader as well, and kept here as written)
         pprDepth++;
@@ -546,45 +579,46 @@ export function docxUnits(xml, intern) {
     text(t) {
       if (!cur) return void skel.push(esc(t));
       if (rprDepth) return void runs[runs.length - 1].rpr.push(esc(t));
+      if (pprDepth) return void (skipDepth ? mod[1].push(esc(t)) : token(cur.fmt, esc(t)));
+      if (mcFallbackDepth > 0 || pDepth > 1) return void token(cur.obj, esc(t));
       if (inT) {
         if (tTrim && /^[ \t\r\n]|[ \t\r\n]$/.test(t)) token(cur.obj, `${VOL}unkept spaces`);
         return void add(t);
       }
-      if (pprDepth) return void (skipDepth ? mod[1].push(esc(t)) : token(cur.fmt, esc(t)));
       token(cur.obj, esc(t));
     },
     close(name) {
       stack.pop();
-      if (name === "w:tbl") cells.pop();
+      if (mcFallbackDepth > 0) {
+        if (name === "mc:Fallback") mcFallbackDepth--;
+        if (!cur) return void skel.push("</>");
+        if (rprDepth) return void closeRpr();
+        const silent = quiet.pop();
+        if (pprDepth) return void closePpr();
+        if (!silent) token(cur.obj, "</>");
+        return;
+      }
+      if (!cur && name === "w:tbl") cells.pop();
       if (name === "w:body") inBody = false;
       if (name === "w:p") pDepth--;
       if (cur && name === "w:p" && pDepth === 0) {
         cur.look = Int32Array.from(chars);
         paras.push(cur);
         cur = null;
+        revStack.length = 0;
         return;
       }
       if (!cur) return void skel.push("</>");
-      if (rprDepth) {
-        runs[runs.length - 1].rpr.push("</>");
-        if (--rprDepth === 0) {
-          const r = runs[runs.length - 1];
-          r.id = intern.id(r.rpr.join(""));
-        }
+      if ((pDepth >= 1 && name === "w:p") || pDepth > 1) {
+        if (!quiet.pop()) token(cur.obj, "</>");
         return;
       }
-      if (name === "w:del") delDepth = Math.max(0, delDepth - 1);
+      if (rprDepth) return void closeRpr();
+      if (name === "w:del" || name === "w:moveFrom" || name === "w:ins") revStack.pop();
       if (name === "w:r" && runs.length) runs.pop();
       if (name === "w:t") inT = false;
       const silent = quiet.pop();
-      if (pprDepth) {
-        pprDepth--;
-        if (skipDepth) {
-          mod[1].push("</>");
-          if (--skipDepth === 0) cur.mod[mod[0]] = mod[1].join("");
-        } else token(cur.fmt, "</>");
-        return;
-      }
+      if (pprDepth) return void closePpr();
       if (!silent) token(cur.obj, "</>");
     },
   });
@@ -614,9 +648,18 @@ export function slideUnits(xml, intern) {
   let run = null; // the a:r open: {rpr: [] | null, id, depth}
   let rprDepth = 0;
   let body = 0; // depth of the open p:txBody (0: none)
+  let mcFallbackDepth = 0;
   walkCanonical(xml, {
     open(name, a, tag) {
       depth++;
+      if (name === "mc:Fallback" || mcFallbackDepth > 0) {
+        if (name === "mc:Fallback") mcFallbackDepth++;
+        const sh = open[open.length - 1];
+        if (!sh) skel.push(tag);
+        else if (rprDepth) (rprDepth++, run.rpr.push(tag));
+        else (body ? sh.fmt : sh.obj).push(`${sh.text.length}|${run ? `r${run.id}` : ""}${tag}`);
+        return;
+      }
       const l = localOf(name);
       if (SHAPE_TAGS.has(l)) {
         const parent = open[open.length - 1];
@@ -649,6 +692,7 @@ export function slideUnits(xml, intern) {
       const sh = open[open.length - 1];
       if (!sh) return void skel.push(esc(t));
       if (rprDepth) return void run.rpr.push(esc(t));
+      if (mcFallbackDepth > 0) return void (body ? sh.fmt : sh.obj).push(`${sh.text.length}|${esc(t)}`);
       if (inT && para) {
         sh.text += t;
         for (let k = 0; k < t.length; k++) sh.chars.push(run ? run.id : 0);
@@ -659,6 +703,18 @@ export function slideUnits(xml, intern) {
     close(name) {
       const l = localOf(name);
       depth--;
+      if (mcFallbackDepth > 0) {
+        if (name === "mc:Fallback") mcFallbackDepth--;
+        const sh = open[open.length - 1];
+        if (!sh) return void skel.push("</>");
+        if (rprDepth) {
+          run.rpr.push("</>");
+          if (--rprDepth === 0) run.id = intern.id(run.rpr.join(""));
+          return;
+        }
+        (body ? sh.fmt : sh.obj).push(`${sh.text.length}|</>`);
+        return;
+      }
       const sh = open[open.length - 1];
       if (!sh) return void skel.push("</>");
       if (SHAPE_TAGS.has(l) && depth + 1 === sh.depth) {

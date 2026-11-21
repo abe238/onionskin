@@ -5,7 +5,7 @@ import { IS_MAC } from "./keys.js";
 import { WriteIn } from "./WriteIn.jsx";
 
 /** Highlights, numbered markers, pins, changed regions, thumbnail badges and the selection chip. Positions are overlay-local pixels computed once per frame by App. */
-export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, version, fresh, quick, onQuickText, onQuickSubmit, onQuickClose, onAway, stamps, canQuick = true }) {
+export function Overlay({ boxRef, paint, hoverId, onHover, onChip, onQuickChip, onPin, onThumb, version, fresh, quick, onQuickText, onQuickSubmit, onQuickClose, onAway, stamps, canQuick = true }) {
   const { items, chip, chg = [], thumbs = [], drag = null, quickAt = null, away = null, writein = null } = paint;
   const pins = items.filter((it) => it.pin);
   return (
@@ -24,13 +24,14 @@ export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, ve
         <div key={`chg-${i}`} className={`chg ${q.kind} ${fresh && q.kind !== "show" && q.kind !== "ask" ? "fresh" : ""}`} data-testid={q.kind === "show" ? "show-outline" : q.kind === "ask" ? "quick-outline" : "changed-region"} data-kind={q.kind} style={{ left: q.x, top: q.y, width: q.w, height: q.h }} />
       ))}
       <WriteIn items={writein?.items} />
-      {items.map((it) =>
-        it.rects ? (
+      {items.map((it) => {
+        const hovered = hoverId != null && it.id === hoverId;
+        return it.rects ? (
           <React.Fragment key={it.id}>
             {it.rects.map((q, i) => (
               <div
                 key={`${it.id}-${i}`}
-                className={`hl ${it.whole ? "whole" : ""} ${it.unit ? `unit-${it.unit}` : ""} st-${it.status} ${fresh && it.status === "done" ? "fresh" : ""} ${it.prot ? "prot" : ""}`}
+                className={`hl ${it.whole ? "whole" : ""} ${it.unit ? `unit-${it.unit}` : ""} st-${it.status} ${fresh && it.status === "done" ? "fresh" : ""} ${it.prot ? "prot" : ""} ${hovered ? "hovered" : ""}`}
                 data-testid="highlight"
                 data-comment-id={it.id}
                 data-unit={it.unit || undefined}
@@ -45,7 +46,19 @@ export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, ve
               </div>
             ))}
             {it.mark && (
-              <button type="button" className={`mk st-${it.status} ${it.prot ? "prot" : ""} ${it.mark.xl ? "xl" : ""}`} data-testid="marker" data-comment-id={it.id} style={{ left: it.mark.x, top: it.mark.y }} onClick={() => onPin(it.id)} aria-label={`Comment ${it.n}: show its card`}>
+              <button
+                type="button"
+                className={`mk st-${it.status} ${it.prot ? "prot" : ""} ${it.mark.xl ? "xl" : ""} ${hovered ? "hovered" : ""}`}
+                data-testid="marker"
+                data-comment-id={it.id}
+                style={{ left: it.mark.x, top: it.mark.y }}
+                onClick={() => onPin(it.id)}
+                onMouseEnter={() => onHover?.(it.id)}
+                onMouseLeave={() => onHover?.((cur) => (cur === it.id ? null : cur))}
+                onFocus={() => onHover?.(it.id)}
+                onBlur={() => onHover?.((cur) => (cur === it.id ? null : cur))}
+                aria-label={`Comment ${it.n}: show its card`}
+              >
                 <span>{it.n}</span>
               </button>
             )}
@@ -54,19 +67,23 @@ export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, ve
           <button
             key={it.id}
             type="button"
-            className={`pinmark st-${it.status} ${it.prot ? "prot" : ""}`}
+            className={`pinmark st-${it.status} ${it.prot ? "prot" : ""} ${hovered ? "hovered" : ""}`}
             data-testid="pin-mark"
             data-comment-id={it.id}
             data-at-x={it.dot ? Math.round(it.dot.x) : undefined}
             data-at-y={it.dot ? Math.round(it.dot.y) : undefined}
             style={{ left: it.pin.x, top: it.pin.y }}
             onClick={() => onPin(it.id)}
+            onMouseEnter={() => onHover?.(it.id)}
+            onMouseLeave={() => onHover?.((cur) => (cur === it.id ? null : cur))}
+            onFocus={() => onHover?.(it.id)}
+            onBlur={() => onHover?.((cur) => (cur === it.id ? null : cur))}
             aria-label={`Pin ${it.n}: show its comment`}
           >
             <span>{it.n}</span>
           </button>
-        ) : null
-      )}
+        ) : null;
+      })}
       {chg.filter((q) => q.tag).map((q, i) => (
         // the tag is drawn after the comment outlines so nothing crosses it, in the page margin beside a paragraph when there is room (side), otherwise above the region, or inside its top right corner when the region touches the top edge
         <div key={`tag-${i}`} className={`chg-tagbox ${fresh ? "fresh" : ""}`} style={{ left: q.x, top: q.y, width: q.w, height: q.h }} aria-hidden="true">
@@ -98,14 +115,14 @@ export function Overlay({ boxRef, paint, onChip, onQuickChip, onPin, onThumb, ve
       )}
       {quick && quickAt && <QuickAsk q={quick} at={quickAt} onText={onQuickText} onSubmit={onQuickSubmit} onClose={onQuickClose} stamps={stamps} />}
       <div role="status" className="away-live">
-      {writein?.say && <span className="sr-only" data-testid="writein-status">{writein.say}</span>}
+        {writein?.say && <span className="sr-only" data-testid="writein-status">{writein.say}</span>}
+      </div>
       {away && (
         <button type="button" className={`away glass-pop ${away.dir}`} data-testid="changes-away" data-dir={away.dir} onClick={onAway}>
           <Icon name="arrow" size={13} className={away.dir === "above" ? "up" : "down"} />
           {away.n} change{away.n > 1 ? "s" : ""} {away.dir}
         </button>
       )}
-      </div>
     </div>
   );
 }

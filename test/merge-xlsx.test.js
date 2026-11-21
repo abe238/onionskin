@@ -62,6 +62,13 @@ test("the user and the agent change different cells, on different rows: both val
   assert.equal(out.D3, "=B3+C3", "an untouched formula is still a formula");
 });
 
+test("the user's number 33.333333333333336 is carried over when the agent edits another row", async () => {
+  const r = await merge(book(set({ B3: 33.333333333333336 })), await sets(book(), { C7: 1400 }));
+  assert.equal(r.merged, 1);
+  assert.deepEqual(r.unplaced, []);
+  assert.equal(read(r.bytes).B3, "33.333333333333336");
+});
+
 test("both change the same cell: the agent's value stays and the user's value is handed back, never dropped", async () => {
   const r = await merge(book(set({ B3: 4242 })), await sets(book(), { B3: 77 }));
   assert.equal(r.bytes, null, "nothing is written when nothing could be carried");
@@ -194,7 +201,7 @@ test("a cell that takes its formula from a shared group is not an edit when only
 test("a value the engine reads differently than the file says is handed back; the agent's cell stays and the rest is merged", async () => {
   const r = await merge(book(set({ F2: "007", B4: 5 })), await sets(book(), { C7: 1400 }));
   assert.equal(r.merged, 1);
-  assert.deepEqual(r.unplaced, [{ label: "Budget!F2", text: "007", why: "Your value for Budget!F2 did not land as typed, so the agent's version was kept there.", of: ["c1 Budget!16389"] }]);
+  assert.deepEqual(r.unplaced, [{ label: "Budget!F2", text: "007", why: "Your value for Budget!F2 could not be placed on the agent's version.", of: ["c1 Budget!16389"] }]);
   const out = read(r.bytes);
   assert.deepEqual({ F2: out.F2, B4: out.B4, C7: out.C7 }, { F2: undefined, B4: "5", C7: "1400" });
 });

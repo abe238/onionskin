@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT, env } from "./constants.js";
 import { stateDir } from "./paths.js";
+import { runInGroup } from "./update.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CHECK_SCRIPT = path.join(here, "..", "scripts", "checker", "check.py");
@@ -22,6 +23,64 @@ export function findPython() {
   return fs.existsSync(p) ? p : null;
 }
 
+const DEEP_KILL_GRACE_MS = 2000;
+const DEEP_MAX_BUFFER = 16 * 1024 * 1024;
+const checkerEnv = (dir) => ({ ...process.env, ONIONSKIN_SOFFICE_PID_FILE: path.join(dir, "soffice.pid") });
+
+// check.py clears this file after conversion. A hard kill cannot run its cleanup handler.
+function stopRemainingSoffice(dir) {
+  try {
+    const record = fs.readFileSync(path.join(dir, "soffice.pid"), "ascii");
+    if (!/^\d+\n$/.test(record)) return;
+    const pid = Number(record);
+    if (Number.isSafeInteger(pid) && pid > 1) process.kill(-pid, "SIGKILL");
+  } catch {}
+}
+
+// Runs `cmd args...` with SIGTERM at timeoutMs and SIGKILL after graceMs so a process stuck in a native call cannot outlast the timeout.
+const SYNC_RUNNER = `
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const [metaFile, timeoutStr, graceStr, maxBufStr, cmd, ...args] = process.argv.slice(1);
+const timeoutMs = Number(timeoutStr);
+const graceMs = Number(graceStr);
+const maxBuf = Number(maxBufStr);
+let timedOut = false, killTimer = null, t = null, bytes = 0, overflow = false, done = false;
+const write = (o) => { try { fs.writeFileSync(metaFile, JSON.stringify(o)); } catch {} };
+const finish = (o) => {
+  if (done) return;
+  done = true;
+  clearTimeout(t); clearTimeout(killTimer);
+  write(o);
+  if (timedOut) { child.stdout.destroy(); child.stderr.destroy(); }
+};
+const child = spawn(cmd, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+const feed = (stream, out) => stream.on("data", (d) => {
+  bytes += d.length;
+  if (bytes > maxBuf) {
+    if (!overflow) { overflow = true; try { child.kill("SIGKILL"); } catch {} }
+    return;
+  }
+  out.write(d);
+});
+feed(child.stdout, process.stdout);
+feed(child.stderr, process.stderr);
+if (timeoutMs > 0) {
+  t = setTimeout(() => {
+    timedOut = true;
+    if (child.exitCode !== null || child.signalCode !== null) return finish({ timedOut });
+    try { child.kill("SIGTERM"); } catch {}
+    killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, graceMs);
+    killTimer.unref?.();
+  }, timeoutMs);
+}
+child.once("error", (err) => finish({ timedOut, error: { code: err.code, message: err.message } }));
+child.once("exit", (status, signal) => {
+  if (timedOut) finish({ timedOut, status, signal, error: overflow ? { code: "ENOBUFS", message: "maxBuffer exceeded" } : null });
+});
+child.once("close", (status, signal) => finish({ timedOut, status, signal, error: overflow ? { code: "ENOBUFS", message: "maxBuffer exceeded" } : null }));
+`;
+
 /**
  * Runs scripts/checker/check.py on the two package versions. Never returns "clean" for a check that did not run:
  * {ran:false, reason} when Python or its libraries are missing, and a `deep_check_failed` flag when it ran but broke.
@@ -35,26 +94,43 @@ export function runDeepCheck(preBytes, postBytes, format, { deferSoffice = false
   try {
     const pre = path.join(dir, `pre.${format}`);
     const post = path.join(dir, `post.${format}`);
+    const metaFile = path.join(dir, "meta.json");
+    const timeoutMs = CHECK_TIMEOUT_MS();
     fs.writeFileSync(pre, preBytes);
     fs.writeFileSync(post, postBytes);
-    const r = spawnSync(py, ["-I", CHECK_SCRIPT, pre, post, format, ...(deferSoffice ? ["--no-soffice"] : [])], { encoding: "utf8", timeout: CHECK_TIMEOUT_MS(), maxBuffer: 16 * 1024 * 1024, env: process.env, killSignal: "SIGKILL" });
-    if (r.error?.code === "ETIMEDOUT") return { ran: false, code: "timed_out", flags: [{ code: "deep_check_failed", severity: "warn", detail: `timed out after ${CHECK_TIMEOUT_MS() / 1000}s` }], reason: "the deeper check timed out" };
-    if (r.error) return { ran: false, code: "failed", flags: [{ code: "deep_check_failed", severity: "warn", detail: r.error.message }], reason: "the deeper check could not start" };
+    const r = spawnSync(
+      process.execPath,
+      ["-e", SYNC_RUNNER, metaFile, String(timeoutMs), String(DEEP_KILL_GRACE_MS), String(DEEP_MAX_BUFFER), py, "-I", CHECK_SCRIPT, pre, post, format, ...(deferSoffice ? ["--no-soffice"] : [])],
+      { encoding: "utf8", detached: true, timeout: timeoutMs > 0 ? timeoutMs + DEEP_KILL_GRACE_MS + 5000 : 0, maxBuffer: DEEP_MAX_BUFFER + 65536, env: checkerEnv(dir), killSignal: "SIGKILL" },
+    );
+    let meta = null;
+    try {
+      meta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
+    } catch {}
+    if (meta?.timedOut || r.error?.code === "ETIMEDOUT") {
+      // Backstop for a stuck runner or descendants that still hold its pipes.
+      if (r.pid > 1) try { process.kill(-r.pid, "SIGKILL"); } catch {}
+      return { ran: false, code: "timed_out", flags: [{ code: "deep_check_failed", severity: "warn", detail: `timed out after ${timeoutMs / 1000}s` }], reason: "the deeper check timed out" };
+    }
+    const err = meta?.error || r.error;
+    if (err) return { ran: false, code: "failed", flags: [{ code: "deep_check_failed", severity: "warn", detail: err.message }], reason: "the deeper check could not start" };
+    const status = meta ? meta.status : r.status;
     let j;
     try {
       j = JSON.parse(r.stdout);
     } catch {
       j = null;
     }
-    if (r.status === 3) return { ran: false, flags: [], code: "libraries_missing", reason: `${py} lacks lxml/defusedxml: run \`${PRODUCT.bin} setup-checker\`` };
-    if (r.status !== 0 || !j || !Array.isArray(j.flags)) {
-      const why = (j?.error || r.stderr || `exit ${r.status}`).toString().slice(0, 300);
+    if (status === 3) return { ran: false, flags: [], code: "libraries_missing", reason: `${py} lacks lxml/defusedxml: run \`${PRODUCT.bin} setup-checker\`` };
+    if (status !== 0 || !j || !Array.isArray(j.flags)) {
+      const why = (j?.error || r.stderr || `exit ${status}`).toString().slice(0, 300);
       return { ran: false, code: "failed", flags: [{ code: "deep_check_failed", severity: "warn", detail: why }], reason: "the deeper check failed to run" };
     }
     const skipped = j.skipped || [];
     const pending = skipped.some((x) => x.check === "soffice-convert" && x.pending);
     return { ran: true, flags: j.flags, checksRun: j.ran, skipped: pending ? skipped.filter((x) => !x.pending) : skipped, sofficePending: pending, python: py };
   } finally {
+    stopRemainingSoffice(dir);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -71,6 +147,36 @@ const lateNext = () => {
   if (start) start();
 };
 
+const KILL_GRACE_MS = 5000;
+
+/** Sends SIGTERM to a live child and schedules an unref'd SIGKILL fallback so a hung child cannot stall the queue or leak temp dirs. */
+function gracefulKill(getChild) {
+  let killTimer = null;
+  const terminate = () => {
+    const child = getChild();
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      child.kill("SIGTERM");
+    } catch {}
+    if (!killTimer) {
+      killTimer = setTimeout(() => {
+        const c = getChild();
+        if (c && c.exitCode === null && c.signalCode === null) {
+          try {
+            c.kill("SIGKILL");
+          } catch {}
+        }
+      }, KILL_GRACE_MS);
+      killTimer.unref?.();
+    }
+  };
+  const clear = () => {
+    clearTimeout(killTimer);
+    killTimer = null;
+  };
+  return { terminate, clear };
+}
+
 /**
  * The LibreOffice conversion check for a version `done` already accepted, run in the background (check.py --soffice-only). Never blocks:
  * `onDone({ran, flags, skipped, reason})` is called exactly once, also when the check fails, times out, is cancelled or never got its turn
@@ -85,17 +191,27 @@ export function startLateSoffice(preBytes, postBytes, format, onDone) {
   let child = null;
   let timer = null;
   let dir = null;
+  const killer = gracefulKill(() => child);
+  const cleanupDir = () => {
+    if (!dir) return;
+    const d = dir;
+    dir = null;
+    stopRemainingSoffice(d);
+    fs.rmSync(d, { recursive: true, force: true });
+  };
   const finish = (r) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    if (dir) fs.rmSync(dir, { recursive: true, force: true });
     // the next one starts only when this one's process is really gone (a cancelled or timed-out check takes a moment to die)
     if (started && child?.pid && child.exitCode === null && child.signalCode === null) child.once("close", lateNext);
-    else if (started) lateNext();
     else {
-      const at = lateQueue.indexOf(start);
-      if (at >= 0) lateQueue.splice(at, 1);
+      cleanupDir();
+      if (started) lateNext();
+      else {
+        const at = lateQueue.indexOf(start);
+        if (at >= 0) lateQueue.splice(at, 1);
+      }
     }
     try {
       onDone(r);
@@ -103,7 +219,7 @@ export function startLateSoffice(preBytes, postBytes, format, onDone) {
   };
   const cancel = (reason = "the check was cancelled") => {
     if (settled) return;
-    if (child && child.exitCode === null) child.kill("SIGTERM");
+    killer.terminate();
     finish({ ran: false, flags: [], skipped: [], reason });
   };
   function start() {
@@ -115,15 +231,20 @@ export function startLateSoffice(preBytes, postBytes, format, onDone) {
       const post = path.join(dir, `post.${format}`);
       fs.writeFileSync(pre, preBytes);
       fs.writeFileSync(post, postBytes);
-      child = spawn(py, ["-I", CHECK_SCRIPT, pre, post, format, "--soffice-only"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(py, ["-I", CHECK_SCRIPT, pre, post, format, "--soffice-only"], { env: checkerEnv(dir), stdio: ["ignore", "pipe", "pipe"] });
     } catch (err) {
       return finish({ ran: false, flags: [], skipped: [], reason: `could not start: ${err.message}` });
     }
     let out = "";
     child.stdout.on("data", (d) => (out = (out + d).slice(0, 16 * 1024 * 1024)));
     child.stderr.resume();
-    child.once("error", (err) => finish({ ran: false, flags: [], skipped: [], reason: `could not start: ${err.message}` }));
+    child.once("error", (err) => {
+      killer.clear();
+      finish({ ran: false, flags: [], skipped: [], reason: `could not start: ${err.message}` });
+    });
     child.once("close", (code) => {
+      killer.clear();
+      cleanupDir();
       let j = null;
       try {
         j = JSON.parse(out);
@@ -132,7 +253,7 @@ export function startLateSoffice(preBytes, postBytes, format, onDone) {
       else finish({ ran: false, flags: [], skipped: [], reason: (j?.error || `exit ${code}`).toString().slice(0, 200) });
     });
     timer = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGTERM");
+      killer.terminate();
       finish({ ran: false, flags: [], skipped: [], reason: `timed out after ${CHECK_TIMEOUT_MS() / 1000}s` });
     }, CHECK_TIMEOUT_MS());
   }
@@ -144,20 +265,37 @@ export function startLateSoffice(preBytes, postBytes, format, onDone) {
 }
 
 /** `onionskin setup-checker`: the one place that uses the network (pip). Creates <state dir>/venv. */
-export function setupChecker(log = (s) => process.stderr.write(s + "\n")) {
+export async function setupChecker(log = (s) => process.stderr.write(s + "\n")) {
   const base = process.env[`${PRODUCT.envPrefix}_BASE_PYTHON`] || "python3";
   fs.mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + SETUP_TIMEOUT_MS();
+  const runStep = async (cmd, args) => {
+    const remaining = deadline - Date.now();
+    let expired = remaining <= 0;
+    // The installer may itself receive SIGKILL shortly after TERM. End this step's group before that happens.
+    const status = expired ? 1 : await runInGroup(cmd, args, { timeout: remaining, signalGraceMs: 0, onTimeout: () => { expired = true; } });
+    if (expired) throw new Error("Deeper check setup timed out.");
+    if (status === 129 || status === 130 || status === 143) throw new Error("Deeper check setup was stopped.");
+    return status;
+  };
+  const imports = ["-c", "import lxml, docx, openpyxl, pptx, defusedxml"];
+  if (env("SETUP_IF_NEEDED") === "1") {
+    if (fs.existsSync(venvPython()) && await runStep(venvPython(), imports) === 0) return venvPython();
+    if (!env("BASE_PYTHON") && process.platform === "darwin") {
+      const guard = '[ "$(command -v python3)" != /usr/bin/python3 ] || xcode-select -p >/dev/null 2>&1';
+      if (await runStep("/bin/sh", ["-c", guard]) !== 0) throw new Error("Python needs the macOS developer tools, which are not installed.");
+    }
+  }
   const steps = [
     [base, ["-m", "venv", venvDir()]],
-    [venvPython(), ["-m", "pip", "install", "--disable-pip-version-check", "--quiet", "-r", CHECKER_REQUIREMENTS]],
+    [venvPython(), ["-m", "pip", "install", "--disable-pip-version-check", "--quiet", "--require-hashes", "--only-binary=:all:", "-r", CHECKER_REQUIREMENTS]],
   ];
   for (const [cmd, args] of steps) {
     log(`$ ${path.basename(cmd)} ${args.slice(0, 3).join(" ")} ...`);
-    const r = spawnSync(cmd, args, { stdio: ["ignore", "inherit", "inherit"] });
-    if (r.status !== 0) throw new Error(`${cmd} ${args.slice(0, 2).join(" ")} failed (${r.error?.message || `exit ${r.status}`})`);
+    const status = await runStep(cmd, args);
+    if (status !== 0) throw new Error(`${cmd} ${args.slice(0, 2).join(" ")} failed (exit ${status})`);
   }
-  const probe = spawnSync(venvPython(), ["-c", "import lxml, docx, openpyxl, pptx, defusedxml"], { encoding: "utf8" });
-  if (probe.status !== 0) throw new Error(`the venv was created but the libraries do not import: ${probe.stderr}`);
+  if (await runStep(venvPython(), imports) !== 0) throw new Error("the venv was created but the libraries do not import");
   return venvPython();
 }
 
@@ -165,7 +303,8 @@ export function setupChecker(log = (s) => process.stderr.write(s + "\n")) {
 // The server must keep answering while pip runs (about a minute), so this variant spawns instead of spawnSync. One job at a time for the
 // whole server: a second start while one runs gets the same promise. The job's outcome is kept until the next start so the page can poll it.
 const SETUP_TIMEOUT_MS = () => Number(env("SETUP_TIMEOUT_MS", 10 * 60_000));
-export const NETWORK_WORDS = /could not resolve|name or service not known|nodename nor servname|temporary failure in name resolution|failed to establish a new connection|connection (?:error|refused|reset|timed out)|network is unreachable|no matching distribution|max retries exceeded|read timed out|ssl|proxy/i;
+export const NETWORK_WORDS = /could not (?:resolve|fetch url)|name or service not known|nodename nor servname|temporary failure in name resolution|failed to establish a new connection|newconnectionerror|connection (?:error|refused|reset|timed out)|network is unreachable|max retries exceeded|read timed out|ssl|proxy/i;
+export const UNSUPPORTED_PYTHON_WORDS = /requires-python|ignored the following versions/i;
 let job = null; // {promise} while running; {outcome: {reason, detail}} after a failure; null when idle or after a success
 
 /** One command, async. Resolves {status, stderr (last 4000 bytes), error}; never rejects, never inherits the server's stdio. */
@@ -192,6 +331,36 @@ export function run(cmd, args, timeoutMs) {
   });
 }
 
+/** Returns e.g. "Python 3.9.6" or "" if the interpreter cannot be queried. */
+function pythonVersion(py) {
+  return new Promise((resolve) => {
+    let out = "";
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    let child;
+    try {
+      child = spawn(py, ["--version"], { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    } catch {
+      return resolve("");
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      done("");
+    }, 5000);
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.once("error", () => done(""));
+    child.once("close", (status) => done(status === 0 ? out.trim().slice(0, 80) : ""));
+  });
+}
+
 /** Do the venv's libraries import? (The one probe both setup and the status use: a venv whose pip said ok but whose libraries do not import is not ready.) */
 async function librariesImport(py) {
   return (await run(py, ["-c", "import lxml, docx, openpyxl, pptx, defusedxml"], 30_000)).status === 0;
@@ -210,10 +379,18 @@ async function setupSteps() {
     const missing = venv.error?.code === "ENOENT";
     throw Object.assign(new Error(`${base} -m venv failed (${venv.error?.message || `exit ${venv.status}`}) ${venv.stderr}`.trim()), { reason: missing ? "no_python" : "failed" });
   }
-  const pip = await run(venvPython(), ["-m", "pip", "install", "--disable-pip-version-check", "--quiet", "-r", CHECKER_REQUIREMENTS], SETUP_TIMEOUT_MS());
+  const pip = await run(venvPython(), ["-m", "pip", "install", "--disable-pip-version-check", "--quiet", "--require-hashes", "--only-binary=:all:", "-r", CHECKER_REQUIREMENTS], SETUP_TIMEOUT_MS());
   if (pip.status !== 0) {
     const text = `pip install failed (${pip.error?.message || `exit ${pip.status}`}) ${pip.stderr}`.trim();
-    throw Object.assign(new Error(text), { reason: NETWORK_WORDS.test(text) ? "no_network" : "failed" });
+    if (NETWORK_WORDS.test(text)) {
+      throw Object.assign(new Error(text), { reason: "no_network" });
+    }
+    if (UNSUPPORTED_PYTHON_WORDS.test(text)) {
+      const ver = await pythonVersion(venvPython());
+      const detail = ver ? `this Python version or platform (${ver}) is not supported: ${text}` : `this Python version or platform is not supported: ${text}`;
+      throw Object.assign(new Error(detail), { reason: "unsupported_python", pythonVersion: ver || undefined });
+    }
+    throw Object.assign(new Error(text), { reason: "failed" });
   }
   if (!(await librariesImport(venvPython()))) throw Object.assign(new Error("the venv was created but the libraries do not import"), { reason: "failed" });
   // runs use findPython(): an ONIONSKIN_PYTHON that points elsewhere would keep the checker off after a "successful" setup
@@ -224,7 +401,7 @@ async function setupSteps() {
 
 /**
  * Starts the setup (or joins the one that is running) and returns its promise. It resolves to the venv's python, or rejects with an error that
- * carries `reason`: no_python | no_network | failed. The caller does not need to await it; setupCheckerStatus() reports it.
+ * carries `reason`: no_python | no_network | unsupported_python | failed. The caller does not need to await it; setupCheckerStatus() reports it.
  */
 export function startSetupChecker() {
   if (job?.promise) return job.promise;
@@ -232,7 +409,13 @@ export function startSetupChecker() {
   mine.promise = setupSteps().then(
     (py) => ((job = null), py),
     (err) => {
-      job = { outcome: { reason: err.reason || "failed", detail: String(err.message).slice(0, 2000) } };
+      job = {
+        outcome: {
+          reason: err.reason || "failed",
+          detail: String(err.message).slice(0, 2000),
+          ...(err.pythonVersion ? { pythonVersion: err.pythonVersion } : {}),
+        },
+      };
       throw err;
     },
   );
@@ -264,23 +447,45 @@ export function deepRedline(preBytes, postBytes, outBytes) {
   const py = findPython();
   if (!py) return Promise.resolve({ ran: false, reason: "not_set_up" });
   return new Promise((resolve) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "onionskin-redline-"));
+    let dir = fs.mkdtempSync(path.join(os.tmpdir(), "onionskin-redline-"));
     const files = ["pre", "post", "out"].map((n) => path.join(dir, `${n}.docx`));
-    [preBytes, postBytes, outBytes].forEach((b, k) => fs.writeFileSync(files[k], b));
     let out = "";
     let settled = false;
+    let child = null;
+    let timer = null;
+    const killer = gracefulKill(() => child);
+    const cleanupDir = () => {
+      if (!dir) return;
+      const d = dir;
+      dir = null;
+      stopRemainingSoffice(d);
+      fs.rmSync(d, { recursive: true, force: true });
+    };
     const finish = (r) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      fs.rmSync(dir, { recursive: true, force: true });
+      if (!child?.pid || child.exitCode !== null || child.signalCode !== null) cleanupDir();
       resolve(r);
     };
-    const child = spawn(py, ["-I", CHECK_SCRIPT, "--redline", ...files], { env: process.env, stdio: ["ignore", "pipe", "ignore"] });
-    const timer = setTimeout(() => (child.kill("SIGTERM"), finish({ ran: true, ok: false, why: "the deeper check timed out" })), CHECK_TIMEOUT_MS());
-    child.stdout.on("data", (c) => (out += c).length > 1e6 && child.kill("SIGTERM"));
-    child.on("error", () => finish({ ran: true, ok: false, why: "the deeper check could not start" }));
-    child.on("close", (code) => {
+    try {
+      [preBytes, postBytes, outBytes].forEach((b, k) => fs.writeFileSync(files[k], b));
+      child = spawn(py, ["-I", CHECK_SCRIPT, "--redline", ...files], { env: checkerEnv(dir), stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return finish({ ran: true, ok: false, why: "the deeper check could not start" });
+    }
+    timer = setTimeout(() => {
+      killer.terminate();
+      finish({ ran: true, ok: false, why: "the deeper check timed out" });
+    }, CHECK_TIMEOUT_MS());
+    child.stdout.on("data", (c) => (out += c).length > 1e6 && killer.terminate());
+    child.once("error", () => {
+      killer.clear();
+      finish({ ran: true, ok: false, why: "the deeper check could not start" });
+    });
+    child.once("close", (code) => {
+      killer.clear();
+      cleanupDir();
       if (code === 3) return finish({ ran: false, reason: "libraries_missing" });
       let j = null;
       try {

@@ -25,7 +25,12 @@ function useOnce(resetOn) {
     if (ref.current) return;
     ref.current = true;
     setBusy(true);
-    if ((await fn()) === false) {
+    try {
+      if ((await fn()) === false) {
+        ref.current = false;
+        setBusy(false);
+      }
+    } catch {
       ref.current = false;
       setBusy(false);
     }

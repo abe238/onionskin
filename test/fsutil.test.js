@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { after, afterEach, test } from "node:test";
@@ -109,6 +109,24 @@ test("a second process holding the lock blocks this writer until it lets go", as
   assert.ok(Date.now() - t0 >= 300, "waited for the other holder");
   assert.equal(fs.readFileSync(doc, "utf8"), "after");
   await new Promise((r) => child.on("exit", r));
+});
+
+test("an unreadable lock times out without changing the file or removing the lock", () => {
+  const doc = mk("unreadable.docx");
+  fs.mkdirSync(lockPathFor(doc)); // exclusive create sees EEXIST, reading the pid fails
+  try {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import { acquireLock } from "./src/fsutil.js";
+      try { acquireLock(process.argv[1], { waitMs: 50 }); }
+      catch (err) { process.stdout.write(err.code); }
+    `, doc], { encoding: "utf8", timeout: 2000 });
+    assert.ifError(child.error);
+    assert.equal(child.stdout, "LOCK_BUSY");
+    assert.equal(fs.readFileSync(doc, "utf8"), "original");
+    assert.ok(fs.statSync(lockPathFor(doc)).isDirectory());
+  } finally {
+    fs.rmdirSync(lockPathFor(doc));
+  }
 });
 
 // ---- finding 8: ACLs ---------------------------------------------------------------------------------------------

@@ -15,10 +15,11 @@ export function AgentPanel({ agent, readOnly, onAct }) {
   const listRef = useRef(null);
   const items = (agent?.activity || []).slice(-50);
   const show = !!agent?.show;
+  const last = items.at(-1);
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [items.length, show]);
+  }, [items.length, last?.at, last?.text, show]);
   if (!agent || !visible(agent)) return null;
   const handed = agent.state === "handover";
   return (

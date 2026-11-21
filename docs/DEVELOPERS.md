@@ -53,7 +53,7 @@ The long reference is in [GUIDE.md](GUIDE.md).
 - macOS only so far, the only platform tested. Node.js 22 or newer. A browser (the full browser test suite runs in Chrome).
 - Claude Code or Codex, already installed and signed in. Onionskin does not include an agent.
 - Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to the agent.
-- Version 0.0.5, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
+- Version 0.0.6, an early release. One person has tested it. No Windows, no Linux, no real-time collaboration.
 - Charts and SmartArt show as placeholders. Fields, content controls and equations are shown read-only. Macro-enabled files (`.docm`, `.xlsm`, `.pptm`) are refused.
 - HTML pages (`.html`, `.htm`) open in a still view: scripts never run and nothing loads from the internet; the person edits text and the agent changes structure. Up to 10 MB and 200,000 elements, UTF-8 only. Details in [GUIDE.md](GUIDE.md#html-files).
 - Tests: over 1,000 unit tests and 300 browser tests pass (2026-11-13). A clean-machine test on a second Mac passed: install by the pasted sentence, `onionskin doctor`, and one real round.
@@ -68,9 +68,9 @@ The full install notes. (The INSTALL.md in the zip is now a short page; everythi
 
 | You need | Why | How to check |
 |---|---|---|
-| A Mac with macOS 13 or newer | Onionskin runs only on macOS. | Apple menu, About This Mac |
+| A Mac with macOS 13.1 or newer (Safari 16.2+) | Onionskin runs only on macOS (the editor uses `color-mix()`, which needs macOS 13.1 / Safari 16.2 or newer). | Apple menu, About This Mac |
 | Node.js 22 or newer | Onionskin is a Node program. The zip contains everything it runs on. The installer downloads one more thing, the deeper-check libraries below, unless you pass `--no-checker`. | `node -v` prints `v22` or higher |
-| A web browser | The editor is a web page on your own Mac. | Chrome is the browser that was tested. Safari and others are untested. |
+| A web browser | The editor is a web page on your own Mac. | Chrome is the primary tested browser; WebKit/Safari is checked for Office files (`npm run test:webkit`, `npm run test:safari`). HTML files on Safari are untested. |
 | Claude Code or Codex, already installed and signed in | The agent makes the edits. Onionskin does not include one. | `claude --version` or `codex --version` prints a version |
 
 **Set up by the installer, and optional to keep:**
@@ -83,7 +83,7 @@ The full install notes. (The INSTALL.md in the zip is now a short page; everythi
 
 If the deeper checks are off (you used `--no-checker`, or the setup failed), everything still works. The review panel shows "Basic checks passed. Deeper checks are off." under the newest agent run, with a "Turn on deeper checks" button that downloads the same five libraries. You can also ask your agent to turn them on.
 
-**What was tested:** the install was rehearsed on macOS 27.2 with Node 26.13 and Google Chrome, signing in nothing and using a fresh empty home folder. macOS 13 to 26, Node 22 to 25, and other browsers are expected to work but have not been tried. Claude Code and Codex have each been run end to end by a real agent (Claude Code: Word, Excel, PowerPoint, a protected Word file and a hostile Word file; Codex: real runs, most recently on build 8, where a table row was added about 26 s after Send, in one run). Safari is untested.
+**What was tested:** the install was rehearsed on macOS 27.2 with Node 26.13 and Google Chrome, signing in nothing and using a fresh empty home folder. macOS 13.1 to 26, Node 22 to 25, and other browsers are expected to work but have not been tried. Claude Code and Codex have each been run end to end by a real agent (Claude Code: Word, Excel, PowerPoint, a protected Word file and a hostile Word file; Codex: real runs, most recently on build 8, where a table row was added about 26 s after Send, in one run). WebKit (`npm run test:webkit`) and a real Safari smoke check (`npm run test:safari`) are run for Office files; HTML files on Safari are untested.
 
 #### Installing Node.js (only if `node -v` fails or prints less than v22)
 
@@ -123,7 +123,7 @@ In a new Terminal window:
 1. ```sh
    onionskin --version
    ```
-   You should see: a version number such as `0.0.5`.
+   You should see: a version number such as `0.0.6`.
 
 2. ```sh
    onionskin setup --dry-run

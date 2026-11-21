@@ -78,7 +78,7 @@ function parseReplace(t) {
   let rest;
   if (OPEN_QUOTES.has(body[0])) {
     const q = quoted(body);
-    if (!q || !q.rest.startsWith(" with ")) return null;
+    if (!q || !/^ with /i.test(q.rest)) return null;
     find = { text: q.value, quoted: true };
     rest = q.rest.slice(" with ".length);
   } else {

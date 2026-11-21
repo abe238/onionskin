@@ -71,18 +71,27 @@ export const APPLE_STATES = {
 /** The probe's words (scripts/rewriter/apple/main.swift --probe) to the state codes above. */
 export const PROBE_REASONS = { deviceNotEligible: "device_not_eligible", appleIntelligenceNotEnabled: "apple_intelligence_not_enabled", modelNotReady: "model_not_ready" };
 
+const shaCache = new Map(); // `${bin}\0${mtimeMs}\0${size}\0${ino}` -> sha256
+const quarantineCache = new Map(); // `${bin}\0${mtimeMs}\0${ctimeMs}\0${size}\0${ino}` -> boolean
+const cacheSet = (m, k, v) => {
+  if (m.size >= 32) m.clear();
+  m.set(k, v);
+  return v;
+};
+
 /**
  * Does the file carry the com.apple.quarantine mark? Asked of /usr/bin/xattr, never by running the file. true | false; anything but a clean
  * "No such xattr" answer counts as marked (fail closed).
  */
 export function isQuarantined(file) {
-  const r = spawnSync(XATTR, ["-p", QUARANTINE, file], { encoding: "utf8", timeout: 5000 });
+  const r = spawnSync(XATTR, ["-p", QUARANTINE, file], { encoding: "utf8", timeout: 5000, env: { ...process.env, LC_ALL: "C" } });
   if (r.status === 0) return true;
   return !(r.status === 1 && /No such xattr/.test(r.stderr || ""));
 }
 /** Removes the mark from exactly this file. true when the file carries no mark afterwards. */
 export function clearQuarantine(file) {
-  spawnSync(XATTR, ["-d", QUARANTINE, file], { encoding: "utf8", timeout: 5000 });
+  spawnSync(XATTR, ["-d", QUARANTINE, file], { encoding: "utf8", timeout: 5000, env: { ...process.env, LC_ALL: "C" } });
+  for (const k of quarantineCache.keys()) if (k.startsWith(`${file}\0`)) quarantineCache.delete(k);
   return !isQuarantined(file);
 }
 
@@ -112,20 +121,25 @@ export function hostFacts() {
 export function appleHelperState(o = {}) {
   const dir = o.dir ?? (env("APPLE_HELPER_DIR", "") || APPLE_HELPER_DIR); // the folder variable is for the browser tests, with a stand-in helper
   const host = o.host ?? hostFacts();
-  const marked = o.quarantined ?? isQuarantined;
   const major = Number(String(host.macos ?? "").split(".")[0]);
   if (!Number.isFinite(major) || major < 26) return { ok: false, reason: "macos_too_old" };
   if (!host.appleSilicon) return { ok: false, reason: "device_not_eligible" };
   const bin = path.join(dir, "onionskin-fm");
   let rec;
+  let st;
   try {
     rec = JSON.parse(fs.readFileSync(path.join(dir, "onionskin-fm.json"), "utf8"));
-    if (!fs.lstatSync(bin).isFile()) return { ok: false, reason: "helper_missing" };
+    st = fs.lstatSync(bin);
+    if (!st.isFile()) return { ok: false, reason: "helper_missing" };
   } catch {
     return { ok: false, reason: "helper_missing" };
   }
-  if (typeof rec?.sha256 !== "string" || fileSha256(bin) !== rec.sha256) return { ok: false, reason: "helper_changed" };
-  if (marked(bin)) return { ok: false, reason: "quarantined", bin };
+  const shaKey = `${bin}\0${st.mtimeMs}\0${st.size}\0${st.ino}`;
+  const sha = shaCache.get(shaKey) ?? cacheSet(shaCache, shaKey, fileSha256(bin));
+  if (typeof rec?.sha256 !== "string" || sha !== rec.sha256) return { ok: false, reason: "helper_changed" };
+  const qKey = `${bin}\0${st.mtimeMs}\0${st.ctimeMs}\0${st.size}\0${st.ino}`;
+  const isMarked = o.quarantined ? o.quarantined(bin) : (quarantineCache.get(qKey) ?? cacheSet(quarantineCache, qKey, isQuarantined(bin)));
+  if (isMarked) return { ok: false, reason: "quarantined", bin };
   return { ok: true, bin, sha256: rec.sha256 };
 }
 /** The person's words for a reason code, or null. helper_changed reads as helper_missing. */
@@ -175,7 +189,7 @@ export function workerEnv() {
  * Options: idleMs (default 15 minutes), startMs, stuckMs, retryMs.
  */
 export function createWorker(launch, opts = {}) {
-  const o = { idleMs: idleMs(), startMs: START_LIMIT_MS, stuckMs: STUCK_MS, retryMs: RETRY_AFTER_FAILURE_MS, ...opts };
+  const o = { idleMs: idleMs(), startMs: START_LIMIT_MS, stuckMs: STUCK_MS, retryMs: RETRY_AFTER_FAILURE_MS, killGraceMs: 500, ...opts };
   let child = null;
   let ready = false;
   let failedAt = 0;
@@ -197,7 +211,23 @@ export function createWorker(launch, opts = {}) {
       try {
         c.stdin.end();
       } catch {}
-      c.kill("SIGTERM");
+      if (c.exitCode === null && c.signalCode === null) {
+        try {
+          c.kill("SIGTERM");
+        } catch {}
+        const forceKill = () => {
+          try {
+            if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL");
+          } catch {}
+        };
+        const killTimer = setTimeout(forceKill, o.killGraceMs);
+        killTimer.unref?.();
+        process.once("exit", forceKill);
+        c.once("exit", () => {
+          clearTimeout(killTimer);
+          process.off("exit", forceKill);
+        });
+      }
     }
     if (busy) {
       busy.settle({ ok: false, code: "worker_exited" });

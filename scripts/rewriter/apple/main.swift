@@ -124,7 +124,7 @@ func failureCode(_ error: Error) -> String {
         for shot in shots[task] ?? [] where shot.count == 2 { inst += "\n\n" + instruction + "\n" + shot[0] + "\n=> " + shot[1] }
         let session = LanguageModelSession(instructions: inst)
         let r = options == nil ? try await session.respond(to: instruction + "\n" + text) : try await session.respond(to: instruction + "\n" + text, options: options!)
-        var out = r.content
+        var out = r.content.trimmingCharacters(in: .whitespacesAndNewlines)
         for st in stops { if let range = out.range(of: st) { out = String(out[..<range.lowerBound]) } }
         emit(["id": id, "ok": true, "text": out.trimmingCharacters(in: .whitespacesAndNewlines)])
       } catch {

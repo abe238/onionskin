@@ -3,7 +3,7 @@ import { BuildVoice } from "./BuildVoice.jsx";
 import { api } from "./lib.js";
 import { VoiceDialog } from "./VoiceDialog.jsx";
 import { VoiceGuideEditor } from "./VoiceGuideEditor.jsx";
-import { onReviewDraft, setDraftReady } from "./voice-bus.js";
+import { onReviewDraft, setDraftReady, useGuidePending } from "./voice-bus.js";
 
 const keep = (e) => e.preventDefault();
 
@@ -21,12 +21,13 @@ export function guideStatus(voice) {
  * they open. It stays on the page while the panel is closed (so "Review draft" in the activity list can open the draft), and draws its
  * buttons only when `panel` is on. `children` are the Load and Save as voice.md buttons of the panel.
  */
-export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel, children }) {
+export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel, children, dirtyRef }) {
   const [dialog, setDialog] = useState(null); // {kind: "build" | "draft" | "guide", draft}: the draft as it was when the window opened, so a newer one never replaces what is being edited
   const [note, setNote] = useState("");
   const [removing, setRemoving] = useState(false); // the confirm window of "Remove guide"
   const [removeError, setRemoveError] = useState("");
   const draft = voice?.draft || null;
+  const pending = useGuidePending();
   const busy = !!(session.pendingBatchId || session.deliveredBatchId);
   const voiceRun = busy && session.runKind === "voice"; // a voice request is out: the one line says where it stands, instead of the busy refusal and the note together
   const writing = voiceRun && !!session.deliveredBatchId; // only an agent that has taken the batch is writing; until then it is waiting
@@ -43,7 +44,7 @@ export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel,
 
   if (!voice) return null;
   const status = guideStatus(voice);
-  const close = () => setDialog(null);
+  const close = () => setDialog((current) => current === dialog ? null : current);
   // the same route the "Load a voice guide" window's Remove guide uses: an empty text takes the saved guide away
   async function removeGuide() {
     setRemoveError("");
@@ -68,12 +69,12 @@ export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel,
               Build my voice guide
             </button>
             {draft && (
-              <button type="button" className="btn sm" data-testid="voice-review-draft" onMouseDown={keep} onClick={() => setDialog({ kind: "draft", draft })}>
+              <button type="button" className="btn sm" data-testid="voice-review-draft" disabled={pending} onMouseDown={keep} onClick={() => setDialog({ kind: "draft", draft })}>
                 Review draft
               </button>
             )}
             {structured && (
-              <button type="button" className="btn sm" data-testid="voice-guide-open" onMouseDown={keep} onClick={() => setDialog({ kind: "guide", draft: null })}>
+              <button type="button" className="btn sm" data-testid="voice-guide-open" disabled={pending} onMouseDown={keep} onClick={() => setDialog({ kind: "guide", draft: null })}>
                 Open guide
               </button>
             )}
@@ -105,7 +106,7 @@ export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel,
           <p className="vg-status-line vg-outside" data-testid="voice-guide-line">
             {readOnly ? "Build it from the tab that holds the file." : note || status}
             {draft && !readOnly && (
-              <button type="button" className="btn quiet sm" data-testid="voice-review-draft-line" onMouseDown={keep} onClick={() => setDialog({ kind: "draft", draft })}>
+              <button type="button" className="btn quiet sm" data-testid="voice-review-draft-line" disabled={pending} onMouseDown={keep} onClick={() => setDialog({ kind: "draft", draft })}>
                 Review draft
               </button>
             )}
@@ -145,6 +146,7 @@ export function VoiceGuideBlock({ sid, session, voice, onVoice, readOnly, panel,
       )}
       {(dialog?.kind === "draft" || dialog?.kind === "guide") && (
         <VoiceGuideEditor
+          dirtyRef={dirtyRef}
           voice={voice}
           draft={dialog.draft}
           onVoice={onVoice}

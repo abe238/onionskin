@@ -102,6 +102,32 @@ test("a symlink or a file in the way is never replaced; uninstall removes only o
   assert.equal((await runSetup(["--uninstall"], opts(tmpHome()))).exit, 0, "nothing installed is not an error");
 });
 
+test("Ctrl-C during skill replacement leaves a complete skill at the original path", async () => {
+  const home = tmpHome();
+  const [target] = skillTargets(home);
+  await runSetup([], opts(home));
+  const file = path.join(target, "SKILL.md");
+  const current = fs.readFileSync(file, "utf8");
+  const previous = current + "\nOlder copy.\n";
+  fs.writeFileSync(file, previous);
+  const script = `
+    import fs from "node:fs";
+    import { runSetup } from "./src/setup.js";
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (to === process.argv[1]) process.kill(process.pid, "SIGINT");
+      return rename(from, to);
+    };
+    await runSetup(["--force"]);
+  `;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script, target], {
+    cwd: repo, env: { ...process.env, HOME: home, ONIONSKIN_STATE_DIR: path.join(home, "st") },
+  });
+  assert.equal(r.signal, "SIGINT", String(r.stderr));
+  assert.ok([current, previous].includes(fs.readFileSync(file, "utf8")));
+  assert.ok(fs.statSync(path.join(target, "reference", "ops.md")).isFile());
+});
+
 test("setup arguments are validated", () => {
   assert.deepEqual(parseSetupArgs(["--force", "--dry-run"]), { dryRun: true, force: true, uninstall: false });
   assert.throws(() => parseSetupArgs(["--bogus"]), /unknown option/);

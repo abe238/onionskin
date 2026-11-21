@@ -50,6 +50,18 @@ async function deliver(S, comments, s = S.open(write())) {
 const ask = (id, q = "Which date do you mean?", options = ["March 3", "March 13"]) => ({ comment_id: id, status: "asked", ask: q, options });
 const byId = (s, id) => s.comments.find((c) => c.id === id);
 
+test("questions reject hidden links and duplicate options while preserving distinct visible choices", () => {
+  for (const selector of ["\uFE0E", "\uFE0F"]) {
+    assert.match(cleanQuestion({ ask: `Open w${selector}ww.example?`, options: ["Yes", "No"] }).reason || "", /link/);
+  }
+  for (const options of [["x²", "x2"], ["①", "1"], ["TM", "™"], ["...", "…"], ["Original", "Ｏriginal"]]) {
+    assert.deepEqual(cleanQuestion({ ask: "Which?", options }).question?.options, options);
+  }
+  for (const options of [["Original", "Ori\u00ADginal"], ["Original", "Orig\uFE0Final"], ["✔️", "✔"]]) {
+    assert.match(cleanQuestion({ ask: "Which?", options }).reason || "", /same/);
+  }
+});
+
 test("cleanQuestion: caps are refused, never cut; links, duplicates and bad counts are refused", () => {
   const ok = (q, o) => assert.ok(cleanQuestion({ ask: q, options: o }).question, JSON.stringify([q, o]));
   const no = (q, o, re) => {
@@ -70,12 +82,67 @@ test("cleanQuestion: caps are refused, never cut; links, duplicates and bad coun
   no("Q?", ["a", "​​"], /empty/);
   no("Q?", ["Same", "same"], /same/);
   no("Q?", ["Same", "Sa​me"], /same/); // a hidden character does not make two options different
-  no("See https://x.example", ["a", "b"], /link/);
+  // T1 policy: refuse ONLY ://, www., or email addresses (mailto: / a@b.c), each after dot-folding + invisible stripping.
+  const hostile = [
+    "https://x.example",
+    "http://x.example/login",
+    "file://etc",
+    "https\uFF1A\uFF0F\uFF0Fx.example",
+    "ht\u200Btps://x.example",
+    "https:\u00AD//x.example",
+    "www.x.example",
+    "WWW.x.example",
+    "w\u200Bww.x.example",
+    "ww\u00ADw.x.example",
+    "www\u3002x.example",
+    "www\uFF61x.example",
+    "www\uFF0Ex.example",
+    "www\u2024x.example",
+    "a@b.example",
+    "a@b\u3002example",
+    "a@b\uFF61example",
+    "a@b\uFF0Eexample",
+    "a@b\u2024example",
+    "a\u200B@b.example",
+    "a@\u00ADb.example",
+    "a\uFF20b.example",
+    "mailto:a@b.example",
+    "mailto:boss",
+    "mail\u200Bto:boss",
+  ];
+  for (const bad of hostile) {
+    no(`Check ${bad}?`, ["a", "b"], /link/);
+  }
   no("Q?", ["a", "WWW.example.com"], /link/);
-  no("Q?", ["a", "w​ww.example.com"], /link/); // a hidden character does not hide a link
+  no("Q?", ["a", "w\u200Bww.example.com"], /link/);
   no("Q?", ["a", "file://etc"], /link/);
+  // Invisible characters inside www. and email addresses are stripped before the check
+  for (const inv of ["\u00AD", "\u034F", "\u180E", "\u115F", "\u3164", "\uFFA0", "\u17B4", "\u17B5", "\u2800", "\u200B", "\u200C", "\u200D", "\u2060", "\uFEFF"]) {
+    no(`Open w${inv}ww.x.example?`, ["a", "b"], /link/);
+    no(`Mail a@${inv}b.example?`, ["a", "b"], /link/);
+  }
+  // Ordinary sentences and bare domains (accepted gap) MUST pass
+  const ordinary = [
+    "That is done.It works now?",
+    "Is the crash at main.py:42 the one you mean?",
+    "Finished.No changes needed.",
+    "Step 1.Click Save.",
+    "Fixed.Run the tests.",
+    "Use Socket.IO or plain WebSockets?",
+    "Migrate from ADO.NET to ML.NET?",
+    "Check app.js:120 and file.txt:12?",
+    "See Main.java:17 and index.html:30?",
+    "Check report.docx and budget.xlsx?",
+    "Built with Node.js and ASP.NET?",
+    "Done.Next step is e.g. v1.2.3 in the U.S.?",
+    "Section 3.b in README.md and setup.sh?",
+    "Bare domain evil.com is an accepted gap?",
+  ];
+  for (const good of ordinary) {
+    ok(good, ["Yes", "No"]);
+  }
   // cleaned before the length check: a newline is one space, so it counts once
-  const r = cleanQuestion({ ask: "Line one\nline two‮evil​?", options: ["A⁦b", "C\td"] });
+  const r = cleanQuestion({ ask: "Line one\nline two\u202Eevil\u200B?", options: ["A\u2066b", "C\td"] });
   assert.deepEqual(r.question, { text: "Line one line twoevil?", options: ["Ab", "C d"] });
 });
 

@@ -38,6 +38,15 @@ export function validatePackage(bytes, format) {
   return zip;
 }
 
+function hasZipEntry(zip, clean) {
+  if (zip.entries.has(clean)) return true;
+  try {
+    return zip.entries.has(decodeURIComponent(clean));
+  } catch {
+    return false;
+  }
+}
+
 function relTargets(zip) {
   const missing = [];
   let parts = 0;
@@ -56,7 +65,7 @@ function relTargets(zip) {
         if (tag !== "Relationship" || attrs.TargetMode === "External" || !attrs.Target) return;
         const target = attrs.Target.startsWith("/") ? attrs.Target.slice(1) : path.posix.normalize(path.posix.join(base, attrs.Target));
         const clean = target.split("#")[0];
-        if (clean && !zip.entries.has(clean)) missing.push({ rels: name, target: clean });
+        if (clean && !hasZipEntry(zip, clean)) missing.push({ rels: name, target: clean });
       },
     });
   }
@@ -87,7 +96,13 @@ export function partRels(zip, part) {
     onOpen(tag, a) {
       if (tag !== "Relationship" || !a.Type || !a.Target) return;
       const external = a.TargetMode === "External";
-      const target = external ? a.Target : a.Target.startsWith("/") ? a.Target.slice(1) : path.posix.normalize(path.posix.join(base === "." ? "" : base, a.Target.split("#")[0]));
+      let target = external ? a.Target : a.Target.startsWith("/") ? a.Target.slice(1) : path.posix.normalize(path.posix.join(base === "." ? "" : base, a.Target.split("#")[0]));
+      if (!external && !zip.entries.has(target)) {
+        try {
+          const dec = decodeURIComponent(target);
+          if (zip.entries.has(dec)) target = dec;
+        } catch {}
+      }
       out.push({ id: a.Id, type: a.Type.split("/").pop(), target, external });
     },
   });

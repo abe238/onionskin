@@ -71,19 +71,24 @@ const BLANK_RUN_MAX = 2;
 const TLD = /^\p{L}{2,}$/u;
 const NAME_CHAR = /[\p{L}\p{N}-]/u;
 const PORT = /:\d{1,5}$/u;
+const LOOKALIKE_DOTS = /[\u3002\uFF61\uFF0E\u2024]/gu;
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\u2800\u3164\uFEFF\uFFA0]/gu;
+/** NFKC, invisible characters stripped, and look-alike dots folded to ASCII "." for link checks. */
+export const foldLinkText = (s) => nfc(String(s ?? "").replace(INVISIBLE, ""), "NFKC").replace(INVISIBLE, "").replace(LOOKALIKE_DOTS, ".");
+
 /**
- * A domain with a path, at least as strict as the examples' rule (LINK in src/voice.js, a backtracking pattern that is fine on 400
- * characters but not on 32 KB): any part of a word before one of its slashes that ends in a name character, a dot and two or more letters,
- * an optional port after it ("evil.example/x", "//evil.example/login", "x/evil.example/", "evil.example:8080/x"). "4.5/5", "and/or" and
- * "e.g. 3/4" pass. One pass over each word.
+ * A domain with a path (0.0.5 rule), linear-time on 32 KB. Expects `foldLinkText(s)`: any part of a word before one of its slashes
+ * that ends in a name character, a dot and two or more letters, with an optional port after it ("evil.example/x",
+ * "//evil.example/login", "x/evil.example/", "evil.example:8080/x"). Bare domains without a slash are intentionally not matched.
+ * "4.5/5", "and/or", "e.g. 3/4", "main.py:42", "Socket.IO", and "Finished.No" pass. One pass over each word.
  */
-function domainPath(s) {
+export function domainPath(s) {
   for (const word of s.split(/\s+/u)) {
     const parts = word.split("/");
     for (let i = 0; i < parts.length - 1; i++) {
       const name = parts[i].replace(PORT, "");
       const dot = name.lastIndexOf(".");
-      if (dot > 0 && NAME_CHAR.test(name[dot - 1]) && TLD.test(name.slice(dot + 1))) return true;
+      if (dot > 0 && NAME_CHAR.test([...name.slice(0, dot)].at(-1)) && TLD.test(name.slice(dot + 1))) return true;
     }
   }
   return false;
@@ -141,7 +146,7 @@ export function cleanVoiceDraft(value) {
   if (Buffer.byteLength(value, "utf8") > DRAFT_MAX_BYTES) return refuse("too_long", `the draft is over ${DRAFT_MAX_BYTES} bytes`);
   const text = nfc(value.replace(/\r\n?/gu, "\n")).replace(VS, "");
   if (HIDDEN.test(text)) return refuse("hidden_characters", "the draft holds a hidden or control character (tabs included)");
-  const nfkc = nfc(text, "NFKC");
+  const nfkc = foldLinkText(text);
   if (MARKUP.some((re) => re.test(nfkc)) || domainPath(nfkc)) return refuse("link_or_markup", "the draft holds a link, an address, @, HTML or Markdown markup, or a code fence");
   const lines = text.split("\n");
   // padding: a run of blank lines could push a planted line far below the part of a box the person reads first

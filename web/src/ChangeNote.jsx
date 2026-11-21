@@ -31,7 +31,14 @@ export function ChangeNote({ sid, fileName, refreshKey, onOpen }) {
   }, [sid, refreshKey]);
   useEffect(() => () => clearTimeout(timer.current), []);
 
+  const close = () => {
+    seq.current++;
+    setView(null);
+    setCopied(null);
+  };
+
   const press = () => {
+    if (view) return close();
     const n = ++seq.current;
     onOpen?.();
     setBusy(true);
@@ -64,7 +71,7 @@ export function ChangeNote({ sid, fileName, refreshKey, onOpen }) {
 
   return (
     <>
-      <button type="button" className="cn-btn" data-testid="change-note-button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onClick={press}>
+      <button type="button" className="cn-btn" data-testid="change-note-button" aria-expanded={!!view} disabled={busy} onMouseDown={(e) => e.preventDefault()} onClick={press}>
         What changed
       </button>
       {view && (
@@ -78,6 +85,9 @@ export function ChangeNote({ sid, fileName, refreshKey, onOpen }) {
               <div className="cn-actions">
                 <button type="button" className="btn sm" data-testid="change-note-copy" onMouseDown={(e) => e.preventDefault()} onClick={copy}>
                   <Icon name={copied === "yes" ? "check" : "copy"} size={14} /> {copied === "yes" ? "Copied" : "Copy"}
+                </button>
+                <button type="button" className="btn sm quiet" data-testid="change-note-close" onMouseDown={(e) => e.preventDefault()} onClick={close}>
+                  Close
                 </button>
                 <span className="cn-status" data-testid="change-note-status" role="status">
                   {copied === "blocked" ? "Select the text and press Cmd+C." : ""}

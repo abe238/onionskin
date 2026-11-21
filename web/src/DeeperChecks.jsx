@@ -8,8 +8,16 @@ export const NOT_SET_UP = ["not_set_up", "libraries_missing"];
 const FAILED = {
   no_network: "Deeper checks could not be turned on: there is no internet connection. Connect, then try again.",
   no_python: "Deeper checks could not be turned on: Python 3 was not found on this Mac. Ask your agent to set it up, then try again.",
+  unsupported_python: "Deeper checks could not be turned on: this Python version or platform is not supported. Ask your agent to set up a supported Python, then try again.",
   failed: "Deeper checks could not be turned on. Try again, or ask your agent to look into it.",
 };
+function failedSentence(st) {
+  if (st.reason === "unsupported_python") {
+    const m = typeof st.detail === "string" && st.detail.match(/\bPython\s+\d+(?:\.\d+)+/i);
+    if (m) return `Deeper checks could not be turned on: ${m[0]} is not supported. Ask your agent to set up a supported Python, then try again.`;
+  }
+  return FAILED[st.reason] || FAILED.failed;
+}
 const POLL_MS = 1500;
 
 /**
@@ -72,7 +80,7 @@ export function DeeperChecks({ clean, onDetail }) {
         ) : state === "on" ? (
           <p>Deeper checks are on. They run from your next Send.</p>
         ) : state === "failed" ? (
-          <p>{FAILED[st.reason] || FAILED.failed}</p>
+          <p>{failedSentence(st)}</p>
         ) : (
           <p>{clean ? "Basic checks passed. Deeper checks are off." : "Deeper checks are off."}</p>
         )}

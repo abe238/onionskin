@@ -216,6 +216,8 @@ function readSheet(zip, sheet, sharedStrings, budget = bookBudget()) {
   let field = null; // v | f | is
   let inIs = false;
   let phon = 0;
+  let rowIdx = -1;
+  let colIdx = 0;
   walkXml(xml, {
     onOpen(n, a) {
       const l = local(n);
@@ -223,12 +225,30 @@ function readSheet(zip, sheet, sharedStrings, budget = bookBudget()) {
         if (++budget.merges > MAX_MERGES) throw tooMany(budget, MAX_MERGES, "merged ranges");
         const q = parseA1(a.ref ?? "");
         if (q && (q.r1 > q.r0 || q.c1 > q.c0)) out.merges.push(q);
+      } else if (l === "row") {
+        rowIdx = a.r && /^\d+$/.test(a.r) ? Number(a.r) - 1 : rowIdx + 1;
+        colIdx = 0;
       } else if (l === "c" && ++budget.cells > MAX_CELLS) throw tooMany(budget, MAX_CELLS, "cells");
-      else if (l === "c" && a.r) {
-        const m = /^([A-Z]{1,3})(\d+)$/.exec(a.r);
-        cur = m ? { c: [...m[1]].reduce((x, ch) => x * 26 + ch.charCodeAt(0) - 64, 0) - 1, r: Number(m[2]) - 1, t: a.t || "n", s: Number(a.s) || 0, v: "", f: null, is: "" } : null;
+      else if (l === "c") {
+        let r = -1;
+        let c = -1;
+        if (a.r) {
+          const m = /^([A-Z]{1,3})(\d+)$/.exec(a.r);
+          if (m) {
+            c = [...m[1]].reduce((x, ch) => x * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+            r = Number(m[2]) - 1;
+            colIdx = c + 1;
+          }
+        } else {
+          r = rowIdx;
+          c = colIdx++;
+        }
+        cur = r >= 0 && r < 1_048_576 ? { c, r, t: a.t || "n", s: Number(a.s) || 0, v: "", hasV: false, f: null, is: "" } : null;
       } else if (!cur) return;
-      else if (l === "v") field = "v";
+      else if (l === "v") {
+        field = "v";
+        cur.hasV = true;
+      }
       else if (l === "f") {
         field = "f";
         cur.f = "";
@@ -252,7 +272,7 @@ function readSheet(zip, sheet, sharedStrings, budget = bookBudget()) {
           if ((budget.sharedText -= text.length) < 0) throw tooMany(budget, MAX_SHARED_CELL_TEXT, "characters of text in its cells");
         }
         else if (cur.t === "inlineStr") text = cur.is;
-        else if (cur.t === "b") text = cur.v === "1" ? "TRUE" : "FALSE";
+        else if (cur.t === "b") text = !cur.hasV ? "" : cur.v === "1" || cur.v === "true" ? "TRUE" : "FALSE";
         else if (cur.t === "n" && NUM.test(cur.v)) text = String(Number(cur.v));
         else text = cur.v;
         if (text !== "" && cur.c < 16384) {

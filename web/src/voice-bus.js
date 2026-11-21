@@ -6,21 +6,41 @@ import { useSyncExternalStore } from "react";
 let ready = "";
 const subs = new Set();
 const openers = new Set();
+const subscribe = (fn) => (subs.add(fn), () => subs.delete(fn));
+const notify = () => subs.forEach((fn) => fn());
+let pendingRequests = 0;
+
+// The request can outlive its dialog and the preferences panel that opened it.
+export function beginGuideRequest() {
+  pendingRequests++;
+  notify();
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    pendingRequests--;
+    notify();
+  };
+}
+export const useGuidePending = () => useSyncExternalStore(subscribe, () => pendingRequests > 0, () => false);
 
 /** The id of the batch whose draft is waiting, or "" (the page keeps only this id). */
 export function setDraftReady(batchId) {
   const next = typeof batchId === "string" ? batchId : "";
   if (next === ready) return;
   ready = next;
-  subs.forEach((f) => f());
+  notify();
 }
 export const useDraftBatch = () =>
   useSyncExternalStore(
-    (f) => (subs.add(f), () => subs.delete(f)),
+    subscribe,
     () => ready,
     () => ""
   );
 
 /** The editor registers itself while the preferences are on the page. */
 export const onReviewDraft = (fn) => (openers.add(fn), () => openers.delete(fn));
-export const reviewDraft = () => openers.forEach((f) => f());
+export const reviewDraft = () => {
+  if (pendingRequests > 0) return;
+  openers.forEach((f) => f());
+};

@@ -1,5 +1,103 @@
 # Changelog
 
+## 0.0.6 (2026-11-20)
+
+### Added
+- The page says more about what is still waiting to go out:
+  - The top bar says "1 comment unsent", "2 comments, 1 pin unsent" or "Overall note unsent". Before, it said "No unsent edits" while comments or a note were waiting.
+  - A comment or pin with no words shows "Empty draft", is not counted as unsent, and Send leaves it out. A pin with no words still goes when the overall note has words.
+  - In Comment and Pin modes a label at the top says "Comment mode · Esc for Edit" or "Pin mode · Esc for Edit", and Esc goes back to Edit mode.
+  - Pointing at a card in the review panel outlines its mark in the document, and the other way round. Clicking a mark opens the review panel if it is closed.
+- If the page itself fails, it shows "Something went wrong" with Reload page and Copy unsent comments, and asks before you leave. Before, the page went blank.
+- Close buttons where there were none: the Quick ask box (which also gets a Send button, and whose line now says "Esc discards." where it said "Esc closes."), What changed and the keyboard shortcuts list. Editing stamps has Cancel. "Expand all" and "Collapse all" fold or open every answered card and agent run.
+
+### Fixed
+- Comments land on the words you chose more often:
+  - PowerPoint: a comment on text that appears more than once in a shape went to its first copy. It now goes to the copy you selected.
+  - Word and PowerPoint: a comment on words that run across a line break, a tab, a non-breaking space or two spaces, or on a letter written as a letter plus a separate accent, could not find those words again. It now marks them. See Known issues for repeated text with mixed accents.
+- Text that Word and PowerPoint store twice (a shape or text box saved with a second copy for older programs) was read twice, by comments, the agent and the merge. In Word, text that a tracked change moved away was still read where it used to be. Both are now read once, where they are.
+- Excel: cells saved without their own address (some programs leave it out) were skipped. A TRUE or FALSE cell saved as `true` read as FALSE, and an empty one read as FALSE. Such cells are now read, `true` reads as TRUE, and an empty one stays empty.
+- Agent edits that could go wrong:
+  - Excel: a replace-all after an earlier change to the same cells, in the same set of edits, could write over that change. It now refuses if a cell changed.
+  - PowerPoint: a replace-all refused partway could leave the shapes before it changed. It now checks every shape before it changes any.
+  - Word tables: a new column in a table whose columns have no widths got invalid widths, and text holding half of an emoji's character pair could make Word call the file damaged. The widths are now left alone, and such text is refused.
+- Each part of an Office file is checked against its stored size and checksum when Onionskin reads it. A damaged or encrypted part is refused with the reason instead of being read.
+- On a disk that does not support one of the steps Onionskin takes to make a write safe (some network shares and external disks), a save could fail, and so could the copy of your version saved next to the file. Onionskin now goes on without that step, or makes the copy another way.
+- On Node 22.0 and 22.1, an agent's added or deleted Word table rows and columns, and the tracked-changes copy, failed. Fixed.
+- The background agent: pressing Stop, Open in Terminal or Close session while it was starting could still start it; when it ended but a program it started kept running, the page kept showing it as working; accented letters and emoji in its activity lines could show as broken characters; and a long check at the end of a run could hand the batch back as if the agent had stopped. All four are fixed.
+- Deeper checks: a Python too old for them was reported as "there is no internet connection". It now names the version, for example "Deeper checks could not be turned on: Python 3.8.18 is not supported. Ask your agent to set up a supported Python, then try again."
+- While a dialog was open, shortcuts such as Cmd+Option+M still acted on the document behind it, and with two dialogs open Esc closed both. Now shortcuts wait and Esc closes the top one.
+- Messages about a file changed outside Onionskin said "open both in Word" for every kind of file. They now name Excel or PowerPoint, or "your editor" for an HTML page. HTML pages no longer offer "Download my edits" or "Download a copy", which did nothing for them.
+- A Send whose answer was lost could show "Checking whether this was sent..." forever when Onionskin kept answering with an error. It now shows the error.
+- Voice guide: a suggestion answered "Not now" never came back once Onionskin had kept its maximum number of your edits. Offering an open HTML page as a writing sample now says "HTML pages are not used as writing samples." instead of a general failure.
+- Install, update and stop:
+  - When an `onionskin` command it did not make was already in place, the installer noticed only after the new copy was in place. It now checks before it stops or replaces anything.
+  - A home folder whose path holds a dollar sign, a backtick or a double quote got an `onionskin` command that did not run.
+  - When setting up the agent skill failed, the install still ended as if all went well. It now says "the app is installed. Run 'onionskin setup' to finish installing the skill.", and `onionskin update` ends with "UPDATED (with warning)".
+  - The installer refuses a download that holds a symbolic link.
+  - `onionskin stop` printed "stopped" even when the server was still running after 5 seconds. It now says "did not stop within 5s" and exits with an error. It also stops a server that answers but does not match this copy's version of the connection rules, and removes a record left by a server that is gone ("no running server (stale record removed)"). `onionskin update` stops with "Not updated: could not stop the running Onionskin server" when the server will not stop.
+  - An empty start lock left by a crash kept the server from starting. When the server cannot start, the message now gives its reason.
+- Words you type are kept in more places:
+  - Stamps, the voice guide editor, "Load a voice guide" and "Build my voice guide": words typed after pressing Save or Ask the agent, while that request was still on its way, were not saved. The fields now wait until it finishes.
+  - Writing preferences: words typed before the preferences finished loading were cleared when they loaded. They now stay.
+  - Quick ask: reloading or closing the page with unsent words in the box lost them without asking. The page now asks first.
+  - Quick ask: tapping a stamp sent only the stamp's words and dropped what you had typed. Your words now follow the stamp's.
+- Excel: an agent edit that would turn text into a number and lose part of it is refused, and the file is left as it was. Before, removing "ID-" from "ID-00123" saved the number 123. See Known issues.
+- Two installs or updates running at the same moment could each remove the other's copy, and `onionskin` then did not start. The second one now says "Another Onionskin install or update is running. Try again when it finishes." and changes nothing.
+- `onionskin stop` printed "stopped" when no server was running. It now says "no server was running".
+- Voice guide drafts: a web address without "https://" whose name is written in letters from rare scripts slipped past the link rule. It is now refused.
+- More places where words you type are kept: a suggestion card no longer lets you type words it would drop; "Load a voice guide" and "Build my voice guide" wait for a file that is still loading; a late answer no longer closes a different voice dialog; stamps and Writing preferences wait for their first load, so a save can no longer replace what was stored; and words typed after "Clear preferences" stay.
+- The page asks before you leave with unsaved edits in the stamp editor or the voice guide editor.
+- A stamp tapped with a long Quick ask that would pass the 5,000-character limit together is not sent; the box stays open with your words.
+- If copying fails on the "Something went wrong" screen, your unsent comments are shown in a box to select and copy.
+- Excel: a date that does not exist (such as "31/02/2026"), or one with a time that does not exist, written into a date cell is refused. Before, it was saved as a later date.
+- Install and update:
+  - A download that is incomplete is no longer put in place: the new copy has to start and print its version first. The copy you had keeps working.
+  - A voice guide kept in the installed app folder is carried into the new version by an update. Before, the update deleted it.
+  - From this version on, `onionskin update` does not turn on the deeper checks when the copy it replaces had none. The update from 0.0.5 to 0.0.6 is still run by 0.0.5 and turns them on.
+  - Setting up the deeper checks, and the npm route of `onionskin update`, give up after 10 minutes instead of waiting forever. The install itself still succeeds.
+  - `onionskin stop` no longer removes the lock of a server that started less than two seconds ago.
+- A stuck deeper check that is stopped by force no longer leaves LibreOffice running.
+- An agent poll whose connection closed while its batch was being prepared no longer takes the batch with it.
+- A lock file that cannot be read no longer holds the server forever; the write fails with the usual "busy" message after five seconds.
+
+### Changed
+- An agent question that holds an email address or "mailto:", or a web address hidden behind look-alike dots or invisible characters, is refused. The comment shows "The agent asked a question that could not be shown." Voice guide drafts refuse the same hidden addresses.
+- The deeper checks install exact versions of their Python libraries, each checked against a fixed SHA-256 hash, as ready-built packages only. They need Python 3.9 or newer.
+- The install command is now `curl -fsSL --proto "=https" --proto-redir "=https" "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh`, so the download and any redirect use https only.
+- `onionskin update` saves the release's `get.sh` to a private file before running it, and gives up after 6 minutes: "Not updated: the installer timed out after 6 minutes."
+- The oldest macOS expected to work is now 13.1, with Safari 16.2 or newer for the editor. The installer says so below 13.1 and continues.
+- On a phone, the button that opens the review panel says Review instead of Send.
+- `onionskin update` refuses to go on while a server from another version of Onionskin is running, because it may hold unsent work. Run `onionskin stop` first, or `onionskin update --force`.
+- Two options of an agent question that differ only by an invisible character count as the same option and the question is refused.
+
+### Known issues
+- A comment on repeated text that mixes letters with built-in accents and letters followed by a separate accent mark can land one copy early.
+- An Office file with extra bytes between its table of contents and its end record, plus extra bytes after the end, is refused (0.0.5 opened it). Two crafted file shapes can make Onionskin read a different table of contents than other tools do.
+- A comment draft made or deleted at the moment a Send is on its way can be back in its old state after a reload, if the save that carried it was lost as well. The page asks before you leave in that case.
+- An agent question with "mailto:" in its words, or a word, an at sign and a number with a dot in it (such as "Meet" followed by "@5.30"), is refused.
+- `onionskin stop` can wait 5 seconds and exit with an error when a record left by a server that is gone points to a process number now used by another program with "onionskin" in its command line.
+- During `onionskin update`, Ctrl-\ is not passed to the installer, and a character split across two pieces of its output can print garbled.
+- When the Python on your Mac is too old for the deeper checks and its pip is old too, turning them on says only "Deeper checks could not be turned on. Try again, or ask your agent to look into it."
+- Excel: an agent cannot yet write a value with leading zeros (such as "00123"), or a number too long to be stored exactly, into a cell as text. The edit is refused with the reason; before 0.0.6 it was saved as a number and the zeros were lost. Typing such a value into a plain cell yourself drops the zeros, as Excel does.
+- If an install is cut off by a crash or a power loss, a later install or update can say "Another Onionskin install or update is running." The message names the folder to delete.
+- Word: when the words you selected overlap an earlier copy of themselves in the same paragraph (the last "ana" in "banana"), an agent's replacement can land on the earlier copy.
+- Excel: an agent cannot edit a sheet whose cells are saved without their own addresses. The edit is refused with the reason; before 0.0.6 clearing a cell there moved the rest of its row one place to the left.
+- If a lock left by a crashed install is present and two installs then start at the same moment, both can run and `onionskin` may not start. Installing again repairs it.
+- While a document is locked by another program, a write can hold the server for up to five seconds.
+- A few rare file shapes are read differently than Word, PowerPoint or Excel read them: a paragraph's tab-stop setting counts as one character, both branches of an alternate-content block are read, shared text stored under an unusual part name is not read, and old-style encoded part names are shown wrong.
+- HTML: when a page that is not UTF-8 is converted, a charset tag shown as example text inside a text box near the top of the page is rewritten as well.
+- HTML: a `data-charset` attribute on a meta tag can be taken for the page's encoding. The UTF-8 copy Onionskin offers then shows wrong letters; the original file is not touched.
+- A voice guide in the app folder that is a link to another file is not carried into a new version; the old app folder is left in place with a line saying so. With two tabs on one file, words in a Quick ask box that is open when the other tab takes over editing are not handed over.
+- At the limit of 500 comments, words in a Quick ask box that was opened before the limit was reached are lost when you send them. A tab that has become read-only does not ask before you leave it.
+- Not tried on real machines: Node 22.0 and 22.1 (the fix above was tested by running without the function they lack), macOS 13.0 and Safari 16.
+- Still open from 0.0.5:
+  - With three or more windows open on one file and notes handed between them, a sentence can appear twice in the note box. Nothing is lost, and the repeat is visible in the box before you send.
+  - HTML files: a whole-file edit by an agent can move an existing script or event handler to the next element of the same kind in the same place; it cannot add or change one. On a very large element (more than 400 text parts), the first keystroke right after a click can be missed.
+  - HTML files, not in this version: sites of several files, pages built by scripts, inline SVG and MathML (shown as placeholders), and Review first, stamps, quick fixes and the tracked-changes copy. Chrome is the tested browser; Safari has not been tested with HTML files.
+  - On very long Word files that carry no paragraph ids (some exports from other editors), a comment whose paragraph moved and whose surrounding words were also edited can show as "moved or removed" more often than in 0.0.3. The comment is kept.
+  - HTML: if a page with unsent text fixes is changed outside Onionskin into an encoding Onionskin refuses, the unsent fixes are dropped when the refusal is shown.
+
 ## 0.0.5 (2026-11-17)
 
 ### Added

@@ -21,6 +21,8 @@ export function VoiceImport({ voice, onVoice }) {
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const input = useRef(null);
+  const readId = useRef(0);
+  const [reading, setReading] = useState(false);
   const stored = voice.guide || { text: "", on: false };
 
   // the box starts with what is saved; set in the same step that opens it, so the first paint already shows it
@@ -38,19 +40,28 @@ export function VoiceImport({ voice, onVoice }) {
   const keepsShort = short && shortBody !== "" && [...shortBody].length <= SECTIONS[0].max;
   const n = chars(text);
   const tooLong = n > GUIDE_MAX;
-  const close = () => setOpen(false);
+  const close = () => {
+    readId.current++;
+    setReading(false);
+    setOpen(false);
+  };
 
   async function load(file) {
     setError("");
     if (!file) return;
+    const id = ++readId.current;
+    setReading(true);
     try {
       const bytes = new Uint8Array(await file.slice(0, READ_MAX).arrayBuffer());
+      if (id !== readId.current) return;
       const s = new TextDecoder("utf-8").decode(bytes);
       if (bytes.includes(0) || s.includes("�")) throw new Error("not text");
       setText(s.replace(/\r\n?/g, "\n"));
     } catch {
+      if (id !== readId.current) return;
       setError(BAD_FILE);
     }
+    setReading(false);
     if (input.current) input.current.value = ""; // the same file can be chosen again
   }
 
@@ -81,7 +92,7 @@ export function VoiceImport({ voice, onVoice }) {
         <VoiceDialog title="Load a voice guide" testid="voice-import" onClose={close}>
           <p>Paste or load your own voice.md. You can edit it before you save.</p>
           <label htmlFor="voice-guide-text">Your voice guide</label>
-          <textarea id="voice-guide-text" className="vc-text" data-testid="voice-import-text" rows={8} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong} aria-describedby="voice-guide-count" />
+          <textarea id="voice-guide-text" className="vc-text" data-testid="voice-import-text" rows={8} value={text} disabled={busy || reading} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong} aria-describedby="voice-guide-count" />
           <p id="voice-guide-count" className={`vc-count ${tooLong ? "over" : ""}`} data-testid="voice-import-count">
             {n} of 7,000 characters
           </p>
@@ -95,9 +106,9 @@ export function VoiceImport({ voice, onVoice }) {
               {error}
             </p>
           )}
-          <input ref={input} type="file" accept=".md,.txt,text/markdown,text/plain" data-testid="voice-import-file" aria-label="Choose a .md or .txt file" onChange={(e) => load(e.target.files?.[0])} />
+          <input ref={input} type="file" accept=".md,.txt,text/markdown,text/plain" data-testid="voice-import-file" aria-label="Choose a .md or .txt file" disabled={busy} onChange={(e) => load(e.target.files?.[0])} />
           <label className="vc-check">
-            <input type="checkbox" checked={on} data-testid="voice-import-send" onChange={(e) => setOn(e.target.checked)} />
+            <input type="checkbox" checked={on} disabled={busy} data-testid="voice-import-send" onChange={(e) => setOn(e.target.checked)} />
             <span>Send my guide with every request</span>
           </label>
           {short && (
@@ -106,11 +117,11 @@ export function VoiceImport({ voice, onVoice }) {
             </p>
           )}
           <div className="dialog-actions">
-            <button type="button" className="btn primary" data-testid="voice-import-save" disabled={busy || tooLong || n === 0} onClick={() => send({ text: text.trim(), on, send: keepsShort ? "short" : "full" }, on ? "Saved. Your guide goes to the agent with every request." : "Saved.")}>
+            <button type="button" className="btn primary" data-testid="voice-import-save" disabled={busy || reading || tooLong || n === 0} onClick={() => send({ text: text.trim(), on, send: keepsShort ? "short" : "full" }, on ? "Saved. Your guide goes to the agent with every request." : "Saved.")}>
               Save guide
             </button>
             {stored.text && (
-              <button type="button" className="btn" data-testid="voice-import-remove" disabled={busy} onClick={() => send({ text: "", on: false }, "")}>
+              <button type="button" className="btn" data-testid="voice-import-remove" disabled={busy || reading} onClick={() => send({ text: "", on: false }, "")}>
                 Remove guide
               </button>
             )}

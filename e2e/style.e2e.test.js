@@ -131,4 +131,86 @@ describe("writing preferences", () => {
     assert.equal(stored(), "");
     assert.equal(await T(page, "voice-guide-remove").count(), 0, "nothing left to remove");
   });
+
+  for (const status of [200, 503]) {
+    test(`Clear preferences waits for its answer and keeps the box accurate on HTTP ${status}`, async () => {
+      for (const old of br.ctx.pages()) await old.close();
+      const page = await br.page();
+      let finish;
+      const gate = new Promise((resolve) => { finish = resolve; });
+      await page.route("**/api/style*", async (route) => {
+        if (route.request().method() === "GET") return route.fulfill({ json: { traits: [], words: "Earlier words" } });
+        await gate;
+        await route.fulfill({ status, json: { traits: [], words: "" } });
+      });
+      await page.goto(await w.open(w.doc("long.docx")));
+      await waitDoc(page);
+      await T(page, "style-change").click();
+      const box = T(page, "style-words");
+      await page.waitForFunction(() => document.querySelector("#style-words")?.value === "Earlier words");
+      await box.fill("My unsaved words");
+      await T(page, "style-clear").click();
+      assert.equal(await box.isDisabled(), true);
+      finish();
+      if (status === 503) await page.getByText("Could not save that. Try again.").waitFor();
+      else await T(page, "style-summary").filter({ hasText: "none" }).waitFor();
+      assert.equal(await box.isEditable(), true);
+      assert.equal(await box.inputValue(), status === 503 ? "My unsaved words" : "");
+      await page.close();
+    });
+  }
+
+  test("writing preferences wait for the first load and then show the saved words", async () => {
+    const file = w.doc("long.docx");
+    for (const old of br.ctx.pages()) await old.close();
+
+    // Seed saved preference words through the UI so the running server owns the write
+    const seedPage = await br.page();
+    await seedPage.setViewportSize({ width: 1440, height: 900 });
+    await seedPage.goto(await w.open(file));
+    await waitDoc(seedPage);
+    await T(seedPage, "style-change").click();
+    await T(seedPage, "style-words").fill("Saved preference words");
+    await T(seedPage, "style-done").click();
+    await seedPage.locator('[data-testid="style-summary"]', { hasText: /your own words/ }).waitFor({ timeout: 5000 });
+    await seedPage.close();
+
+    // Hold the first load while the panel opens.
+    const page1 = await br.page();
+    await page1.setViewportSize({ width: 1440, height: 900 });
+    let release;
+    const gate = new Promise((r) => (release = r));
+    let held = false;
+    await page1.route("**/api/style*", async (route) => {
+      if (route.request().method() !== "GET" || held) return route.continue();
+      held = true;
+      await gate;
+      return route.continue();
+    });
+    await page1.goto(await w.open(file), { waitUntil: "domcontentloaded" });
+    await waitDoc(page1);
+    const deadline = Date.now() + 8000;
+    while (!held && Date.now() < deadline) await sleep(25);
+    assert.equal(held, true, "first GET /api/style was held");
+    await T(page1, "style-change").click();
+    await T(page1, "style-panel").waitFor({ timeout: 5000 });
+    const ta1 = T(page1, "style-words");
+    for (const id of ["style-words", "style-trait-short", "style-clear"]) assert.equal(await T(page1, id).isDisabled(), true, id);
+    release();
+    await page1.waitForFunction(() => document.querySelector("#style-words")?.value === "Saved preference words");
+    assert.equal(await ta1.isEditable(), true);
+    await page1.close();
+
+    // A failed load permits editing with a warning before a change can replace stored words.
+    const page2 = await br.page();
+    await page2.setViewportSize({ width: 1440, height: 900 });
+    await page2.route("**/api/style*", (route) => route.fulfill({ status: 503, body: "{}" }));
+    await page2.goto(await w.open(file));
+    await waitDoc(page2);
+    await T(page2, "style-change").click();
+    await T(page2, "style-panel").waitFor({ timeout: 5000 });
+    await page2.getByText(/could not load.*preferences/i).waitFor();
+    for (const id of ["style-words", "style-trait-short", "style-clear"]) assert.equal(await T(page2, id).isEnabled(), true, id);
+    await page2.close();
+  });
 });

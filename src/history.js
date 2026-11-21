@@ -478,12 +478,21 @@ function compareHtml(RA, RB, out) {
   let j = 0;
   const flushGap = (iEnd, jEnd) => {
     const gapA = [];
-    for (let x = i; x < iEnd; x++) if (mapA[x] < 0) gapA.push(A[x]);
+    const byTag = new Map();
+    for (let x = i; x < iEnd; x++) {
+      if (mapA[x] >= 0) continue;
+      const ua = A[x];
+      gapA.push(ua);
+      let entry = byTag.get(ua.tag);
+      if (!entry) byTag.set(ua.tag, (entry = { list: [], idx: 0 }));
+      entry.list.push(ua);
+    }
     const used = new Set();
     for (let y = j; y < jEnd; y++) {
       if (mapB[y] >= 0) continue;
       const ub = B[y];
-      const ua = gapA.find((u) => !used.has(u) && u.tag === ub.tag);
+      const entry = byTag.get(ub.tag);
+      const ua = entry && entry.idx < entry.list.length ? entry.list[entry.idx++] : null;
       if (ua) {
         used.add(ua);
         out.add("changed", () => place({ format: "html", label: htmlLabel(ub), locator: htmlLocator(RB, ub), ...textChange(htmlUnitText(ua), htmlUnitText(ub)) }));
