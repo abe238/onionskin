@@ -123,7 +123,7 @@ Claude Code or Codex already installed: Onionskin is for people who already use 
 
 ### How well is it tested?
 
-Over 1,500 unit tests and 380 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds.
+Over 1,700 unit tests and 410 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds.
 
 ### Can the background agent see my other files?
 
