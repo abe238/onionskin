@@ -344,6 +344,23 @@ test("installer update passes the existing deeper-check choice through get.sh", 
   }
 });
 
+test("installer update looks for the deeper checks in ONIONSKIN_STATE_DIR when it is set", async () => {
+  const rel = makeFileRelease("checker-custom-state", '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/installer-args"\n');
+  for (const where of ["custom", "default only"]) {
+    const h = harness();
+    const custom = mk(`custom-state-${where.replace(" ", "-")}`);
+    const venv = where === "custom" ? path.join(custom, "venv") : path.join(h.d.home, ".onionskin", "venv");
+    fs.mkdirSync(path.join(venv, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(venv, "pyvenv.cfg"), "home = /old/python\n");
+    fs.writeFileSync(path.join(venv, "bin", "python"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    h.d.env.ONIONSKIN_BASE_URL = `file://${rel}`;
+    h.d.env.ONIONSKIN_STATE_DIR = custom;
+    h.d.runGetSh = (base, opts) => runGetShDefault(base, baseEnv({ HOME: h.d.home }), opts);
+    assert.equal(await updateCommand([], h.d), 0, h.out());
+    assert.equal(fs.readFileSync(path.join(h.d.home, "installer-args"), "utf8").trim(), where === "custom" ? "" : "--no-checker", where);
+  }
+});
+
 test("CLI update requires --force when a running server answers with an older protocol", async () => {
   const { d } = harness();
   fs.cpSync(path.join(repo, "src"), path.join(d.appRoot, "src"), { recursive: true });

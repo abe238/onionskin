@@ -307,3 +307,44 @@ test("without the parser on the calling thread (the CLI, the server), runOps and
   assert.equal(c.status, 0, c.stderr);
   assert.deepEqual(JSON.parse(c.stdout.trim()), { loaded: false, status: "applied", out: '<!doctype html><body><p id="x">Hello there</p></body>', buffer: true, count: 2 });
 });
+
+// B1 (finding A9): a comment-bound find whose copies overlap ("banana", the last "ana" selected) wrote "bXna" reported applied. It is
+// refused with nothing written, as in Word and PowerPoint; every non-overlapping case, and every op that names its target or its
+// occurrence, stays as before.
+test("B1 html: comment-bound replace_text with overlapping copies is refused; ordinary cases as before", async () => {
+  const anchors = new Map([["a1", { id: "a1", resolved: true, locator: { element_id: "p" } }]]);
+  const src = (body) => page(`<p id="p">${body}</p>`);
+  const op = (find, extra = {}) => ({ op: "replace_text", target: { anchor_id: "a1" }, expect: { quote: "" }, find, replace: "X", ...extra });
+  const r = await run(src("banana"), [op("ana")], { anchors });
+  assert.equal(r.results[0].status, "refused", JSON.stringify(r.results));
+  assert.equal(r.results[0].code, "overlapping_matches");
+  assert.match(r.results[0].reason, /occurs 2 times .* overlapping/);
+  assert.equal(r.bytes, null);
+  // whitespace folds before matching, the overlap check reads the same folded text
+  const w = await run(src("a  a  a"), [op("a a")], { anchors });
+  assert.equal(w.results[0].code, "overlapping_matches", JSON.stringify(w.results));
+  const rows = [
+    // [body, op, want status, want text in the output]
+    ["The quick brown fox", op("brown"), "applied", "The quick X fox"],
+    ["banana", op("ana", { occurrence: 1 }), "applied", ">bXna<"],
+    ["banana", op("ana", { all: true }), "applied", ">bXna<"],
+    ["banana", op("nan"), "applied", ">baXa<"],
+    ["banana", { ...op("ana"), target: { element_id: "p" } }, "applied", ">bXna<"],
+    ["red car and red bus", op("red"), "anchor_not_found", null],
+  ];
+  for (const [body, o, status, want] of rows) {
+    const x = await run(src(body), [o], { anchors });
+    assert.equal(x.results[0].status, status, `${body} ${JSON.stringify(o)} ${JSON.stringify(x.results)}`);
+    if (want) assert.ok(x.bytes.toString("utf8").includes(want), `${body}: ${x.bytes.toString("utf8")}`);
+  }
+  // a copy that runs across formatting: "ba<b>n</b>ana", the first visible "ana" selected; the one text-node match is the other copy
+  const m = await run(src("ba<b>n</b>ana"), [op("ana")], { anchors });
+  assert.equal(m.results[0].status, "refused", JSON.stringify(m.results));
+  assert.equal(m.results[0].code, "overlapping_matches");
+  assert.match(m.results[0].reason, /runs across formatting/);
+  assert.equal(m.bytes, null);
+  // the same markup with no copy across it: applied as before
+  const plain = await run(src("ba<b>n</b>x ana"), [op("ana")], { anchors });
+  assert.equal(plain.results[0].status, "applied", JSON.stringify(plain.results));
+  assert.ok(plain.bytes.toString("utf8").includes("ba<b>n</b>x X"), plain.bytes.toString("utf8"));
+});

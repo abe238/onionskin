@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { MAX_DOC_BYTES, PRODUCT, REFUSED_EXTENSIONS, env, formatOfExt } from "./constants.js";
-import { checkRegularOwned, readDoc, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
+import { MAX_DOC_BYTES, ONLY_FORMATS, PRODUCT, REFUSED_EXTENSIONS, env, formatOfExt } from "./constants.js";
+import { checkRegularOwned, readOwned, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
 import { hasDelivery, loadTicketRecord, parseTicket } from "./lease.js";
 import { NOT_YOUR_FILE, agentMayUse, isAgentHolder } from "./agent-detect.js";
 import { validatePackage } from "./package.js";
@@ -63,11 +63,11 @@ function readJsonFile(file, what) {
   }
 }
 
-/** The format of a file by its extension: an HTML file (.html or .htm) is "html"; null when Onionskin does not edit that kind of file. */
+/** The format of a file by its extension: an HTML file (.html or .htm) is "html", a Markdown file (.md or .markdown) "markdown"; null when Onionskin does not edit that kind of file. */
 export function formatOfPath(real) {
   return formatOfExt(path.extname(real));
 }
-const ONLY = "Only .docx, .xlsx, .pptx, .html and .htm files are supported";
+const ONLY = ONLY_FORMATS;
 
 const anchorMap = (batch) => new Map((batch?.untrusted_document_evidence?.anchors || []).map((a) => [a.id, a]));
 
@@ -168,6 +168,11 @@ async function resolveWriteTarget({ a, real, session, up, ticket, holder }) {
   throw refusal(`No ${PRODUCT.name} session is open for this file. To edit it without a review, pass --standalone; to work inside a review, run \`${PRODUCT.bin} open\` and \`poll\` first.`);
 }
 
+const MD_CONTENT_UNCONFIRMED = "The new text was written to the file, but Onionskin could not confirm it is what is there now (another program may have written it at the same moment). Check the file; the run cannot be marked done.";
+const MD_DURABILITY_UNCONFIRMED = "The new text was written to the file, but the folder could not be flushed to disk, so it is not confirmed that the save will survive a crash. Check the file; the run cannot be marked done.";
+const MD_STATE_UNCONFIRMED = "The new text was written to the file, but Onionskin could not record the write. Check the file; the run cannot be marked done.";
+const MD_NO_STANDALONE = "A Markdown file is changed only inside an Onionskin session (open it, then reply to a batch): --standalone is not available for it. Nothing was written.";
+
 /** The standalone write: lock, compare-and-swap against `expectSha`, snapshot of what is replaced, re-hash before the rename. Returns {snapshot, acl} or {refused}. */
 function standaloneWrite(real, original, out, expectSha, label) {
   ensureStateDir();
@@ -228,6 +233,9 @@ export async function applyCommand(rest, server, inline = null) {
   const ticket = parseTicket(a.lease);
   if (a.lease && !ticket) throw new ApplyError("--lease wants the value printed in the batch's commands (<batch id>:<token>)", APPLY_EXIT.invalid);
   if (ticket && a.standalone) throw new ApplyError("--lease and --standalone contradict each other", APPLY_EXIT.invalid);
+  // a Markdown file is changed only through its session (a delivered batch, its lease, one checked write on the revision the person saw):
+  // the standalone path has none of that, so it is refused for Markdown before the file is read
+  if (a.standalone && format === "markdown") throw new ApplyError(MD_NO_STANDALONE, APPLY_EXIT.write_refused);
   // authorization before the file is read: who calls, what the server holds for the file, and (with a ticket) that the server accepts it.
   // Nothing below reads, parses or runs an op on the document until then, so a refusal carries nothing of it.
   const holder = callerHolder(a, real, ticket);
@@ -238,7 +246,7 @@ export async function applyCommand(rest, server, inline = null) {
   checkRegularOwned(real);
   let bytes;
   try {
-    bytes = readDoc(real); // refuses by size before reading
+    bytes = readOwned(real); // refuses by size before reading
   } catch (err) {
     if (err.code === "TOO_LARGE") throw new ApplyError(`document too large: ${err.message}`);
     throw err;
@@ -320,7 +328,9 @@ export async function applyCommand(rest, server, inline = null) {
 
   if (viaSession) {
     // the ops go with the bytes: the server keeps them so that a later merge of the user's edits can check how the file changed
-    const w = await server.req({ method: "POST", path: "/cli/agent-write" }, { file: real, base_sha256: baseSha, bytes_b64: out.toString("base64"), ops: doc.ops, partial: a.partial, ...claim });
+    // a Markdown file: the server rebuilds the bytes from the disk and the ops that applied (src/session.js agentWrite), so only those go
+    const sentOps = format === "markdown" ? doc.ops.filter((_, i) => results[i]?.status === "applied") : doc.ops;
+    const w = await server.req({ method: "POST", path: "/cli/agent-write" }, { file: real, base_sha256: baseSha, bytes_b64: out.toString("base64"), ops: sentOps, partial: a.partial, ...claim });
     const j = server.json(w.text);
     if (w.status !== 200) {
       return refuseWrite("The server refused the write; the file on disk is unchanged.", { write_error: { status: w.status, code: j.code || null, message: j.error || `server answered ${w.status}` }, ...outsideChangeOf(j) });
@@ -332,6 +342,13 @@ export async function applyCommand(rest, server, inline = null) {
     const appliedKeys = results.filter((r) => r.status === "applied").map((r) => `${r.index}:${r.op}`);
     if (appliedKeys.length) await server.req({ method: "POST", path: "/cli/apply-report" }, { file: real, ...claim, run: runId, problems: [], applied: appliedKeys }).catch(() => {});
     report.note = `written through the ${PRODUCT.name} session (lease renewed, previous version snapshotted)`;
+    // Markdown: the bytes were published but the server could not confirm them (another program wrote meanwhile) or their durability
+    // (the folder flush failed): say so, never that the file is unchanged, and never that the write is sure
+    if (j.outcome && j.outcome !== "confirmed") {
+      report.confirmed = false;
+      report.outcome = j.outcome;
+      report.note = j.outcome === "durability_unconfirmed" ? MD_DURABILITY_UNCONFIRMED : j.outcome === "state_unconfirmed" ? MD_STATE_UNCONFIRMED : MD_CONTENT_UNCONFIRMED;
+    }
   } else {
     // standalone: the same lock, compare-and-swap and atomic write, plus a snapshot of the bytes we replace in the state dir
     const w = standaloneWrite(real, bytes, out, baseSha, "before apply (standalone)");
@@ -387,6 +404,8 @@ export async function commitCommand(rest, server, { check = htmlWriteOffThread }
   if (REFUSED_EXTENSIONS.has(ext)) throw new ApplyError(`${ext} (macro-enabled) files are refused`);
   const format = formatOfPath(real);
   if (!format) throw new ApplyError(ONLY);
+  // a Markdown file is changed only by exact replacements (replace_source through reply or apply), never by a whole new copy
+  if (format === "markdown") throw new ApplyError("A Markdown file is changed only by exact replacements (replace_source ops, through onionskin reply or apply): commit is not available for it. Nothing was written.", APPLY_EXIT.write_refused);
   let candidatePath;
   try {
     candidatePath = fs.realpathSync(path.resolve(a.from));
@@ -422,7 +441,7 @@ export async function commitCommand(rest, server, { check = htmlWriteOffThread }
   }
   if (!a.base) throw new ApplyError("a standalone commit needs --base <sha256 of the file the candidate was edited from> so a newer version is never overwritten", APPLY_EXIT.invalid);
   checkRegularOwned(real);
-  const disk = readDoc(real);
+  const disk = readOwned(real);
   let out = candidate;
   if (format === "html") {
     // R1, R12: the same check as the server's, in a worker, against exactly the bytes whose hash is --base (a disk that differs now and

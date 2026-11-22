@@ -20,7 +20,7 @@ const chars = (s) => [...s].length;
  */
 export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
   const xlsx = session.format === "xlsx";
-  const html = session.format === "html"; // PLAN-html D9: an HTML page is never a writing sample, and the choice is not shown
+  const html = session.format === "html" || session.format === "markdown"; // PLAN-html D9: an HTML page is never a writing sample, and the choice is not shown (nor for a Markdown file in this version: src/voice-learn.js)
   const [openFile, setOpenFile] = useState(false);
   const [edits, setEdits] = useState(false);
   const [comments, setComments] = useState(true);
@@ -118,7 +118,7 @@ export function BuildVoice({ sid, session, examples, saved, onClose, onSent }) {
         <div className="vb-group">
           <label className="vc-check">
             <input type="checkbox" checked={edits && examples > 0} disabled={examples === 0 || busy} data-testid="voice-build-edits" onChange={(e) => setEdits(e.target.checked)} />
-            <span>{examples > 0 ? `Use the changes I made to the agent's text (${examples} kept)` : "No changes kept yet"}</span>
+            <span>{examples > 0 ? `Use the changes I made to the agent's text, in all my documents (${examples} kept)` : "No changes kept yet"}</span>
           </label>
           <label className="vc-check">
             <input type="checkbox" checked={comments} disabled={busy} data-testid="voice-build-comments" onChange={(e) => setComments(e.target.checked)} />

@@ -3,11 +3,11 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { EDITS_OVERFLOW, ONLY_FORMATS, REFUSED_EXTENSIONS, REFUSED_PAGES, MAX_DOC_BYTES, PRODUCT, env, formatOfExt } from "./constants.js";
-import { readAll, unitsFor } from "./anchors.js";
+import { evidenceHolds, mdEvidence, readAll, unitsFor } from "./anchors.js";
 import { anchorWork, weakDurable } from "./anchor-work.js";
 import { scanBudget } from "./text.js";
 import { CapError } from "./xml.js";
-import { checkRegularOwned, readDoc, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
+import { checkRegularOwned, readOwned, readStamped, replaceGuarded, sha256, Snapshots, WriteConflict, writeSiblingCopy } from "./fsutil.js";
 import { buildBatch, compactBatch, withOutline } from "./batch.js";
 import { styleChangedOutside, styleNote } from "./style.js";
 import { guideChangedOutside, voiceGuide, writeDraft } from "./voice-store.js";
@@ -18,6 +18,8 @@ import { analyze } from "./analyze.js";
 import { anchorTimeoutMs, anchorsOffThread, htmlWriteOffThread, mergeOffThread, readOffThread, renderOffThread, startWorker } from "./offload.js";
 import { deepNotice, validatePackage } from "./package.js";
 import { HtmlEncodingError } from "./html.js";
+import { NO_CHANGE as NO_CHANGE_MD, MarkdownError, STALE_BASE as MD_STALE_BASE, applyAll as applyMd, checkOne, decodeMarkdown, labelAt, markdownEvidence, readMarkdownFile, rebuild as rebuildMarkdown } from "./markdown-file.js";
+import { changedRanges } from "./markdown.js";
 import { ACTIVE_REFUSED } from "./html-active.js";
 import { execFile } from "node:child_process";
 import { reopenCommand } from "./person.js";
@@ -94,12 +96,16 @@ const MAX_BYTES = MAX_DOC_BYTES;
 const TOO_BIG = `Onionskin cannot read this file: it is larger than ${Math.round(MAX_BYTES / 1024 / 1024)} MB, more than Onionskin can read. Make it smaller (pictures and videos are often most of a file) or split it, and open that.`;
 /** "Show in folder" exists on macOS (`open -R`); elsewhere the page shows the path. ONIONSKIN_NO_OPEN=1 turns it off, ONIONSKIN_OPEN_STUB=<file> records instead of launching. */
 const canReveal = () => !!env("OPEN_STUB") || (process.platform === "darwin" && !env("NO_OPEN"));
-/** readDoc with the size refusal as an HTTP error */
+/**
+ * readOwned with the size refusal as an HTTP error, and a document that is no longer a regular file this user owns (swapped for a link, a
+ * FIFO, a folder) refused with the words and code a Send gives for it (409 gone). A file that is gone or unreadable throws as before.
+ */
 function readCapped(file) {
   try {
-    return readDoc(file);
+    return readOwned(file);
   } catch (err) {
     if (err.code === "TOO_LARGE") throw new HttpError(413, `Onionskin cannot read this file: ${err.message}.`, { code: "too_large" });
+    if (err.code === "SYMLINK" || err.code === "NOT_REGULAR" || err.code === "NOT_OWNED") throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
     throw err;
   }
 }
@@ -119,6 +125,62 @@ function readWhole(format, bytes, sha, refusal = "refusing to write") {
     throw new HttpError(422, `${refusal}: ${untrusted(err?.message || err, 200)}`, { code: "invalid_package" });
   }
 }
+
+/** A Markdown version's text without its BOM (the text src/markdown.js offsets count in), for a batch's exact anchor sources; null for other formats. */
+function mdTextOf(format, bytes) {
+  if (format !== "markdown" || !bytes) return null;
+  try {
+    const t = decodeMarkdown(bytes);
+    return t.charCodeAt(0) === 0xfeff ? t.slice(1) : t;
+  } catch {
+    return null;
+  }
+}
+const MD_VERSION_CHANGED = "The file changed since this page loaded it, so your edit was not written. Your edit and your comments are still in this page: copy your edit, then reload to see the file as it is now.";
+const MD_EDIT_LOCKED = "The agent is working on this file, so your edit was not written. It is still in this page; send it when the agent is done.";
+const MD_ONE_WRITE = "this batch already wrote the file once, and a Markdown batch allows one write: nothing more was written. Put every change of a batch in one reply (or one ops file), decline what is left and run done";
+const MD_DIRECT_SAVE = "The file changed during the agent's turn by a path other than Onionskin's checked write (a direct save, or another program). Revert is off for this run, so that change is kept.";
+/**
+ * Did a run's replacements (`reps`: {from, to, len} in the base's offsets) change the text at `l` ({from, to}, a delivered range)? Only
+ * when one replacement covers exactly that range, and the replacements touching it, taken together, leave different text there: the
+ * base text of the whole touching group against the after text of the same group. Exact arithmetic on the two versions' texts.
+ */
+function mdNetChange(reps, l, preBytes, postBytes) {
+  if (!reps?.some((r) => r.from === l.from && r.to === l.to)) return false;
+  // another replacement of the same write that touches or abuts the comment's range: which one changed what is not certain, so the
+  // comment stays open (never a guess)
+  if (reps.some((r) => !(r.from === l.from && r.to === l.to) && r.from <= l.to && r.to >= l.from)) return false;
+  const a = mdTextOf("markdown", preBytes);
+  const b = mdTextOf("markdown", postBytes);
+  if (a == null || b == null) return false;
+  const list = [...reps].sort((x, y) => x.from - y.from || x.to - y.to);
+  let delta = 0;
+  for (let i = 0; i < list.length; ) {
+    let j = i;
+    let to = list[i].to;
+    let len = list[i].len;
+    while (j + 1 < list.length && list[j + 1].from <= to) (j++, (to = Math.max(to, list[j].to)), (len += list[j].len));
+    const from = list[i].from;
+    if (from <= l.from && l.to <= to) return a.slice(from, to) !== b.slice(from + delta, from + delta + len);
+    delta += len - (to - from);
+    i = j + 1;
+  }
+  return false;
+}
+
+const MD_REVERTED = "The run was reverted, so this comment is open again.";
+const MD_FILE_CHANGED = "The file changed on disk after this was made. Your words are kept. Select again on the current text.";
+const MD_CONTENT_RUN = "The agent's change was written to the file, but Onionskin could not confirm it is what is there now (another program may have written at the same moment). Check the file. No comment is marked done.";
+const MD_DURABILITY_RUN = "The agent's change was written to the file, but the folder could not be flushed to disk, so the save is not confirmed to survive a crash. Check the file. No comment is marked done.";
+const MD_REVERT_UNCONFIRMED = "The earlier version was written back, but Onionskin could not confirm the save. Check the file.";
+const MD_DRAFT_FEFF_SERVER = "Your edit was not sent: it contains an invisible byte order mark character (U+FEFF), which would change how the file is read. Remove it in Edit, then send again.";
+const MD_STATE_RUN = "The agent's change was written to the file, but Onionskin could not record the write (its session files could not be saved). Check the file. No comment is marked done.";
+const MD_UNREADABLE_RUN = "The agent's change was written, but the file cannot be read now, so Onionskin cannot say what it holds. Check the file.";
+const MD_NO_ANSWER = "The agent did not answer this comment, so it is open again.";
+const MD_NOT_DONE = "The agent marked this done, but nothing was changed at its place, so it is open again.";
+const MD_REVERT_CHANGED = "The file changed outside Onionskin after this run, even if it now has the same bytes again, so Revert is refused to keep that change.";
+const MD_NO_REVERT = "Revert is off for this run: the file was changed outside Onionskin after the agent's checked write, and reverting would erase that change.";
+const MD_ONLY_OPS = "A Markdown file is changed only by exact replacements (replace_source ops, through onionskin reply or apply): commit and other writes are not available for it.";
 
 // "<format>:<sha256>" of the versions read whole within the readers' caps, on this thread (readWhole) or by the open worker, so a version
 // read again is not read whole again. Ceiling: VERIFIED_KEPT entries, the oldest dropped first (one dropped is read whole again when needed).
@@ -196,7 +258,8 @@ function shellQuote(s) {
  * reason). The page shows the sentence; the UTF-8 copy it offers is a CLI action (`onionskin open` prints its command: src/html-utf8.js).
  */
 function encodingRefusal(real, r) {
-  return new HttpError(400, r.error, { code: r.code === "not_utf8" ? "not_utf8" : "encoding" });
+  // `copyable`: the reader's answer for the bytes it read, so the CLI offers the copy without reading the file again
+  return new HttpError(400, r.error, { code: r.code === "not_utf8" ? "not_utf8" : "encoding", copyable: r.copyable === true });
 }
 
 /** The person's pending HTML text edits a Send or "Save my edits" carries (web/src/html-view.js createEdits): checked fields only. */
@@ -224,7 +287,8 @@ function htmlEditRefusal(c) {
 // so a comment changed while the worker ran finds no answer and goes out weaker instead of with another one's anchor.
 const buildTask = (c) => ({ op: "build", anchor: c.anchor, pin: c.kind === "pin" });
 const reanchorTask = (c) => ({ op: "reanchor", c: { durable: c.durable ?? null, anchor: c.durable ? null : c.anchor } });
-const editAnchor = (e) => ({ location: e.location, quote: e.after, ...(e.cut ? { cut: true } : {}) });
+// (`serverMade`: the server built this place itself from a write it made, so there is no captured page source to compare: src/anchors.js)
+const editAnchor = (e, format = null) => ({ location: e.location, quote: e.after, ...(format === "markdown" ? { serverMade: true } : {}), ...(e.cut ? { cut: true } : {}) });
 const cardsTask = (results, ix, run) => ({ op: "cards", list: results.suggestions, units: ix.units, index: ix.index, reviewId: run.batch.batch_id });
 // a quick fix's Use: the page anchor's location and text only (its kind of selection does not change where the sentence is)
 const useTask = (a, rec, id) => ({ op: "use", anchor: { location: a.location, quote: a.quote, prefix: a.prefix, suffix: a.suffix }, rec: { quote: rec.quote, before: rec.before, after: rec.after }, id });
@@ -367,7 +431,7 @@ export class Sessions extends EventEmitter {
    * file no reader accepts is refused here, with the reason, instead of failing later at Send.
    */
   async openAsync(input, opts = {}) {
-    const { real, format } = this.#checkInput(input);
+    const { real, format } = this.#checkInput(input, opts);
     // A file that changes between the worker's reading and open()'s own (a swap, a save in progress) is read in the worker again, once:
     // open() never takes bytes the worker has not read, so nothing on this thread reads a version past the readers' caps.
     for (let attempt = 0; ; attempt++) {
@@ -380,7 +444,7 @@ export class Sessions extends EventEmitter {
         // the same bytes are refused again at once (an agent's polls fall back to opening a file that is not open, again and again)
         if (r.stage !== "busy") this.#refuse(`${format}:${sha}`, r);
         if (r.stage === "encoding") throw encodingRefusal(real, r);
-        if (r.stage === "invalid") throw new HttpError(400, `Not a valid .${format}: ${r.error}`);
+        if (r.stage === "invalid") throw new HttpError(400, format === "markdown" ? r.error : `Not a valid .${format}: ${r.error}`); // a Markdown refusal is its own plain sentence (src/markdown-file.js)
         if (r.stage === "busy") throw new HttpError(503, `Onionskin is busy opening other files: ${r.error}. Try again in a minute.`, { code: "busy" });
         const hint = r.stage === "timeout" || r.stage === "memory" ? " It may be damaged, or made to stall programs that read it." : "";
         throw new HttpError(400, `This file could not be opened: ${r.error}.${hint}`, { code: r.stage === "timeout" ? "open_timeout" : "unreadable" });
@@ -403,14 +467,19 @@ export class Sessions extends EventEmitter {
     if (this.#refused.size > REFUSED_KEPT) this.#refused.delete(this.#refused.keys().next().value);
   }
 
-  /** The path checks of open(): the real path, its format and its lstat. Throws HttpError. */
-  #checkInput(input) {
+  /**
+   * The path checks of open(): the real path, its format and its lstat. Throws HttpError. `pinned`: `input` is a real path a CLI route
+   * resolved and checked the agent binding on (src/server.js pinFile); one that no longer resolves to itself (swapped for a link since) is
+   * refused before anything is read, so the open never reaches another file.
+   */
+  #checkInput(input, { pinned = false } = {}) {
     let real;
     try {
       real = fs.realpathSync(path.resolve(input));
     } catch {
       throw new HttpError(404, `File not found: ${JSON.stringify(untrusted(input, 200))}`);
     }
+    if (pinned && real !== input) throw new HttpError(409, "The file moved while Onionskin opened it. Open it again.", { code: "moved_while_opening" });
     // a path with control or bidi characters would sit in the commands printed for the agent: refuse it up front
     if (hasControlChars(real)) throw new HttpError(400, "This file's path contains control or bidirectional-text characters. Rename or move the file and open it again.", { code: "unsafe_path" });
     const ext = path.extname(real).toLowerCase();
@@ -429,7 +498,7 @@ export class Sessions extends EventEmitter {
 
   /** `opts.agent === "background"`: the person opened it from a terminal, so the server's background agent works on it (stored on the session). */
   open(input, opts = {}) {
-    const { real, format, st } = this.#checkInput(input);
+    const { real, format, st } = this.#checkInput(input, opts);
     const bytes = readCapped(real);
     const sha = sha256(bytes);
     // openAsync already read these exact bytes in a worker; for it, other bytes (the file changed since) go back to the worker. Any other
@@ -440,6 +509,7 @@ export class Sessions extends EventEmitter {
         validatePackage(bytes, format);
       } catch (err) {
         if (err instanceof HtmlEncodingError) throw encodingRefusal(real, { error: err.message, code: err.code, copyable: err.copyable });
+        if (err instanceof MarkdownError) throw new HttpError(400, err.message, { code: err.code }); // its own plain sentence
         throw new HttpError(400, `Not a valid .${format}: ${err.message}`);
       }
     }
@@ -535,6 +605,9 @@ export class Sessions extends EventEmitter {
 
   /** The page's typed edits since the last Send, as they are kept for the next batch: each field cut (src/retain.js), at most EDITS_MAX in all. */
   #editsToTake(s, edits) {
+    // Markdown: the page never reports an edit; the one record of a typed edit is made here, from the checked splice this Send wrote
+    // (#mdEditWork), so the agent is told about an edit only once it is in the file
+    if (s.format === "markdown") return [];
     return (Array.isArray(edits) ? edits.slice(0, Math.max(0, EDITS_MAX - s.edits.length)) : []).map(cleanEdit);
   }
 
@@ -686,6 +759,10 @@ export class Sessions extends EventEmitter {
       // per tab, the newest Send (or quick fix's Use) of it that committed: {tab: {rev, noteRev}}. A page whose Send got no answer learns
       // from it whether that Send went through (web/src/App.jsx checkSent)
       sent: s.sent || {},
+      // Markdown: the outcome of the newest Send that wrote the person's edit ({tab, rev, outcome}); the page keeps its draft unless "confirmed"
+      // Markdown: per tab, the outcome of the newest Send of that tab that wrote its edit ({rev, outcome}); a tab clears its draft only on
+      // its own Send's explicit "confirmed"
+      ...(s.format === "markdown" && s.mdSaves ? { mdSaves: s.mdSaves } : {}),
       editor: this.editors.get(s.key) || null,
       conflict: s.conflict || null,
       canReveal: canReveal(),
@@ -766,6 +843,12 @@ export class Sessions extends EventEmitter {
     if (!Array.isArray(comments)) throw new HttpError(400, "comments must be an array");
     const list = comments.filter((c) => c && typeof c === "object");
     if (list.length > COMMENTS_MAX) throw tooMany();
+    // Markdown: two comments with the same id (after the id is normalized as it is stored) would cross their places: refused before
+    // anything is saved or sent
+    if (s.format === "markdown") {
+      const ids = list.map((c) => cutText(String(c.id), 64));
+      if (new Set(ids).size !== ids.length) throw new HttpError(400, "two comments in this request have the same id; nothing was saved", { code: "duplicate_comment_id" });
+    }
     const long = typeof note === "string" && note.length > NOTE_MAX && note.length <= s.note.length;
     let text = typeof note !== "string" ? s.note : long ? userText(note, s.note.length) : noteOf(note);
     // the server gave a note back to the box (#giveNote) that the page had not seen when it sent this (`seen`: the newest session `seq` it
@@ -853,6 +936,8 @@ export class Sessions extends EventEmitter {
     // an answered question: the words, the question and the answer stay as the person left them (the page cannot change them)
     const keep = old?.skipLocal ? { skipLocal: true } : {}; // a reverted local run: the next Send of this comment goes to the agent
     if (old?.localHint && base.text === old.text) keep.localHint = old.localHint; // the words changed: the hint no longer applies
+    if (old?.reopened) Object.assign(keep, { reopened: old.reopened, ...(old.result ? { result: old.result } : {}) }); // a reopened Markdown comment keeps its reason and the agent's note
+    if (old?.sentOnce) keep.sentOnce = true; // a comment sent once never gains a draft place (#mdSendAnchor)
     if (old?.answer) return capComment({ ...base, text: old.text, status: "draft", durable: old.durable || null, question: old.question, answer: old.answer, ...keep });
     return capComment({ ...base, status: "draft", durable: old?.durable || null, ...keep });
   }
@@ -895,7 +980,7 @@ export class Sessions extends EventEmitter {
     if (payload.bytes?.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
     if (s.delivered) joinNotes(s.queuedNote, plan.note);
     else joinNotes(s.pending && !readOnlyKind(s.pending) ? s.pending.instructions?.overall_note || "" : "", plan.note);
-    if (!this.#fits(s, { comments: plan.comments, edits: [...s.edits, ...this.#editsToTake(s, payload.edits)] })) throw tooLarge("This Send");
+    if (!this.#fits(s, { comments: plan.comments, edits: [...s.edits, ...this.#editsToTake(s, payload.edits), ...(payload.mdEdits || [])] })) throw tooLarge("This Send");
   }
 
   // ---- send ------------------------------------------------------------------------------------------------
@@ -927,11 +1012,15 @@ export class Sessions extends EventEmitter {
       // here changes nothing) and again at the commit
       let prepared = null;
       let html = {};
+      // Markdown: the person's typed edit is checked and applied first; the anchors are then worked out on the bytes it makes. Without
+      // an edit, the record the file is now (the one the comments must name)
+      if (s.format === "markdown") payload = this.#mdSendPrep(s, payload);
       for (let attempt = 0; attempt < 2; attempt++) {
         const queued = !!s.delivered;
         const plan = this.#sentPlan(s, payload);
         this.#sendLimits(s, plan, payload);
         if (s.format === "html") this.#htmlSendChecks(s, payload);
+        if (s.format === "markdown") this.#markdownSendChecks(payload);
         const job = this.#sendJob(s, payload, plan);
         // an HTML file that is not queued: the person's text edits are written through the write check, and every anchor is made on the
         // version it was made on, then moved onto the bytes this Send writes (#htmlSendWork)
@@ -941,6 +1030,104 @@ export class Sessions extends EventEmitter {
       }
       return this.send(key, { ...payload, ...html, prepared });
     });
+  }
+
+  /**
+   * A Markdown Send never takes bytes from the page: the person's typed edit comes as one exact splice (`mdEdit`), checked and applied
+   * here (#mdEditWork); the only bytes written are the ones that check made (`mdChecked`).
+   */
+  #markdownSendChecks(payload) {
+    if ((payload.bytes?.length || payload.bytes?.length === 0) && payload.mdChecked?.to !== (payload.bytes ? sha256(payload.bytes) : null)) throw new HttpError(400, "A Markdown file's bytes never come from the page: send your comments, and the agent's exact replacements change the file.", { code: "no_bytes_for_markdown" });
+  }
+
+  /**
+   * The Markdown revision a Send leaves on disk {sha, rev}: the file as the page loaded it, or the bytes of its checked edit (one write:
+   * the next revision). Read only (the same answer for the anchor work and the commit); -1 when the session never counted that version.
+   */
+  #mdSendCarry(s, payload) {
+    if (s.format !== "markdown") return null;
+    return payload.mdChecked ? { sha: payload.mdChecked.to, edit: true, draftId: typeof payload.mdEdit?.draftId === "string" && /^[0-9a-f]{24}$/.test(payload.mdEdit.draftId) ? payload.mdEdit.draftId : null } : { sha: payload.baseSha, id: payload.mdNow?.sha === payload.baseSha ? payload.mdNow.id : null, edit: false };
+  }
+
+  /** A Markdown Send's own preparation, once (sendAsync, or #send when called alone): the edit checked (#mdEditWork), or the record read now. */
+  #mdSendPrep(s, payload) {
+    if (payload.mdNow) return payload;
+    if (payload.mdEdit != null && !payload.mdChecked) {
+      const w = this.#mdEditWork(s, payload);
+      if (w) return { ...payload, ...w };
+      payload = { ...payload, mdEdit: null };
+    }
+    const r = this.#mdReadOrNull(s);
+    return { ...payload, mdNow: r ? { id: r.id, sha: r.sha } : { id: null, sha: null } };
+  }
+
+  /**
+   * A Markdown comment's anchor as this Send builds it. With the person's edit: only a comment made on the draft binds, and only when its
+   * `draftSha` is the sha256 of the bytes THIS Send's checked splice writes (md.sha, computed here, never taken from the page): then its
+   * range is a range of exactly that text, and it becomes an anchor of the revision the write makes. Every other comment (one on the
+   * file before the edit, a draft-made one whose draft is not what is written) keeps its words and has no place. Without an edit: a
+   * comment on the file's exact revision (sha256 and number) keeps its place; a draft-made one has none. A page never names a revision
+   * that a write makes.
+   */
+  #mdSendAnchor(c, md) {
+    const l = c.anchor?.location;
+    const none = { ...c, anchor: { ...c.anchor, location: null } };
+    if (md.edit) {
+      // ALL of: never sent before (a comment that was sent, queued or delivered once never gains a place later), made on exactly the draft
+      // state this Send's splice declares (its random id: another tab's draft, an earlier or later state of this one never matches), on
+      // the bytes this Send writes, with a range the anchor checks accept
+      const ok = l && !c.sentOnce && typeof md.draftId === "string" && l.draftId === md.draftId && typeof l.draftSha === "string" && l.draftSha === md.sha && l.version === undefined && l.rev === undefined && Number.isSafeInteger(l.from) && Number.isSafeInteger(l.to);
+      // (the draft id stays on the location: it is the identity the selection's evidence was made under)
+      return ok ? { ...c, anchor: { ...c.anchor, location: { from: l.from, to: l.to, version: md.sha, draftId: l.draftId } } } : none;
+    }
+    return l && l.draftSha === undefined && Sessions.mdOn(l, md.sha, md.id) ? c : none;
+  }
+
+  /**
+   * The person's typed Markdown edit at Send (`payload.mdEdit`: {from, to, old, new, sha256}, one splice of the version the page loaded):
+   * checked with the rules of an agent's replacement (src/markdown-file.js checkOne: base sha256, range in the file, character and run
+   * boundaries, old text exactly the source there, protected front matter) against the file on disk, which must be that base. Returns
+   * null without an edit (or one that changes nothing), else what the Send writes: {bytes, mdChecked, mdEdits (the one record the agent
+   * is told about)}. Refusals change nothing: 423 during a run, 409 when the file changed, 422 else.
+   */
+  #mdEditWork(s, payload) {
+    const e = payload.mdEdit;
+    if (e == null) return null;
+    if (s.delivered) throw new HttpError(423, MD_EDIT_LOCKED, { code: "locked" });
+    const ok = typeof e === "object" && (e.rev === undefined || typeof e.rev === "string") && Number.isSafeInteger(e.from) && Number.isSafeInteger(e.to) && typeof e.old === "string" && typeof e.new === "string" && typeof e.sha256 === "string" && /^[0-9a-f]{64}$/.test(e.sha256);
+    if (!ok) throw new HttpError(400, "a Markdown edit must be {from, to, old, new, sha256}", { code: "bad_edits" });
+    let r;
+    try {
+      r = this.#mdRead(s);
+    } catch (err) {
+      if (err?.code === "UNSTABLE") throw new HttpError(409, MD_VERSION_CHANGED, { code: "version_changed" });
+      throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
+    }
+    const disk = r.bytes;
+    const diskSha = r.sha;
+    // the splice names the record it was typed on (the id the page got with the file): the same bytes as another record are refused
+    if (payload.baseSha !== diskSha || e.sha256 !== diskSha || typeof e.rev !== "string" || e.rev !== r.id) throw new HttpError(409, MD_VERSION_CHANGED, { code: "version_changed", diskSha });
+    let file;
+    try {
+      file = readMarkdownFile(disk);
+    } catch (err) {
+      throw new HttpError(422, `Your edit was not written: ${String(err.message).slice(0, 200)}`, { code: "unreadable" });
+    }
+    // a typed U+FEFF is refused here as the page refuses it (it would change how the file is read; the file has none: one that has is not editable)
+    if (e.new.includes("\uFEFF")) throw new HttpError(422, MD_DRAFT_FEFF_SERVER, { code: "bom" });
+    const c = checkOne(file, { op: "replace_source", target: { from: e.from, to: e.to }, expect: { sha256: e.sha256, source: e.old }, text: e.new }, { person: true });
+    if (!c.ok) throw new HttpError(422, `Your edit was not written: ${c.reason}. Nothing was written; your edit is still in the page.`, { code: c.code });
+    const a = applyMd(file, [c.rep], { person: true });
+    if (!a.ok) throw new HttpError(422, `Your edit was not written: ${a.reason}. Nothing was written; your edit is still in the page.`, { code: a.code });
+    const newSha = sha256(a.bytes);
+    if (newSha === diskSha) return null;
+    return {
+      bytes: a.bytes,
+      mdChecked: { from: diskSha, to: newSha, record: r.id },
+      mdNow: { id: r.id, sha: diskSha },
+      mdEdits: [cleanEdit({ kind: "text", before: e.old, after: e.new, label: labelAt(file.tree, e.from), location: { from: e.from, to: e.from + e.new.length, version: newSha } })],
+
+    };
   }
 
   /** An HTML Send's own refusals, before any work: no bytes from the browser ever (PLAN-html 3.1), no text edits during a run (D5). */
@@ -1023,18 +1210,22 @@ export class Sessions extends EventEmitter {
       if (!need.length || !s.snapshots.has(s.delivered.preSha)) return null;
       return { source: { path: s.snapshots.blob(s.delivered.preSha), sha: s.delivered.preSha }, tasks: need.map(buildTask) };
     }
-    const { tasks } = this.#sendTasks(s, this.#editsToTake(s, payload.edits), payload.viewState, plan);
-    const bytes = payload.bytes?.length ? payload.bytes : null;
+    const { tasks } = this.#sendTasks(s, [...this.#editsToTake(s, payload.edits), ...(payload.mdEdits || [])], payload.viewState, plan, this.#mdSendCarry(s, payload));
+    // a checked Markdown edit's bytes are the version this Send writes, also when they are empty (every character deleted)
+    const bytes = payload.bytes?.length || (payload.mdChecked && Buffer.isBuffer(payload.bytes)) ? payload.bytes : null;
     return { source: bytes ? { bytes } : { path: s.file }, check: true, tasks, outline: this.#wantsOutline(s) };
   }
 
   /** The tasks of a Send that is not queued: every comment that goes out (drafts, and those of a batch still waiting), the typed edits without an anchor yet, the view. */
-  #sendTasks(s, newEdits, viewState, plan = { comments: s.comments }) {
+  #sendTasks(s, newEdits, viewState, plan = { comments: s.comments }, md = null) {
     const go = new Set(this.#delivers(plan.comments, plan));
     const eligible = plan.comments.filter((c) => go.has(c) || c.status === "sent");
     const edits = [...s.edits, ...newEdits].filter((e) => !e.durable);
     const vs = cleanView(viewState);
-    return { eligible, edits, vs, tasks: [...eligible.map(buildTask), ...edits.map((e) => ({ op: "build", anchor: editAnchor(e), pin: false })), ...(vs ? [{ op: "view", vs }] : [])] };
+    // Markdown: a comment's place goes out only when it was made on the exact revision this Send leaves on disk; any other keeps its
+    // words and goes out without a place (never moved, never found again by its words)
+    const build = md ? (c) => buildTask(this.#mdSendAnchor(c, md)) : buildTask;
+    return { eligible, edits, vs, tasks: [...eligible.map(build), ...edits.map((e) => ({ op: "build", anchor: editAnchor(e, s.format), pin: false })), ...(vs ? [{ op: "view", vs }] : [])] };
   }
 
   /**
@@ -1045,9 +1236,15 @@ export class Sessions extends EventEmitter {
   #send(key, payload) {
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
+    // Markdown: a typed edit not checked yet (the synchronous path) is checked here first; never ignored
+    if (s.format === "markdown") payload = this.#mdSendPrep(s, payload);
     if (s.format === "html") this.#htmlSendChecks(s, payload);
+    if (s.format === "markdown") this.#markdownSendChecks(payload);
     const hasBytes = !!payload.bytes?.length;
     if (s.delivered && hasBytes) throw new HttpError(423, s.delivered.local ? "the document is locked while a change is made on this Mac" : "the document is locked while the agent works", { code: "locked" }); // before touching any state
+    // a checked Markdown edit (also one that empties the file) is refused whole when a run took the file after it was checked: nothing of
+    // this Send is delivered or stored, and the page keeps everything
+    if (s.delivered && payload.mdChecked) throw new HttpError(423, MD_EDIT_LOCKED, { code: "locked" });
     // the Send's own list and note (#sentPlan), every limit checked on them before anything changes; then stored as a draft save is, so a
     // refusal after this (the file changed, could not be read in time) leaves them as editable drafts
     const plan = this.#sentPlan(s, payload);
@@ -1056,6 +1253,16 @@ export class Sessions extends EventEmitter {
     try {
       return this.#sendCommit(s, payload, plan);
     } catch (err) {
+      // Markdown: the person's edit was already published (#takePage) when something after it failed: never told as "not written". The
+      // tab's receipt says it could not be recorded (the page keeps the draft, with the warning)
+      if (s.format === "markdown" && payload.mdPublished) {
+        if (typeof payload.tab === "string") s.mdSaves = { ...(s.mdSaves || {}), [payload.tab]: { rev: payload.rev ?? null, outcome: "state_unconfirmed" } };
+        this.#mdStore(s).cur = null;
+        try {
+          this.#changed(s);
+        } catch {}
+        return s;
+      }
       this.emit("change", s, "draft"); // refused after the save: the page's tabs see the drafts it stored (a Send that commits says so once, at the end)
       throw err;
     }
@@ -1074,7 +1281,10 @@ export class Sessions extends EventEmitter {
         const work = this.#results(s.format, () => s.snapshots.read(s.delivered.preSha), s.delivered.preSha, need.map(buildTask), payload.prepared);
         if (work.read?.ok) need.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : null));
       }
-      for (const c of fresh) c.status = "queued";
+      for (const c of fresh) {
+        c.status = "queued";
+        if (s.format === "markdown") c.sentOnce = true; // Markdown only: never a draft place again (#mdSendAnchor)
+      }
       // the note belongs to the queued batch now; it leaves the box so the next Send does not repeat it
       s.queuedNote = queuedNote;
       s.note = "";
@@ -1089,12 +1299,12 @@ export class Sessions extends EventEmitter {
     const note = joinNotes(waiting, s.note); // before anything is written
     // the bytes that become the file are read whole before anything is written (one past a reader's cap is refused: CapError, nothing
     // changes), and every anchor of the batch is built from them, by the anchor worker (sendAsync) or here
-    const newEdits = this.#editsToTake(s, payload.edits);
-    const { eligible, edits, vs, tasks } = this.#sendTasks(s, newEdits, payload.viewState, { ...plan, comments: s.comments });
+    const newEdits = [...this.#editsToTake(s, payload.edits), ...(payload.mdEdits || [])];
+    const { eligible, edits, vs, tasks } = this.#sendTasks(s, newEdits, payload.viewState, { ...plan, comments: s.comments }, this.#mdSendCarry(s, payload));
     // what is stored must fit its file once cut (src/retain.js SESSION_MAX): checked before the file is written or anything changes
     if (!this.#fits(s, { comments: s.comments, edits: [...s.edits, ...newEdits] })) throw tooLarge("This Send");
     let work = null;
-    const { diskSha, writtenSha, writeInfo, lastUpdate } = this.#takePage(s, payload, (b, sha) => {
+    const { diskSha, written, writtenSha, writeInfo, lastUpdate, mdId } = this.#takePage(s, payload, (b, sha) => {
       work = this.#results(s.format, b, sha, tasks, payload.prepared, { check: true });
       this.#readVerdict(work, s.format, sha, "refusing to write");
     });
@@ -1103,16 +1313,41 @@ export class Sessions extends EventEmitter {
     s.edits.push(...newEdits);
     // a comment whose anchor work did not finish goes out weaker (src/anchor-work.js weakDurable); a PPTX pin on a shape also remembers its slide
     eligible.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : weakDurable(s.format, c.anchor)));
-    edits.forEach((e, i) => (e.durable = usable(work.at(eligible.length + i)) ? work.at(eligible.length + i) : weakDurable(s.format, editAnchor(e))));
+    edits.forEach((e, i) => (e.durable = usable(work.at(eligible.length + i)) ? work.at(eligible.length + i) : weakDurable(s.format, editAnchor(e, s.format))));
     const v = vs ? work.at(eligible.length + edits.length) : null;
     s.view = !vs ? null : usable(v) ? v : { format: s.format, raw: vs };
     if (work.outline) this.#outline = { key: s.key, sha: writtenSha, all: work.outline };
+    // Markdown: the places just made are of this revision; a typed edit of an earlier Send (superseded by this one) is listed without one
+    let batchEdits = s.edits;
+    if (s.format === "markdown") {
+      const rev = mdId; // the record of the file this Send leaves (the written file's own, or the one it was read as); null: unconfirmed
+      for (const c of eligible) {
+        if (!c.durable) continue;
+        c.durable.rev = rev;
+        // the place this Send gave it (a draft-made comment bound to the bytes just written): from now on its page anchor names that
+        // revision, so a later Send or resolve of the same revision finds it as any comment on the file
+        if (c.anchor?.location?.draftSha) {
+          // its evidence is made again here, by the server, under the new identity (the record), from the text just written
+          const t = mdTextOf("markdown", written) ?? "";
+          c.anchor = { ...c.anchor, location: { from: c.durable.from, to: c.durable.to, version: writtenSha, rev }, evidence: typeof rev === "string" ? mdEvidence(rev, c.durable.from, c.durable.to, t.slice(c.durable.from, c.durable.to)) : undefined };
+        }
+      }
+      for (const e of edits) if (e.durable) e.durable.rev = rev;
+      batchEdits = s.edits.map((e) => (Sessions.mdOn(e.durable, writtenSha, rev) ? e : { ...e, durable: null, superseded: true }));
+    }
 
-    const batch = buildBatch({ file: s.file, format: s.format, baseSha: writtenSha, note, comments: eligible, edits: s.edits, style: styleNote(), guide: voiceGuide() });
+    const batch = buildBatch({ file: s.file, format: s.format, baseSha: writtenSha, note, comments: eligible, edits: batchEdits, style: styleNote(), guide: voiceGuide(), mdText: mdTextOf(s.format, written) });
+    if (s.format === "markdown") {
+      this.#mdTagBatch(s, batch, mdId);
+      // what the page is told about its own save (also through the event stream): a published but unconfirmed save keeps its draft
+      if (writeInfo?.mdOutcome && typeof payload.tab === "string") s.mdSaves = { ...(s.mdSaves || {}), [payload.tab]: { rev: payload.rev ?? null, outcome: writeInfo.mdOutcome } };
+    }
     const sent = eligible.filter((c) => c.status === "draft");
     for (const c of eligible) {
       c.status = "sent";
+      if (s.format === "markdown") c.sentOnce = true; // Markdown only: never a draft place again (#mdSendAnchor)
       c.batchId = batch.batch_id;
+      delete c.reopened; // sent again: the reason it was reopened is answered by this batch
     }
     s.note = ""; // the note moved into the batch: it is not asked for again
     // a voice guide request still waiting for an agent is replaced by this Send (as a waiting review is); its pasted texts go with it, so say so
@@ -1139,19 +1374,30 @@ export class Sessions extends EventEmitter {
    * anything is written, and may throw to refuse. Returns {disk, diskSha, written, writtenSha, writeInfo, lastUpdate}.
    */
   #takePage(s, payload, check = null) {
-    const hasBytes = !!payload.bytes?.length;
+    // a checked Markdown edit may leave an empty file: its bytes count even when there are none
+    const mdChecked = s.format === "markdown" ? payload.mdChecked ?? null : null;
+    const hasBytes = !!payload.bytes?.length || (!!mdChecked && Buffer.isBuffer(payload.bytes));
     let disk;
+    let mdNowId = null; // Markdown: the record the file is at this commit
     try {
       checkRegularOwned(s.file);
-      disk = readCapped(s.file);
+      if (s.format === "markdown") {
+        const r = this.#mdRead(s);
+        disk = r.bytes;
+        mdNowId = r.id;
+      } else disk = readCapped(s.file);
     } catch (err) {
+      if (err?.code === "UNSTABLE") throw new HttpError(409, MD_VERSION_CHANGED, { code: "version_changed" });
       throw new HttpError(409, `cannot read the file: ${err.message}`, { code: "gone" });
     }
     const diskSha = sha256(disk);
+    // Markdown: this Send was prepared on one record (its edit checked, its comments' places judged): the file must still be that record
+    if (s.format === "markdown" && (mdChecked ? mdChecked.record !== mdNowId : payload.mdNow?.id !== mdNowId)) throw new HttpError(409, MD_VERSION_CHANGED, { code: "version_changed", diskSha });
     // an HTML file's text edits were applied by its write check (#htmlSendWork) to the version the page loaded: no bytes come from the page
     const htmlChecked = s.format === "html" ? payload.htmlChecked ?? null : null;
-    if (diskSha !== payload.baseSha || (htmlChecked && htmlChecked.from !== diskSha)) {
-      // an HTML page sent no bytes: nothing of its to keep as a copy (its edits stay in the page, which reloads and places them again)
+    if (diskSha !== payload.baseSha || (htmlChecked && htmlChecked.from !== diskSha) || (mdChecked && mdChecked.from !== diskSha)) {
+      // an HTML or Markdown page sent no bytes: nothing of its to keep as a copy (its edits stay in the page)
+      if (mdChecked) throw new HttpError(409, MD_VERSION_CHANGED, { code: "version_changed", diskSha });
       throw this.#outsideChange(s, { side: "user", bytes: s.format === "html" ? null : payload.bytes, diskSha, baseSha: payload.baseSha });
     }
     let written = disk;
@@ -1160,6 +1406,8 @@ export class Sessions extends EventEmitter {
       if (payload.bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
       if (s.format === "html") {
         if (htmlChecked?.to !== sha256(payload.bytes)) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
+      } else if (s.format === "markdown") {
+        if (mdChecked?.to !== sha256(payload.bytes)) throw new HttpError(500, "a Markdown file is written only with exact replacements Onionskin checked", { code: "unchecked_write" });
       } else {
         try {
           validatePackage(payload.bytes, s.format);
@@ -1171,16 +1419,19 @@ export class Sessions extends EventEmitter {
     const writtenSha = hasBytes ? sha256(payload.bytes) : diskSha;
     if (htmlChecked && hasBytes) readInCaps("html", writtenSha); // the write check read these bytes whole within the limits
     if (check) check(hasBytes ? payload.bytes : disk, writtenSha);
+    // Markdown: the new version is stored BEFORE it is published (a snapshot that fails afterwards could not undo a published write)
+    if (s.format === "markdown") s.snapshots.add(hasBytes ? payload.bytes : disk, "sent");
     if (hasBytes) {
-      writeInfo = this.#replace(s, payload.bytes, { expectSha: diskSha, label: "before send", side: "user", htmlChecked });
+      writeInfo = this.#replace(s, payload.bytes, { expectSha: diskSha, label: "before send", side: mdChecked ? null : "user", htmlChecked, mdChecked, mdRecord: mdChecked?.record ?? null });
       written = payload.bytes;
+      if (mdChecked) payload.mdPublished = true; // from here a failure is a published write (#send)
     }
-    s.snapshots.add(written, "sent");
+    if (s.format !== "markdown") s.snapshots.add(written, "sent");
     s.baseSha = writtenSha;
     const lastUpdate = s.history?.at(-1); // learning pairs an agent run with the person's edits right after it
     if (hasBytes && writtenSha !== diskSha) addUpdate(s, { kind: "user", before: diskSha, after: writtenSha }, this.now());
     s.histTip = writtenSha;
-    return { disk, diskSha, written, writtenSha, writeInfo, lastUpdate };
+    return { disk, diskSha, written, writtenSha, writeInfo, lastUpdate, mdId: s.format === "markdown" ? (hasBytes ? writeInfo?.mdId ?? null : mdNowId) : null };
   }
 
   /** Hands what this Send can teach (src/voice-learn.js) to the server's `voice` listener. Last in send(): learning never fails a Send. */
@@ -1210,6 +1461,7 @@ export class Sessions extends EventEmitter {
     if (s.merging) throw new HttpError(423, "your edits are being merged already", { code: "locked" });
     // an HTML view is read only during a run (PLAN-html D5): nothing is typed to merge, and its bytes never come from the page
     if (s.format === "html") throw new HttpError(400, "an HTML file's edits are never merged: its view is read only while the agent works", { code: "not_for_html" });
+    if (s.format === "markdown") throw new HttpError(400, "A Markdown file's edits are never merged: the page sends comments only, and the agent's exact replacements change the file.", { code: "not_for_markdown" });
     if (!/^[0-9a-f]{64}$/.test(baseSha)) throw new HttpError(400, "baseSha must be a sha256"); // it names a snapshot file
     if (!bytes?.length) throw new HttpError(400, "no document bytes");
     if (bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
@@ -1306,6 +1558,96 @@ export class Sessions extends EventEmitter {
    * apply write started from and produced; null when no chain of records connects them (a revert, a direct save, a restart, a pruned
    * snapshot). Hashes name content, so a chain found is what happened to the bytes, whatever the order of the runs.
    */
+  /**
+   * Markdown revision records. A record is {sha, stamp} under a random id: the file's sha256 and its identity on disk (src/fsutil.js
+   * stampOf: device, inode, size and mtime in nanoseconds; not ctime, which sync clients move alone), both taken from ONE descriptor around one read (readStamped). The
+   * server mints a new id whenever it reads the file and finds other bytes or another stamp than the current record's. Every Markdown
+   * anchor, batch, Send splice and history entry names the id of the record it was made on; the page only ever holds the opaque id.
+   * Records live in this server's memory only: after a restart no old id is known, so everything made before it is unresolved or refused.
+   * Safety does not depend on noticing changes: the one check before every Markdown write (#replace) reads the file again and compares
+   * its sha256 AND its whole stamp with the named record; any difference refuses. Strict on purpose: a touch or an identical re-save
+   * (same bytes, new mtime, or a new inode) costs the person a "select again", the accepted price. A change of ctime alone is not one.
+   * Stated limits (docs/contracts/anchors.md): a program that rewrites the file in place inside one timestamp tick and restores the same
+   * bytes (on HFS+, FAT, exFAT and some network shares the tick is long); one that restores identical bytes and sets mtime back to the
+   * exact nanosecond on purpose; and a save by another program between that check and the rename (the window every Onionskin writer has).
+   */
+  #mdRecs = new Map(); // session key -> {cur: id | null, recs: Map(id -> {sha, stamp})}
+  #mdBatch = new Map(); // batch id -> the record id it was made on (memory only, as the records)
+
+  #mdStore(s) {
+    let st = this.#mdRecs.get(s.key);
+    if (!st) this.#mdRecs.set(s.key, (st = { cur: null, recs: new Map() }));
+    return st;
+  }
+
+  /** The id of the record {sha, stamp}: the current one when it matches, else a new one (now current). Ceiling: the 500 newest are kept. */
+  #mdRecordOf(s, sha, stamp) {
+    const st = this.#mdStore(s);
+    const c = st.cur && st.recs.get(st.cur);
+    if (c && c.sha === sha && c.stamp === stamp) return st.cur;
+    const id = crypto.randomBytes(12).toString("hex");
+    st.recs.set(id, { sha, stamp });
+    st.cur = id;
+    if (st.recs.size > 500) st.recs.delete(st.recs.keys().next().value); // an id dropped is refused, never trusted
+    return id;
+  }
+
+  /** The record named `id`, or null (unknown: made before a restart, dropped, or never). */
+  #mdRec(s, id) {
+    return (typeof id === "string" && this.#mdStore(s).recs.get(id)) || null;
+  }
+
+  /** Reads the file with its identity: {bytes, sha, stamp, id}. Throws as readStamped does (gone, a symlink, still changing). */
+  #mdRead(s) {
+    checkRegularOwned(s.file);
+    const r = readStamped(s.file);
+    const sha = sha256(r.bytes);
+    return { bytes: r.bytes, sha, stamp: r.stamp, id: this.#mdRecordOf(s, sha, r.stamp) };
+  }
+
+  /** #mdRead, or null when the file cannot be read now. */
+  #mdReadOrNull(s) {
+    try {
+      return this.#mdRead(s);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The record a Markdown run ends on, for its history entry (what Revert checks): the record its checked write produced, when the file
+   * still has those bytes; the batch's own record when it wrote nothing; null otherwise (an outside save: no Revert, see noRevert).
+   */
+  #mdRunEnd(run, postSha) {
+    if (run.mdReps) return postSha === run.knownSha ? run.mdPost ?? null : null;
+    return postSha === run.preSha ? this.#mdBatch.get(run.batch.batch_id) ?? null : null;
+  }
+
+  /** A Markdown batch is bound to the record it was made on (by batch id; the printed batch is unchanged). */
+  #mdTagBatch(s, batch, id) {
+    if (s.format !== "markdown" || !batch?.batch_id) return;
+    if (typeof id === "string") this.#mdBatch.set(batch.batch_id, id);
+    else this.#mdBatch.delete(batch.batch_id); // an unconfirmed write: nothing of this batch may be written
+  }
+
+  /** The file read now, when it is exactly the record this Markdown batch was made on; else null. */
+  #mdBatchCurrent(s, batch) {
+    const want = this.#mdBatch.get(batch?.batch_id);
+    if (!want) return null;
+    const r = this.#mdReadOrNull(s);
+    return r && r.id === want && r.sha === batch.base_sha256 ? r : null;
+  }
+
+  /** A Markdown batch with no writable place: every anchor unresolved (no locator), every comment decline. */
+  static mdStrip(batch) {
+    return { ...batch, instructions: { ...batch.instructions, comments: (batch.instructions?.comments || []).map((c) => ({ ...c, reply_with: "decline" })) }, untrusted_document_evidence: { ...batch.untrusted_document_evidence, anchors: (batch.untrusted_document_evidence?.anchors || []).map((a) => ({ ...a, resolved: false, locator: null })) } };
+  }
+
+  /** Does a page anchor or durable name exactly this record (`sha` and its id)? The only way a Markdown place is valid. */
+  static mdOn(x, sha, id) {
+    return !!x && typeof id === "string" && (x.version ?? x.sha256) === sha && x.rev === id;
+  }
+
   #writesBetween(s, from, to, disk) {
     const list = this.writes.get(s.key) || [];
     const seen = new Set();
@@ -1334,16 +1676,38 @@ export class Sessions extends EventEmitter {
    * replacement (see replaceGuarded). `expectSha` is the hash the caller compared against; a file that is different now, or becomes
    * different just before the rename, is not overwritten (the newer bytes are snapshotted) and the caller gets the 409 conflict.
    */
-  #replace(s, bytes, { expectSha, label, side = null, htmlChecked = null }) {
+  #replace(s, bytes, { expectSha, label, side = null, htmlChecked = null, mdChecked = null, mdRecord = null }) {
     // R1, R12: an HTML file is written only with bytes its write check passed in a worker (agentWriteChecked); every other path refuses
     if (s.format === "html" && htmlChecked?.to !== sha256(bytes)) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
+    // a Markdown file only with the bytes agentWrite rebuilt from the disk and the agent's exact replacements, or by Revert (by identity)
+    if (s.format === "markdown" && mdChecked?.to !== sha256(bytes)) throw new HttpError(500, "a Markdown file is written only with exact replacements Onionskin checked", { code: "unchecked_write" });
+    // Markdown, THE one check of every write (the person's Send edit, an agent's write, Revert): the file must be exactly the record the
+    // work was made on, its sha256 and its whole stamp, read right before the bytes are replaced (src/fsutil.js replaceGuarded expectStamp)
+    const rec = s.format === "markdown" ? this.#mdRec(s, mdRecord) : null;
+    if (s.format === "markdown" && (!rec || rec.sha !== expectSha)) throw new HttpError(409, MD_FILE_CHANGED, { code: "md_changed" });
     try {
-      return replaceGuarded(s.file, bytes, {
+      const info = replaceGuarded(s.file, bytes, {
         expectSha,
+        ...(rec ? { expectStamp: rec.stamp } : {}),
         snapshotBefore: (disk) => s.snapshots.add(disk, label),
         snapshotNewer: (newer) => s.snapshots.add(newer, "newer version found while writing"),
       });
+      // Markdown: the record of what was written, taken from the written file itself; unconfirmed: no record is trusted (later work refused)
+      // three writer outcomes (src/fsutil.js replaceGuarded): "confirmed"; "content_unconfirmed" and "durability_unconfirmed" are published
+      // writes that could not be confirmed: no record is trusted after them (later work on this file is refused until it is read again).
+      // A fourth, "state_unconfirmed", is set by the caller when the bookkeeping after a published write fails (agentWrite, #send)
+      if (s.format === "markdown") {
+        info.mdOutcome = info.outcome || "content_unconfirmed";
+        if (info.record && info.mdOutcome === "confirmed") info.mdId = this.#mdRecordOf(s, info.record.sha, info.record.stamp);
+        else {
+          info.mdId = null;
+          this.#mdStore(s).cur = null;
+        }
+      }
+      return info;
     } catch (err) {
+      if (err instanceof WriteConflict && s.format === "markdown") throw new HttpError(409, MD_FILE_CHANGED, { code: "md_changed" });
+      if (err?.code === "UNSTABLE") throw new HttpError(409, MD_FILE_CHANGED, { code: "md_changed" });
       if (err instanceof WriteConflict) throw this.#outsideChange(s, { side, bytes, diskSha: err.diskSha, baseSha: err.baseSha, message: err.message });
       if (err.code === "ENOSPC_SNAP") throw new HttpError(507, err.message);
       if (err.code === "LOCK_BUSY") throw new HttpError(409, err.message, { code: "write_busy" });
@@ -1470,7 +1834,7 @@ export class Sessions extends EventEmitter {
     // the commands in it carry this delivery's ticket (`--lease`), so an agent that runs them as printed names its own delivery
     const ticket = ticketOf(batch.batch_id, s.delivered.lease.token);
     const lease = { holder: p.holder, token: s.delivered.lease.token };
-    const shown = this.#withOutline(s, batch, p.holder);
+    const shown = this.#withMarkdown(s, this.#withOutline(s, batch, p.holder));
     const briefed = this.briefed.get(s.key) || this.briefed.set(s.key, new Set()).get(s.key);
     if (briefed.has(p.holder) && p.compact && !p.full) {
       p.resolve(compactBatch(shown, { file: s.file, ticket, lease }));
@@ -1488,6 +1852,30 @@ export class Sessions extends EventEmitter {
   }
 
   /**
+   * A Markdown batch, as delivered to any holder: untrusted_document_evidence.markdown (src/markdown-file.js markdownEvidence: the heading
+   * outline and the blocks with their exact source and ranges) read from the file as it is now, which must be the batch's base; a file
+   * that changed since gets `markdown_unavailable` instead (the replacements of the batch would be refused against it anyway).
+   */
+  #withMarkdown(s, batch) {
+    if (s.format !== "markdown" || batch.instructions?.voice_request) return batch;
+    let md;
+    let current = false;
+    try {
+      checkRegularOwned(s.file);
+      const file = readMarkdownFile(readCapped(s.file));
+      current = this.#mdBatchCurrent(s, batch)?.sha === file.sha;
+      md = current ? { markdown: markdownEvidence(file) } : { markdown_unavailable: "The file changed on disk after this batch was made, so its blocks are not shown and its replacements would be refused. Decline the comments, say the file changed, and run done; the person sends again on the new version." };
+    } catch (err) {
+      md = { markdown_unavailable: `Onionskin cannot read this file as it is now: ${untrusted(err?.message || err, 200)}` };
+    }
+    // a stale delivery offers no place: every anchor unresolved, every comment decline (its write would be refused anyway). Frozen for this
+    // lease: the held batch, a scoped reply and a raw apply under it see the same (deliveredBatch, agentWrite)
+    if (!current && s.delivered?.batch?.batch_id === batch.batch_id) s.delivered.mdStale = true;
+    if (!current || (s.delivered?.batch?.batch_id === batch.batch_id && s.delivered.mdStale)) batch = Sessions.mdStrip(batch);
+    return { ...batch, untrusted_document_evidence: { ...batch.untrusted_document_evidence, ...md } };
+  }
+
+  /**
    * An agent Onionskin started (its background holder or the Terminal form) cannot open the file, so each edit batch it receives, complete or
    * compact, also carries the outline of the file as it is now (the bytes its ops are checked against), with the target and expect of every
    * unit. As much as fits one shell output is inline; when that is not all of it, the complete outline (up to OUTLINE_FILE_MAX units) is
@@ -1501,6 +1889,7 @@ export class Sessions extends EventEmitter {
    */
   #withOutline(s, batch, holder) {
     if (!isAgentHolder(holder) || batch.instructions?.review || batch.instructions?.voice_request) return batch;
+    if (s.format === "markdown") return batch; // its outline and blocks come with every delivery (#withMarkdown)
     let all;
     try {
       checkRegularOwned(s.file);
@@ -1748,7 +2137,8 @@ export class Sessions extends EventEmitter {
     const s = this.get(key);
     if (!s.delivered) throw new HttpError(409, "no batch is delivered for this file, so the ticket is void", { code: "no_batch" });
     this.#assertLease(s, { ...claim, strict: true });
-    return s.delivered.batch;
+    // Markdown: what this lease was delivered (a stale delivery stays without places for the whole lease)
+    return s.format === "markdown" && s.delivered.mdStale ? Sessions.mdStrip(s.delivered.batch) : s.delivered.batch;
   }
 
   /**
@@ -1756,6 +2146,7 @@ export class Sessions extends EventEmitter {
    * queued: both hold a live lease) and only for the lease holder; compare-and-swap on the disk hash; renews the lease.
    */
   agentWrite(key, { baseSha, bytes, holder, token, batchId, label = "before agent write", route = "commit", ops = null, partial = false, htmlChecked = null }) {
+    let mdChecked = null;
     const s = this.get(key);
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     const state = this.state(s);
@@ -1765,12 +2156,37 @@ export class Sessions extends EventEmitter {
     if (readOnly) throw new HttpError(409, READ_ONLY[readOnly], { code: `${readOnly}_only` });
     // `commit` does not know the hash its candidate was edited from: the base is the last hash this server wrote or served for the delivery
     if (baseSha == null) baseSha = s.delivered.knownSha ?? s.delivered.preSha;
-    if (!bytes?.length) throw new HttpError(400, "no bytes");
+    // a checked Markdown write may leave an empty file (every character replaced by nothing): a missing payload is not an empty one
+    if (!Buffer.isBuffer(bytes) || (!bytes.length && s.format !== "markdown")) throw new HttpError(400, "no bytes");
     if (bytes.length > MAX_BYTES) throw new HttpError(413, TOO_BIG, { code: "too_large" });
     const newSha = sha256(bytes);
     if (s.format === "html") {
       // checked in a worker (agentWriteChecked) for exactly these bytes; the disk hash it was checked against is compared below
       if (htmlChecked?.to !== newSha) throw new HttpError(500, "an HTML file is written only after its write check", { code: "unchecked_write" });
+    } else if (s.format === "markdown") {
+      // only exact replacements (src/markdown-file.js): the bytes are rebuilt here from the file on disk and the ops `apply` says it ran,
+      // every op checked against that one base (its sha256, its range, its old text); anything else (a commit, bytes that are not that
+      // result) is refused before anything is written
+      if (route !== "apply" || !Array.isArray(ops)) throw new HttpError(400, MD_ONLY_OPS, { code: "not_for_markdown" });
+      // one write per batch, on the revision the person saw (the delivered batch's base): after it, or on any other revision, a further
+      // change needs a new batch (the places of this one name the old revision)
+      if (s.delivered.mdStale) throw new HttpError(409, `refusing to write: ${MD_STALE_BASE}`, { code: "stale_base" }); // delivered without places: never writable under this lease
+      if (s.delivered.mdReps || s.mdWrote === s.delivered.batch.batch_id) throw new HttpError(409, `refusing to write: ${MD_ONE_WRITE}`, { code: "one_write_per_batch" });
+      if (baseSha !== s.delivered.batch.base_sha256 || ops.some((op) => op?.expect?.sha256 !== baseSha)) throw new HttpError(409, `refusing to write: ${MD_STALE_BASE}`, { code: "stale_base" });
+      // an op that names a comment the batch limited to a decline (no place this batch may change) is refused, whatever route it took
+      const declineOnly = new Set(s.delivered.batch.instructions.comments.filter((c) => c.reply_with === "decline").map((c) => c.id));
+      if (ops.some((op) => typeof op?.id === "string" && declineOnly.has(op.id))) throw new HttpError(422, "refusing to write: an op names a comment whose reply_with is decline (it has no place this batch may change); decline it with a note", { code: "decline_only" });
+      // the same bytes are not enough: the file must be exactly the record the batch was made on (sha256 and stamp); any other, even with
+      // the same bytes, needs a new batch. #replace checks it again right before the bytes are replaced
+      const cur = this.#mdBatchCurrent(s, s.delivered.batch);
+      if (!cur || cur.sha !== baseSha) throw new HttpError(409, `refusing to write: ${MD_STALE_BASE}`, { code: "stale_base" });
+      const r = rebuildMarkdown(cur.bytes, ops);
+      if (!r.ok) throw new HttpError(422, `refusing to write: ${r.reason}`, { code: r.code });
+      if (!r.bytes.equals(bytes)) throw new HttpError(500, "a Markdown file is written only with exact replacements Onionskin checked: these bytes are not what the replacements give", { code: "unchecked_write" });
+      // replacements that cancel each other leave the same bytes: nothing is written, nothing is applied
+      if (r.bytes.equals(cur.bytes)) throw new HttpError(422, `refusing to write: ${NO_CHANGE_MD}`, { code: "no_change" });
+      readWhole(s.format, bytes, newSha);
+      mdChecked = { from: baseSha, to: newSha, reps: r.reps, record: cur.id };
     } else {
       try {
         validatePackage(bytes, s.format);
@@ -1793,16 +2209,43 @@ export class Sessions extends EventEmitter {
     // R12: the compare-and-swap again after the check's await: the version it checked against must still be the one on disk
     if (s.format === "html" && htmlChecked.from !== diskSha) throw this.#outsideChange(s, { side: "agent", bytes, diskSha, baseSha: htmlChecked.from, message: "the file changed on disk while the write was being checked" });
     this.setStage(key, "writing"); // only once the checks passed: a refused write does not claim to be writing
-    const info = this.#replace(s, bytes, { expectSha: diskSha, label, side: "agent", htmlChecked });
+    if (mdChecked && mdChecked.from !== diskSha) throw this.#outsideChange(s, { side: "agent", bytes, diskSha, baseSha: mdChecked.from, message: "the file changed on disk while the write was being checked" });
+    const info = this.#replace(s, bytes, { expectSha: diskSha, label, side: "agent", htmlChecked, mdChecked, mdRecord: mdChecked?.record ?? null });
+    // Markdown: published. What the run knows is recorded first, in memory; a failure of the bookkeeping after this (the write log, the
+    // snapshot index, the lease file) is told as a published write that could not be recorded, never as "nothing was written"
+    if (mdChecked) {
+      s.delivered.mdReps = mdChecked.reps;
+      s.delivered.mdPost = info.mdId;
+      s.delivered.mdOutcome = info.mdOutcome;
+      s.delivered.knownSha = newSha;
+      s.mdWrote = s.delivered.batch.batch_id;
+      try {
+        this.#logWrite(s, { from: diskSha, to: newSha, route: "apply", ops: null });
+        s.snapshots.touch(s.delivered.preSha);
+        s.lastWrite = info;
+        this.#renew(s);
+      } catch {
+        s.delivered.mdOutcome = "state_unconfirmed";
+        s.delivered.mdPost = null;
+        this.#mdStore(s).cur = null;
+      }
+      return { ok: true, sha256: newSha, lease_expires_at: s.delivered.lease.expiresAt, outcome: s.delivered.mdOutcome };
+    }
     // what the merge may rely on later: the ops `apply` says it ran (checked against the bytes when a merge needs them), or that it was a commit
     const checked = route === "apply" && s.format === "xlsx" && Array.isArray(ops) && validateOps({ schema: "onionskin.ops/1", ops }).ok; // only the XLSX merge reads them
     this.#logWrite(s, checked ? { from: diskSha, to: newSha, route, ops, partial: partial === true, anchors: s.delivered.batch.untrusted_document_evidence?.anchors || [] } : { from: diskSha, to: newSha, route: route === "apply" ? "apply" : "commit", ops: null });
+    if (mdChecked) {
+      s.delivered.mdReps = mdChecked.reps; // the run's one write: its replacements, in the batch's offsets
+      s.delivered.mdPost = info.mdId; // the record of the file it wrote (null: unconfirmed): what the run ends on, and what Revert checks
+      s.delivered.mdOutcome = info.mdOutcome;
+      s.mdWrote = s.delivered.batch.batch_id; // kept past a lease expiry and a redelivery of the same batch
+    }
     s.delivered.knownSha = newSha;
     // the pre-agent version is what Revert restores: keep it the newest entry so many agent writes cannot prune it
     s.snapshots.touch(s.delivered.preSha);
     s.lastWrite = info;
     this.#renew(s);
-    return { ok: true, sha256: newSha, lease_expires_at: s.delivered.lease.expiresAt };
+    return { ok: true, sha256: newSha, lease_expires_at: s.delivered.lease.expiresAt, ...(mdChecked ? { outcome: info.mdOutcome } : {}) };
   }
 
   /**
@@ -1813,6 +2256,8 @@ export class Sessions extends EventEmitter {
    */
   async agentWriteChecked(key, args, check = htmlWriteOffThread) {
     const s = this.get(key);
+    // a Markdown file: only `apply` with replace_source ops (agentWrite rebuilds the bytes from them); a raw commit is refused here
+    if (s.format === "markdown" && (args.route !== "apply" || !Array.isArray(args.ops))) throw new HttpError(400, MD_ONLY_OPS, { code: "not_for_markdown" });
     if (s.format !== "html") return this.agentWrite(key, args);
     // the cheap refusals first, so a write that cannot land costs no worker; agentWrite makes every one of them again after the await
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
@@ -1890,7 +2335,10 @@ export class Sessions extends EventEmitter {
       const s = this.get(key);
       const run = s.delivered;
       const tasks = [];
-      if (run && s.queued) tasks.push(...s.comments.filter((c) => c.status === "queued").map(reanchorTask));
+      if (run && s.queued) {
+        const cur = s.format === "markdown" ? this.#mdReadOrNull(s) : null;
+        tasks.push(...s.comments.filter((c) => c.status === "queued").map((c) => this.#queuedTask(s, c, cur)));
+      }
       if (run?.batch.instructions?.review && s.review?.batchId === run.batch.batch_id && results && typeof results === "object") tasks.push(cardsTask(results, s.review, run));
       const prepared = run && (tasks.length || this.#wantsOutline(s)) ? await this.#offThread(s.format, { source: { path: s.file }, tasks, outline: this.#wantsOutline(s) }) : null;
       return this.done(key, results, claim, analysis, { ...opts, prepared });
@@ -1905,10 +2353,22 @@ export class Sessions extends EventEmitter {
     if (!results || typeof results !== "object") throw new HttpError(400, "results must be an object");
     const list = Array.isArray(results.results) ? results.results : [];
     const run = s.delivered;
+    // Markdown: a results file names each comment of THIS batch at most once; anything else is refused before any card changes
+    if (s.format === "markdown" && !readOnlyKind(run.batch)) {
+      const mine = new Set(run.batch.instructions.comments.map((c) => c.id));
+      const seenIds = new Set();
+      for (const r of list.slice(0, 1000)) {
+        const id = String(r?.comment_id ?? "");
+        if (!mine.has(id)) throw new HttpError(400, `the results name a comment that is not in this batch (${untrusted(id, 64)}); nothing was changed`, { code: "unknown_result" });
+        if (seenIds.has(id)) throw new HttpError(400, `the results name a comment twice (${untrusted(id, 64)}); nothing was changed`, { code: "duplicate_result" });
+        seenIds.add(id);
+      }
+    }
     let post;
     try {
       post = readCapped(s.file);
     } catch (err) {
+      if (err?.extra?.code === "gone") throw err; // already "cannot read the file: ..." (readCapped)
       throw new HttpError(409, `cannot read the file: ${err.message}`);
     }
     const postSha = sha256(post);
@@ -1938,10 +2398,21 @@ export class Sessions extends EventEmitter {
       found = { flags: [{ code: "checks_failed", severity: "warn", detail: why }], checks: { node: "failed", deep: { status: "skipped", reason: why }, notice: `The checks did not run: ${why}. The file was not verified.` }, changes: null };
     } else found = analyze(pre, post, s.format);
     const flags = [...found.flags];
-    const { checks, changes } = found;
+    const { checks } = found;
+    let { changes } = found;
+    // Markdown: the places are the exact ranges the run's checked writes replaced, in the file it leaves (src/markdown.js changedRanges:
+    // arithmetic from the applied replacements, one per replaced range), never a comparison of blocks. A file changed any other way keeps
+    // the comparison the analysis made.
+    if (s.format === "markdown" && postSha === (run.knownSha ?? run.preSha)) {
+      const text = run.mdReps ? mdTextOf("markdown", post) : null;
+      if (text != null) {
+        const all = changedRanges([{ reps: run.mdReps }]);
+        changes = { items: all.slice(0, 300).map((r) => ({ kind: r.to > r.from ? "changed" : "removed", from: r.from, to: r.to, text: untrusted(text.slice(r.from, r.to), 160) })), truncated: all.length > 300 };
+      }
+    }
     // the file must be what this server last wrote (apply/commit) or delivered; anything else changed it behind the lease (a direct save by
     // the agent's own library, or another program): the lost-update class the lease cannot see. Error severity, so Revert is recommended.
-    if (postSha !== (run.knownSha ?? run.preSha)) flags.push({ code: "file_changed_outside_onionskin", severity: "error", detail: directSave(run.local) });
+    if (postSha !== (run.knownSha ?? run.preSha)) flags.push({ code: "file_changed_outside_onionskin", severity: "error", detail: s.format === "markdown" ? MD_DIRECT_SAVE : directSave(run.local) });
     if (run.outsideChange) flags.push({ code: "outside_change", severity: "warn", detail: run.local ? (run.outsideChange.copyName ? `The file was changed outside Onionskin while the change was made on this Mac; the changed version was saved as a copy: ${run.outsideChange.copyName}` : "The file was changed outside Onionskin while the change was made on this Mac; the change was not applied.") : run.outsideChange.copyName ? `The file was changed outside Onionskin while the agent worked; the agent's version was saved as a copy: ${run.outsideChange.copyName}` : "The file was changed outside Onionskin while the agent worked; the agent's write was not applied." });
     for (const p of run.applyProblems || []) flags.push({ code: p.status === "skipped_protected" ? "apply_skipped_protected" : "apply_not_applied", severity: p.status === "skipped_protected" ? "info" : "warn", op: p.op, status: p.status, ...(p.code ? { reason_code: p.code } : {}), detail: p.reason });
     const byId = new Map(s.comments.map((c) => [c.id, c]));
@@ -1974,6 +2445,38 @@ export class Sessions extends EventEmitter {
     for (const c of run.batch.instructions.comments) {
       if (!entries.some((e) => e.comment_id === c.id)) flags.push({ code: "no_result_for_comment", severity: "warn", comment_id: c.id });
     }
+    // Markdown: "done" stands only when the run's checked write replaced exactly that comment's delivered range (on the batch's revision);
+    // otherwise (another copy changed, a raw apply under the comment's name, nothing written) the comment stays open, with the reason
+    if (s.format === "markdown") {
+      const ev = run.batch.untrusted_document_evidence?.anchors || [];
+      // the file at done must be exactly the confirmed record of the run's write (a new inode with the same bytes, or a write that could
+      // not be confirmed, closes nothing)
+      const nowRec = run.mdReps ? this.#mdReadOrNull(s) : null;
+      const confirmedEnd = !!run.mdReps && run.mdOutcome === "confirmed" && !!run.mdPost && nowRec?.id === run.mdPost;
+      if (run.mdOutcome && run.mdOutcome !== "confirmed") flags.push({ code: "save_unconfirmed", severity: "error", detail: run.mdOutcome === "durability_unconfirmed" ? MD_DURABILITY_RUN : run.mdOutcome === "state_unconfirmed" ? MD_STATE_RUN : MD_CONTENT_RUN });
+      for (const u of updates) {
+        if (u.status !== "done") continue;
+        const ic = run.batch.instructions.comments.find((x) => x.id === u.c.id);
+        const a = ic ? ev.find((x) => x.id === ic.anchor_id) : null;
+        const l = a?.resolved && a.locator?.format === "markdown" && a.locator.sha256 === run.batch.base_sha256 ? a.locator : null;
+        // a replacement on exactly its delivered range, a net change there (replacements next to each other that cancel do not count),
+        // a comment the batch did not limit to a decline, and the file still what the checked write left (no outside save since)
+        const hit = !!l && ic.reply_with !== "decline" && confirmedEnd && postSha === run.knownSha && mdNetChange(run.mdReps, l, pre, post);
+        if (hit) continue;
+        // open again, with the reason and the agent's own note (an answer it gave stays readable on the card and in the run)
+        u.status = "draft";
+        u.reopen = MD_NOT_DONE;
+        const e = entries.find((x) => x.comment_id === u.c.id);
+        if (e) Object.assign(e, { status: "declined", note: u.result ? `${MD_NOT_DONE} Agent: ${u.result}` : MD_NOT_DONE });
+        flags.push({ code: "done_without_change_at_place", severity: "warn", comment_id: u.c.id });
+      }
+      // a comment of the batch with no answer at all (a --partial reply that left it out): open again, visibly, never "sent" with no batch
+      for (const ic of run.batch.instructions.comments) {
+        const c = byId.get(ic.id);
+        if (!c || entries.some((e) => e.comment_id === ic.id) || updates.some((u) => u.c === c)) continue;
+        updates.push({ c, status: "draft", result: undefined, reopen: MD_NO_ANSWER });
+      }
+    }
     // style.json changed by something else while this batch was out (an agent with a shell, say): already put back by src/style.js
     this.#guardFlags(run, flags);
     if (results.voice_draft !== undefined) flags.push({ code: "voice_draft_not_allowed", severity: "warn" }); // only a voice batch takes a draft; nothing is stored
@@ -1986,9 +2489,14 @@ export class Sessions extends EventEmitter {
       summary: userText(typeof results.summary === "string" ? results.summary : "", 400), results: entries,
       // text in the document that tried to instruct the agent: agent-supplied, so sanitized like other untrusted text (5 items of 200 chars)
       ...(ignored.length ? { documentInstructionsIgnored: ignored, ...(ignoredMore ? { documentInstructionsIgnoredMore: true } : {}) } : {}), flags: cleanFlags, checks,
-      revertRecommended: cleanFlags.some((f) => f.severity === "error"),
+      revertRecommended: cleanFlags.some((f) => f.severity === "error") && !(s.format === "markdown" && (postSha !== (run.knownSha ?? run.preSha) || (run.mdReps && !this.#mdRunEnd(run, postSha)))),
       changes,
       preSha: run.preSha, postSha, reverted: false,
+      // Markdown: the file at done is not what the checked writes left (an outside save after them): Revert would erase that save, so
+      // it is off for this run, with the sentence the page shows instead of the button
+      ...(s.format === "markdown" && (postSha !== (run.knownSha ?? run.preSha) || (run.mdReps && !this.#mdRunEnd(run, postSha))) ? { noRevert: MD_NO_REVERT } : {}),
+      // Markdown: the record this run ends on; Revert checks it, not only the bytes (#replace)
+      ...(s.format === "markdown" ? { postRev: this.#mdRunEnd(run, postSha) } : {}),
       // a run on this Mac (src/local.js): the page titles it "Done on this Mac"; its note comes back to the box if the person reverts it
       ...(run.local ? { by: "local", localNote: userText(run.batch.instructions?.overall_note || "") } : {}),
     };
@@ -1998,6 +2506,10 @@ export class Sessions extends EventEmitter {
       u.c.status = u.status;
       u.c.result = u.result;
       if (u.question) u.c.question = u.question;
+      if (u.reopen) {
+        delete u.c.batchId; // open again: the next Send carries it
+        u.c.reopened = u.reopen; // the reason the card shows (a draft save keeps it: #draft)
+      } else delete u.c.reopened;
     }
     if (run.accept) {
       this.#settleCards(s, run, Array.isArray(results.accepted) ? results.accepted : []);
@@ -2024,7 +2536,9 @@ export class Sessions extends EventEmitter {
     this.#writeLease(s);
     this.#deliverIfPolled(s);
     this.#changed(s, "reload");
-    return { ok: true, flags: cleanFlags, checks };
+    // Markdown: the outcome of each comment as the server decided it (the CLI prints these, never its own guess)
+    // Markdown: each card's final state as the server left it (done, declined, asked, or a reopened draft), for the CLI to print as it is
+    return { ok: true, flags: cleanFlags, checks, ...(s.format === "markdown" ? { outcomes: updates.map((u) => ({ comment_id: u.c.id, status: u.c.status, ...(u.reopen ? { reopened: true } : {}) })) } : {}) };
   }
 
   /**
@@ -2103,6 +2617,16 @@ export class Sessions extends EventEmitter {
     return s;
   }
 
+  /**
+   * The task that moves a queued comment onto the file the agent leaves. Markdown: its place stands only when the file is still the exact
+   * revision the comment was made on (the run wrote nothing); after any write it keeps its words and goes out without a place.
+   */
+  #queuedTask(s, c, cur) {
+    if (s.format !== "markdown") return reanchorTask(c);
+    const on = !!cur && Sessions.mdOn(c.anchor?.location, cur.sha, cur.id);
+    return { op: "build", anchor: on ? c.anchor : { ...c.anchor, location: null }, pin: false };
+  }
+
   /** Comments queued while the agent worked become the next pending batch, anchored on the file the agent leaves. Pure planning: touches no session state; re-anchoring problems are pushed onto `flags`. */
   // `prepared`: the anchor worker's answer for the same tasks (doneAsync); without it the anchors are moved on this thread.
   #planQueued(s, post, postSha, flags, prepared = null) {
@@ -2110,16 +2634,20 @@ export class Sessions extends EventEmitter {
     if (s.queued) {
       const queued = s.comments.filter((c) => c.status === "queued");
       if (queued.length || s.queuedNote) {
-        const work = this.#results(s.format, post, postSha, queued.map(reanchorTask), prepared);
+        // Markdown: the record the file is now, when it is the bytes this run ends on (else nothing queued has a place)
+        let cur = s.format === "markdown" ? this.#mdReadOrNull(s) : null;
+        if (cur && cur.sha !== postSha) cur = null;
+        const work = this.#results(s.format, post, postSha, queued.map((c) => this.#queuedTask(s, c, cur)), prepared);
         const read = work.read;
         if (!read?.ok) flags.push({ code: "queued_reanchor_failed", severity: "warn", detail: read?.invalid || read?.cap || "the anchors could not be worked out in time" });
         const durables = new Map();
         queued.forEach((c, i) => {
-          const r = work.at(i);
+          const r = s.format === "markdown" && work.at(i) ? { ...work.at(i), rev: cur?.id ?? null } : work.at(i);
           if (read?.ok && !usable(r)) flags.push({ code: "queued_reanchor_failed", severity: "warn", comment_id: c.id, detail: r?.error ?? "the anchor could not be worked out in time" });
           durables.set(c.id, read?.ok && usable(r) ? r : weakDurable(s.format, c.anchor));
         });
-        const batch = buildBatch({ file: s.file, format: s.format, baseSha: postSha, note: s.queuedNote, comments: queued.map((c) => ({ ...c, durable: durables.get(c.id) })), edits: [], style: styleNote(), guide: voiceGuide() });
+        const batch = buildBatch({ file: s.file, format: s.format, baseSha: postSha, note: s.queuedNote, comments: queued.map((c) => ({ ...c, durable: durables.get(c.id) })), edits: [], style: styleNote(), guide: voiceGuide(), mdText: mdTextOf(s.format, post) });
+        if (s.format === "markdown") this.#mdTagBatch(s, batch, cur?.id ?? null);
         plan = { queued, durables, batch };
       }
     }
@@ -2137,6 +2665,7 @@ export class Sessions extends EventEmitter {
     if (s.closed) throw new HttpError(409, "session closed", { code: "closed" });
     if (!REVIEW_KINDS.includes(kind)) throw new HttpError(400, `kind must be one of ${REVIEW_KINDS.join(", ")}`, { code: "bad_kind" });
     if (s.format === "html") throw new HttpError(409, "Review first is not available for HTML files in this version. Comment on the page and press Send.", { code: "not_for_html" }); // PLAN-html 2a: the page hides the button
+    if (s.format === "markdown") throw new HttpError(409, "Review first is not available for Markdown files in this version. Select words in the preview, comment and press Send.", { code: "not_for_markdown" }); // the page hides the button
     if (s.delivered || s.pending) throw new HttpError(409, s.delivered?.local ? "Wait for the change on this Mac to finish, then try again." : "Wait for the agent to finish, then try again.", { code: "busy" });
     let disk;
     try {
@@ -2472,29 +3001,46 @@ export class Sessions extends EventEmitter {
    * Ceiling: after a lease expiry the redelivered batch starts from these partial bytes, so Revert on ITS run returns to the partial state.
    */
   #recordMidRun(s, summary, code) {
+    // Markdown: a run that published a write is always recorded, also when the file cannot be read now or holds the earlier bytes again
+    // (the uncertainty is told before any early exit)
+    const wrote = s.format === "markdown" && !!s.delivered.mdReps;
     let disk = null;
     try {
       disk = readCapped(s.file);
     } catch {
-      return false;
+      if (!wrote) return false;
     }
-    if (sha256(disk) === s.delivered.preSha) return false;
-    try {
-      s.snapshots.add(disk, "after agent (withdrawn)");
-    } catch {} // a full disk must not block withdrawing; Revert will say the version is not stored
-    const postSha = sha256(disk);
+    if (!wrote && sha256(disk) === s.delivered.preSha) return false;
+    if (disk) {
+      try {
+        s.snapshots.add(disk, "after agent (withdrawn)");
+      } catch {} // a full disk must not block withdrawing; Revert will say the version is not stored
+    }
+    const postSha = disk ? sha256(disk) : null;
     const flags = [{ code, severity: "warn" }];
     // the same rule as done: bytes this server never wrote or delivered came from a direct save, not the agent's apply or commit
-    if (postSha !== (s.delivered.knownSha ?? s.delivered.preSha)) flags.push({ code: "file_changed_outside_onionskin", severity: "error", detail: directSave(s.delivered.local) });
+    const outside = postSha !== (s.delivered.knownSha ?? s.delivered.preSha);
+    if (s.format === "markdown" && !disk) flags.push({ code: "save_unconfirmed", severity: "error", detail: MD_UNREADABLE_RUN });
+    if (outside) flags.push({ code: "file_changed_outside_onionskin", severity: "error", detail: s.format === "markdown" ? MD_DIRECT_SAVE : directSave(s.delivered.local) });
+    // Markdown, as at done: Revert would erase the outside save, so it is off for this run; a write that was published but not confirmed
+    // is told, and has no record Revert could check
+    const unconfirmed = s.format === "markdown" && s.delivered.mdOutcome && s.delivered.mdOutcome !== "confirmed";
+    if (unconfirmed) flags.push({ code: "save_unconfirmed", severity: "error", detail: s.delivered.mdOutcome === "durability_unconfirmed" ? MD_DURABILITY_RUN : s.delivered.mdOutcome === "state_unconfirmed" ? MD_STATE_RUN : MD_CONTENT_RUN });
+    // ... and Revert is offered only with a usable post-write record of the file as it is now
+    const noRevert = s.format === "markdown" && (outside || unconfirmed || !disk || !this.#mdRunEnd(s.delivered, postSha));
     s.activity.unshift({
       id: `r_${crypto.randomBytes(4).toString("hex")}`, kind: "agent", at: this.now(), batchId: s.delivered.batch.batch_id,
       summary, results: [], flags, checks: null,
-      revertRecommended: true, changes: null, preSha: s.delivered.preSha, postSha, reverted: false,
+      revertRecommended: !noRevert, changes: null, preSha: s.delivered.preSha, postSha, reverted: false,
+      ...(noRevert ? { noRevert: MD_NO_REVERT } : {}),
+      ...(s.format === "markdown" ? { postRev: this.#mdRunEnd(s.delivered, postSha) } : {}),
       ...(s.delivered.local ? { by: "local", localNote: userText(s.delivered.batch.instructions?.overall_note || "") } : {}),
     });
-    addUpdate(s, { kind: s.delivered.local ? "local" : "agent", before: s.delivered.preSha, after: postSha, summary }, this.now());
-    s.histTip = postSha;
-    s.baseSha = postSha;
+    if (postSha) {
+      addUpdate(s, { kind: s.delivered.local ? "local" : "agent", before: s.delivered.preSha, after: postSha, summary }, this.now());
+      s.histTip = postSha;
+      s.baseSha = postSha;
+    }
     return true;
   }
 
@@ -2523,23 +3069,41 @@ export class Sessions extends EventEmitter {
     if (s.delivered) throw new HttpError(423, s.delivered.local ? "a change is being made on this Mac" : "the agent is working", { code: "locked" });
     const entry = s.activity.find((a) => a.id === activityId && a.kind === "agent");
     if (!entry || entry.reverted) throw new HttpError(404, "nothing to revert");
+    if (entry.noRevert) throw new HttpError(409, entry.noRevert, { code: "changed_outside" });
     const mac = entry.by === "local"; // a change made on this Mac: no agent was involved, so the words do not say one was
     const latest = s.activity.find((a) => a.kind === "agent" && !a.reverted);
     if (latest !== entry) throw new HttpError(409, mac ? "only the latest change can be reverted" : "only the latest agent run can be reverted", { code: "not_latest" });
     const disk = readCapped(s.file);
     if (sha256(disk) !== entry.postSha) throw new HttpError(409, mac ? "the file changed after the change was made; revert refused" : "the file changed after the agent finished; revert refused", { code: "changed_since" });
+    // Markdown: the same bytes are not enough; the file must still be the revision the run ended on (no outside save in between, even one
+    // that came back to these bytes)
+    // (the record itself is checked by #replace, the one check of every Markdown write: sha256 and stamp of entry.postRev)
+    // ... and it must be the CURRENT record: an intervening file seen since (even one whose original inode came back) refuses
+    if (s.format === "markdown" && (!this.#mdRec(s, entry.postRev) || this.#mdReadOrNull(s)?.id !== entry.postRev)) throw new HttpError(409, MD_REVERT_CHANGED, { code: "changed_since" });
     if (!s.snapshots.has(entry.preSha)) throw new HttpError(410, mac ? "the version before this change is no longer stored" : "the pre-agent version is no longer stored");
     const pre = s.snapshots.read(entry.preSha);
     // an HTML file: a revert restores the version before the run, by identity (the stored bytes must hash to the run's preSha), never
     // through the write check: that version was the file before (opened by the person or written after its own check), and checking it
     // against the run's result would refuse undoing a run that removed active content (the revert would "add" it back)
     let htmlChecked = null;
-    if (s.format === "html") {
+    let mdChecked = null;
+    if (s.format === "html" || s.format === "markdown") {
       if (sha256(pre) !== entry.preSha) throw new HttpError(410, mac ? "the version before this change is no longer stored" : "the pre-agent version is no longer stored");
-      htmlChecked = { from: entry.postSha, to: entry.preSha };
+      if (s.format === "html") htmlChecked = { from: entry.postSha, to: entry.preSha };
+      else mdChecked = { from: entry.postSha, to: entry.preSha }; // the exact bytes before the run, by identity
     }
-    this.#replace(s, pre, { expectSha: entry.postSha, label: "before revert", htmlChecked }); // a revert is a new version
-    s.snapshots.add(pre, "reverted");
+    let revInfo;
+    try {
+      revInfo = this.#replace(s, pre, { expectSha: entry.postSha, label: "before revert", htmlChecked, mdChecked, mdRecord: s.format === "markdown" ? entry.postRev : null }); // a revert is a new version
+    } catch (err) {
+      if (err?.extra?.code === "md_changed") throw new HttpError(409, MD_REVERT_CHANGED, { code: "changed_since" });
+      throw err;
+    }
+    if (s.format === "markdown") {
+      try {
+        s.snapshots.add(pre, "reverted"); // already stored (it is the version restored): a failure here changes nothing on disk
+      } catch {}
+    } else s.snapshots.add(pre, "reverted");
     s.baseSha = entry.preSha;
     addUpdate(s, { kind: "revert", before: entry.postSha, after: entry.preSha, local: mac }, this.now());
     s.histTip = entry.preSha;
@@ -2549,7 +3113,9 @@ export class Sessions extends EventEmitter {
       if (c.batchId === entry.batchId && ["done", "declined", "asked"].includes(c.status)) {
         if (c.status === "asked") delete c.question; // asked about a version that no longer exists
         c.status = "draft";
-        delete c.result;
+        // Markdown: the agent's note stays on the reopened card, with the reason (the run keeps it too)
+        if (s.format === "markdown") c.reopened = MD_REVERTED; // with or without a note of the agent's
+        else delete c.result;
         delete c.batchId;
         if (entry.by === "local") c.skipLocal = true; // the person undid what this Mac did: the next Send asks the agent
       }
@@ -2567,12 +3133,26 @@ export class Sessions extends EventEmitter {
       const ids = new Set(s.pending.instructions.comments.map((c) => c.id));
       const cs = s.comments.filter((c) => ids.has(c.id));
       // moved onto the restored version by the anchor worker (revertAsync) or here; one whose work did not finish goes out weaker
-      const work = this.#results(s.format, pre, entry.preSha, cs.map(reanchorTask), prepared);
-      if (work.read?.ok) cs.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : work.at(i)?.error ? null : weakDurable(s.format, c.anchor)));
-      s.pending = buildBatch({ file: s.file, format: s.format, baseSha: entry.preSha, note: s.pending.instructions.overall_note, comments: cs, edits: [], style: styleNote(), guide: voiceGuide() });
+      if (s.format === "markdown") cs.forEach((c) => (c.durable = null)); // Revert is a write: no place of an earlier revision is valid after it (words kept, decline)
+      else {
+        const work = this.#results(s.format, pre, entry.preSha, cs.map(reanchorTask), prepared);
+        if (work.read?.ok) cs.forEach((c, i) => (c.durable = usable(work.at(i)) ? work.at(i) : work.at(i)?.error ? null : weakDurable(s.format, c.anchor)));
+      }
+      s.pending = buildBatch({ file: s.file, format: s.format, baseSha: entry.preSha, note: s.pending.instructions.overall_note, comments: cs, edits: [], style: styleNote(), guide: voiceGuide(), mdText: mdTextOf(s.format, pre) });
       for (const c of cs) c.batchId = s.pending.batch_id;
+      this.#mdTagBatch(s, s.pending, revInfo?.mdId ?? null);
     }
-    s.activity.unshift({ id: `r_${crypto.randomBytes(4).toString("hex")}`, kind: "revert", at: this.now(), summary: mac ? "Reverted to the version before this change." : "Reverted to the version before the agent's run.", flags: [], results: [], postSha: entry.preSha });
+    s.activity.unshift({ id: `r_${crypto.randomBytes(4).toString("hex")}`, kind: "revert", at: this.now(), summary: mac ? "Reverted to the version before this change." : "Reverted to the version before the agent's run.", flags: s.format === "markdown" && revInfo?.mdOutcome && revInfo.mdOutcome !== "confirmed" ? [{ code: "save_unconfirmed", severity: "error", detail: MD_REVERT_UNCONFIRMED }] : [], results: [], postSha: entry.preSha });
+    // Markdown: the revert is published; a failure to record it (the session file) is told on its entry, never as "not reverted"
+    if (s.format === "markdown") {
+      try {
+        this.#changed(s, "reload");
+      } catch {
+        s.activity[0].flags = [...s.activity[0].flags, { code: "save_unconfirmed", severity: "error", detail: MD_REVERT_UNCONFIRMED }];
+        this.#mdStore(s).cur = null;
+      }
+      return s;
+    }
     this.#changed(s, "reload");
     return s;
   }
@@ -2596,8 +3176,10 @@ export class Sessions extends EventEmitter {
    * Returns the same {diskSha, baseSha, bytes} as diskCheck.
    */
   loadForPage(key) {
-    const out = this.diskCheck(key);
-    const s = this.get(key);
+    const s0 = this.get(key);
+    // Markdown: the bytes and the record they are, read together (the page's anchors and splice name the record's id)
+    const out = s0.format === "markdown" ? (({ bytes, sha, id }) => ({ diskSha: sha, baseSha: s0.baseSha, bytes, mdRev: id }))(this.#mdRead(s0)) : this.diskCheck(key);
+    const s = s0;
     if (!s.delivered && !s.closed && s.histTip && out.diskSha !== s.histTip) {
       try {
         s.snapshots.add(out.bytes, "outside change");
@@ -2759,7 +3341,7 @@ export class Sessions extends EventEmitter {
     if (s.format === "html") return { baseSha: sha256(readCapped(s.file)), format: s.format, anchors: Object.fromEntries(this.#resolveTask(s).comments.map((c) => [c.id, { method: "none" }])), view: null };
     const bytes = readCapped(s.file);
     const baseSha = sha256(bytes);
-    const r = anchorWork({ format: s.format, bytes, sha: baseSha, tasks: [this.#resolveTask(s)], budget: SCAN_BUDGET });
+    const r = anchorWork({ format: s.format, bytes, sha: baseSha, tasks: [this.#resolveTask(s, s.format === "markdown" ? this.#mdReadOrNull(s) : null)], budget: SCAN_BUDGET });
     if (!r.read.ok) throw r.read.cap ? new CapError(r.read.cap) : new Error(r.read.invalid);
     if (r.results[0]?.error) throw new Error(r.results[0].error);
     return { baseSha, format: s.format, ...r.results[0] };
@@ -2771,7 +3353,7 @@ export class Sessions extends EventEmitter {
    */
   async resolveAllAsync(key) {
     const s = this.get(key);
-    const task = this.#resolveTask(s);
+    const task = this.#resolveTask(s, s.format === "markdown" ? this.#mdReadOrNull(s) : null);
     if (s.format === "html") await this.#htmlDrafts(s, task);
     const r = await anchorsOffThread({ format: s.format, source: { path: s.file }, tasks: [task] });
     if (r.ok && r.r.read.cap) throw new CapError(r.r.read.cap);
@@ -2805,7 +3387,21 @@ export class Sessions extends EventEmitter {
     }
   }
 
-  #resolveTask(s) {
+  #resolveTask(s, mdCur = null) {
+    if (s.format === "markdown") {
+      // Markdown: every comment, drafts too, has a place only on the exact record it was made on (the file's bytes and identity on disk,
+      // read now); any other resolves as "none", keeping its words
+      const mdSha = mdCur?.sha ?? null;
+      const rev = mdCur?.id ?? null;
+      const mdText = mdCur ? mdTextOf("markdown", mdCur.bytes) ?? "" : ""; // a draft's place is shown only where its evidence holds
+      const comments = [];
+      for (const c of s.comments) {
+        const l = c.anchor?.location;
+        const d = Sessions.mdOn(c.durable, mdSha, rev) ? c.durable : Sessions.mdOn(l, mdSha, rev) && Number.isSafeInteger(l.from) && Number.isSafeInteger(l.to) && evidenceHolds(c.anchor, mdText) ? { format: "markdown", kind: c.anchor.hitKind ? "block" : "text", from: l.from, to: l.to, sha256: mdSha, rev, quote: "" } : null;
+        comments.push({ id: c.id, durable: d });
+      }
+      return { op: "resolveAll", comments, view: s.view };
+    }
     return { op: "resolveAll", comments: s.comments.filter((c) => c.durable).map((c) => ({ id: c.id, durable: c.durable })), view: s.view };
   }
 }

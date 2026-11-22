@@ -18,12 +18,21 @@ import { useQuickPreview } from "./QuickChange.jsx";
 import { placeChip, textUnder } from "./chip-place.js";
 import { noteAlone, ridesAlong } from "./quick-send.js";
 import { COMMENTS_MAX, TOO_MANY_COMMENTS } from "../../src/retain.js"; // pure, no imports: the server refuses the 501st comment in the same words
+/** What a Quick ask box says when the file changed under it: its place may be another one now, so it makes no comment any more. */
+const STALE = "The file changed. Close this and select the words again.";
+const STALE_WORDS = "The file changed, so these words are no longer tied to a place. Copy them, press Esc to close this, then select the words again.";
+/** What a Quick ask box says on a tab that became read-only while it held words: nothing can make them a comment here, and they stay in the box. */
+const RO_HELD = "This tab is read-only now. Your words stay in this box until you press Esc: copy them, then ask from the tab that holds the file.";
 import { useStamps } from "./Stamps.jsx";
 import { BUILT_IN, needsOneSentence, selectionShape, stampComment, suggestEligible } from "./stamps.js";
 import { AHEAD_MS, NONE_WORDS, aheadKey, cardFor, reusableAhead, useRefusal } from "./suggest.js";
 import { MOD, isEditable, isQuickAsk } from "./keys.js";
 import { createWriteIn } from "./writein-live.js";
 import { HtmlHost } from "./HtmlHost.jsx";
+import { MarkdownHost } from "./MarkdownHost.jsx";
+import { MD_NOT_UTF8, readMarkdown } from "../../src/markdown.js"; // pure: the page reads a Markdown file as the server does, offset for offset
+import { MD_LOCKED_EDIT, MD_OFFER_STALE, MD_PARKED_EDIT, MD_RO_EDIT, MD_SAVE_UNCONFIRMED, draftRefusal, draftSplice, editability, draftEolOf, fromTextarea, mdDraftDirty, mdDraftSource, mdSettle, newDraftId, toTextarea } from "./md-edit.js";
+import { sha256hex } from "./writein.js";
 import { fetchHtmlView, htmlLocFromResolved, htmlMarks, stamped } from "./html-host.js";
 import { setRescueSnapshot } from "./ErrorBoundary.jsx";
 
@@ -47,6 +56,18 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const [doc, setDoc] = useState({ file: null, v: 0 });
   const [bar, setBar] = useState(null);
   const [hostTick, setHostTick] = useState(0);
+  // Markdown (MarkdownHost.jsx): Preview or Edit, and the person's typed draft {base (the file's sha256 it was typed on), value (the
+  // textarea's text)}. Held here, not in the host, so a reload of the file does not lose it: a draft on another version than the file
+  // shown is parked (kept, copyable, neither shown nor sent).
+  const [mdView, setMdView] = useState("preview");
+  const [mdDraft, setMdDraft] = useState(null);
+  // Markdown: the text a Send submitted, from the Send until its reload has settled ({value, sha, answered, confirmed}); the person's
+  // text is checked against it too (web/src/md-edit.js mdDraftDirty, mdSettle)
+  const [mdInflight, setMdInflight] = useState(null);
+  const mdDraftRef = useRef(null);
+  mdDraftRef.current = mdDraft;
+  const mdDocRef = useRef(null);
+  const mdDirtyRef = useRef(false);
   const [resolved, setResolved] = useState({}); // comment id -> {method, text, loc|null}
   const [paint, setPaint] = useState({ items: [], chip: null }); // overlay drawings, in overlay-local pixels
   const [chipSel, setChipSel] = useState(null);
@@ -105,6 +126,18 @@ export default function App({ sid, initial, product, settings, suggest }) {
   const overlayRef = useRef(null);
   const sessionRef = useRef(session);
   const commentsRef = useRef(comments);
+  /** No more comments fit (src/retain.js COMMENTS_MAX). The one check: addComment, a Quick ask opened at the limit, and one that would close at it. */
+  const listFull = () => commentsRef.current.length >= COMMENTS_MAX;
+  /**
+   * A box closes with its words only when a comment took them. addComment makes none at the comment limit and none on a tab that became
+   * read-only (another tab took over editing), so there the box stays open with the words and its own hint says why (QuickAsk.jsx `held`);
+   * the reason when it is held, else null. `words`: what would become the comment (a stamp's words with an empty box too).
+   * Asked at every attempt and never remembered: once a comment is sent or deleted, or editing is back, the same press goes through.
+   * Nothing is handed over or turned into a comment for the person: the words stay where they typed them (the handover in `merge` is as it was).
+   * Not covered, and as it was: a box whose place is stale (`blocked`: its textarea is off and its hint says to close it).
+   */
+  const whyHeld = () => (roRef.current ? RO_HELD : listFull() ? TOO_MANY_COMMENTS : null);
+  const quickHeld = (q, words = q?.text?.trim()) => (!!q && !q.blocked && !!words ? whyHeld() : null);
   const sendingRef = useRef(false); // true while a Send is in flight (send() reads it, not the state, so a retry in the same tick sees it)
   const sendAgainRef = useRef(false); // a Quick ask landed during a Send: send again when that one finishes
   const sendFnRef = useRef(null);
@@ -187,6 +220,9 @@ export default function App({ sid, initial, product, settings, suggest }) {
   quickRef.current = quick;
   const stampsCtl = useStamps();
   const stampDirtyRef = useRef(false);
+  const keptHtmlRef = useRef(false); // unsent HTML text edits kept after a refused reload, until Done (HtmlHost.jsx)
+  keptHtmlRef.current = (doc.html?.kept?.length ?? 0) > 0;
+  const stampDraftRef = useRef(null); // a stamp edit that was not saved when its box closed: the next box opens on it (Stamps.jsx)
   const guideDirtyRef = useRef(false);
   freshRef.current = fresh;
 
@@ -219,16 +255,37 @@ export default function App({ sid, initial, product, settings, suggest }) {
         v = await fetchHtmlView(sid, { plain });
       } catch (e) {
         if (e.code !== "not_utf8" && e.code !== "encoding") throw e;
-        return setDoc((d) => ({ file: null, html: { error: e }, v: d.v + 1 }));
+        // the viewer goes with the refusal, and the text edits that were not sent would go with it: they are kept (also the ones that
+        // could not be placed, and deletions), shown on the refusal and above the page once it loads again, until the person says Done
+        let kept = [];
+        try {
+          const h = hostRef.current;
+          await h?.flush?.(); // the last keystrokes are read before the viewer goes
+          kept = [...(h?.edits?.() ?? []), ...(h?.lostEdits?.() ?? [])].map((x) => String(x?.newText ?? "") || "(text deleted)");
+        } catch {
+          kept = [];
+        }
+        return setDoc((d) => ({ file: null, html: { error: e, kept: [...(d.html?.kept ?? []), ...kept] }, v: d.v + 1 }));
       }
       mark("os:file-fetched");
       loadedShaRef.current = v.version;
-      return setDoc((d) => ({ file: null, html: { ...v, forced: plain }, v: d.v + 1 }));
+      return setDoc((d) => ({ file: null, html: { ...v, forced: plain, kept: d.html?.kept }, v: d.v + 1 }));
     }
-    const { buf, sha } = await api(`/api/file?s=${sid}`, { raw: true, timeout: SEND_MS });
+    const { buf, sha, rev } = await api(`/api/file?s=${sid}`, { raw: true, timeout: SEND_MS });
     mark("os:file-fetched");
     measure("os:file-fetch", "os:file-start", "os:file-fetched");
     loadedShaRef.current = sha;
+    if (sessionRef.current.format === "markdown") {
+      // a Markdown file: its bytes read here as the server reads them (valid UTF-8 only, src/markdown.js), shown as a preview; nothing is
+      // typed into it in this version, so nothing in the page is dirty
+      let md;
+      try {
+        md = { tree: readMarkdown(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buf)), version: sha, rev: /^[0-9a-f]{24}$/.test(rev || "") ? rev : null }; // rev: the server's opaque record id (src/session.js)
+      } catch (e) {
+        md = { error: { message: e instanceof TypeError ? MD_NOT_UTF8 : `Onionskin cannot read this file: ${e.message}.` } };
+      }
+      return setDoc((d) => ({ file: null, md, v: d.v + 1 }));
+    }
     dirtyRef.current = false;
     setChanges([]);
     setDoc((d) => ({ file: new File([buf], sessionRef.current.name), v: d.v + 1 }));
@@ -415,7 +472,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       );
       merge(view);
       // an open Quick ask holds a place from the old file: keep the typed text, but ask for a fresh selection
-      if (quickRef.current && !quickRef.current.blocked) setQuick((q) => (q ? { ...q, blocked: "The file changed. Close this and select the words again." } : q));
+      if (quickRef.current && !quickRef.current.blocked) setQuick((q) => (q ? { ...q, blocked: q.text.trim() ? STALE_WORDS : STALE, stale: true } : q));
       setFresh(true);
       clearTimeout(freshTimer.current);
       freshTimer.current = setTimeout(() => setFresh(false), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? REDUCED_FRESH_MS : FRESH_MS);
@@ -460,6 +517,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
       })
     );
     offsRef.current.push(h.onSelectionChange((sel) => showChip(sel)));
+    // a Markdown preview: the explicit "comment on the whole block" for a selection that is not one exact range (MarkdownHost.jsx)
+    if (h.format === "markdown") offsRef.current.push(h.onPick((p) => mdPickRef.current?.(p)));
     if (h.format === "html") {
       // the viewer's own clicks: Comment and Pin modes pick an element (or, dragged in Comment mode, a text); a blocked action (Enter, a
       // new element, a read-only part) opens the comment box on its element (R17); edits that could not be placed again say so
@@ -483,6 +542,34 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (ro) setMode("edit");
   }, [ro, hostTick]);
 
+  // Markdown: every load of the file (a remount of the preview) ends the draft places made so far: the draft gets a new state id and
+  // comments made on it lose their place for good (they keep their words)
+  useEffect(() => {
+    if (!doc.v || !mdDraftRef.current || mdDraftRef.current.parked) return;
+    setMdDraft((d) => (d && !d.parked ? { ...d, gen: newDraftId() } : d));
+    dropDraftPlaces();
+  }, [doc.v]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Markdown: a draft that is not on the exact revision it was typed on is parked for good (until Discard); the preview shows the file
+  useEffect(() => {
+    if (!mdDraft || mdDraft.parked || !doc.v) return;
+    const b = doc.md;
+    if (!b) return; // still loading
+    // a confirmed Send's draft: cleared when the reload shows exactly the bytes the receipt claims and the draft is still the submitted
+    // text; text changed after Send (an undo, more keys) becomes a draft on the new record; other bytes: kept, parked, with the warning
+    const act = mdSettle({ draft: mdDraft, inflight: mdInflight, doc: b });
+    if (act.kind === "none" || act.kind === "wait") return;
+    if (mdInflight) setMdInflight(null); // the Send's reload has settled
+    if (act.kind === "clear") return setMdDraft(null);
+    if (act.kind === "rebase") return setMdDraft({ ...mdDraft, base: b.version, baseRev: b.rev, gen: newDraftId() }); // (its places were dropped at the load)
+    setMdDraft({ ...mdDraft, parked: true, ...(act.unconfirmed ? { unconfirmed: true } : {}) });
+    dropDraftPlaces(); // a parked draft is never written: comments made on it have no place
+    setMdView("preview");
+  }, [mdDraft, mdInflight, doc.md, doc.v]);
+  // Markdown: no comment is ever moved from one version to another. A comment made on a draft stands only while the draft is exactly the
+  // one it was made on: a change of the draft leaves it without a place (onMdDraft), and the Send that writes the file starts a new
+  // revision on which nothing made before it has a place (src/session.js #mdRevOf).
+
   // A reloaded editing tab leaves the file for a moment before its new page claims it: for the first seconds a tab that finds the file held keeps asking.
   useEffect(() => {
     if (!ro) return;
@@ -505,6 +592,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
     // Quick ask belongs to its words: other words selected while it is open close it (as scrolling them away does), and what was typed stays as an unsent comment
     const q = quickRef.current;
     if (q && !q.blocked && sel && !sel.collapsed && sel.kind === "text" && (sel.quote !== q.anchor.quote || JSON.stringify(sel.location) !== JSON.stringify(q.anchor.location))) {
+      if (quickHeld(q)) {
+        // the box stays on its own words: no chip on the new ones, and it says so (the Quick ask shortcut would put the focus in this box)
+        say(roRef.current ? RO_HELD : "Quick ask is still open on the words you asked about before. Send or close it, then ask about these.");
+        return setChipSel(null);
+      }
       closeQuick(false);
       if (q.text.trim()) addComment(q.kind, q.anchor, null, { text: q.text.trim(), quiet: true });
     }
@@ -540,6 +632,15 @@ export default function App({ sid, initial, product, settings, suggest }) {
       infoRef.current = { slides: r.slides || null, sheets: r.sheets || null };
       const map = {};
       for (const [id, a] of Object.entries(r.anchors)) {
+        // Markdown: offsets of the version the server resolved on (r.baseSha), only while the preview is based on that version; a comment
+        // anchored on the draft the preview shows is drawn at its own place (the server has never seen that version)
+        if (h.format === "markdown") {
+          const c = commentsRef.current.find((x) => x.id === id);
+          // (an unsent comment made on the draft is drawn at its own place in the draft: the server has never seen that text)
+          if (r.baseSha !== h.baseVersion || (c?.status === "draft" && c?.anchor?.location?.draftSha)) continue;
+          map[id] = { method: a.method, text: a.text, loc: a.method === "none" ? null : { from: a.from, to: a.to, version: r.baseSha } };
+          continue;
+        }
         if (a.method === "none") map[id] = { method: "none", loc: null };
         else if (h.format === "docx") {
           if (!a.path) map[id] = { method: a.method, text: a.text, loc: null, unlocatable: true };
@@ -623,7 +724,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       if (fmt === "xlsx" && loc.sheetName !== active) return; // only the shown sheet's markers; the card still lists it and jumps there
       const rects = h.rectsFor(loc);
       if (!rects.length) return;
-      if (fmt === "docx") {
+      if (fmt === "docx" || fmt === "markdown") {
         const vis = rects.filter((r) => r.bottom > box.top && r.top < box.bottom);
         if (!vis.length) return;
         if (c.kind === "pin") {
@@ -631,7 +732,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           const x = r.left + (c.pin?.xFrac ?? 0) * r.width;
           const y = r.top + (c.pin?.yPx ?? 0);
           if (y > box.top && y < box.bottom && x > box.left && x < box.right) items.push({ id: c.id, n, ...pinPlace(x, y, box, lx, ly), status: c.status, prot });
-        } else items.push({ id: c.id, n, rects: vis.map(local), whole: !(loc.start != null), status: c.status, prot });
+        } else items.push({ id: c.id, n, rects: vis.map(local), whole: fmt === "markdown" ? c.kind !== "text" : !(loc.start != null), status: c.status, prot });
         return;
       }
       if (fmt === "xlsx") {
@@ -707,6 +808,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
     let quickGone = false;
     const qk = quickRef.current;
     if (qk) {
+      // a box held at the comment limit (quickHeld) keeps a place on screen, as a box whose place is stale does
+      const stays = !!qk.blocked || quickHeld(qk);
       const W = Math.min(360, box.width - 16);
       const H = 170; // room for the stamp row
       const rs = h.rectsFor(qk.anchor.location);
@@ -714,12 +817,12 @@ export default function App({ sid, initial, product, settings, suggest }) {
         const u = { left: Math.min(...rs.map((r) => r.left)), top: Math.min(...rs.map((r) => r.top)), right: Math.max(...rs.map((r) => r.right)), bottom: Math.max(...rs.map((r) => r.bottom)) };
         const c = cut({ ...u, width: u.right - u.left, height: u.bottom - u.top });
         if (c) chg.push({ ...local(c), kind: "ask" });
-        else if (!qk.blocked) quickGone = true; // the words are off screen: the box would float over other text (a box whose place is stale stays, below)
+        else if (!stays) quickGone = true; // the words are off screen: the box would float over other text (a box whose place is stale stays, below)
         const last = rs[rs.length - 1];
         const below = ly(last.bottom) + 8;
         const y = below + H > box.height - 8 ? ly(rs[0].top) - H - 8 : below;
         quickAt = { x: Math.round(Math.min(Math.max(8, lx(u.left)), box.width - W - 8)), y: Math.round(Math.min(Math.max(8, y), box.height - H - 8)), w: W };
-      } else if (!qk.blocked) quickGone = true; // the place scrolled out of the rendered part
+      } else if (!stays) quickGone = true; // the place scrolled out of the rendered part
       else quickAt = { x: Math.round((box.width - W) / 2), y: 12, w: W }; // the words are gone from the file: keep the box, and the typed text in it, reachable
     }
     // places the last agent run changed that are out of view: one small pill that jumps to the first
@@ -786,7 +889,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (!paint.quickGone || !quickRef.current) return;
     const t = setTimeout(() => {
       const q = quickRef.current;
-      if (!q || !goneRef.current) return;
+      if (!q || !goneRef.current || quickHeld(q)) return;
       closeQuick(false);
       if (q.text.trim()) addComment(q.kind, q.anchor, null, { text: q.text.trim() });
     }, 300);
@@ -802,7 +905,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       if (!q || q.blocked || !h || e.detail < 1 || !docRef.current?.contains(e.target) || e.target.closest?.(".qa")) return;
       if (!window.getSelection()?.isCollapsed) return;
       const onWords = h.rectsFor(q.anchor.location).some((r) => e.clientX >= r.left - 1 && e.clientX <= r.right + 1 && e.clientY >= r.top - 1 && e.clientY <= r.bottom + 1);
-      if (onWords) return;
+      if (onWords || quickHeld(q)) return;
       closeQuick(false);
       if (q.text.trim()) addComment(q.kind, q.anchor, null, { text: q.text.trim(), quiet: true });
     };
@@ -920,7 +1023,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   useEffect(() => {
     // a comment or the note is unsent until the answer of a save that carried it came back (web/src/drafts.js dirty): one waiting for its
     // autosave, one whose save is still on its way, one whose save failed, and one only the save on the way out (keepalive) carries
-    const unsent = () => !roRef.current && (dirtyRef.current || (sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || draftPendingRef.current || saveFails.current > 0 || !!savingRef.current || draftsRef.current.dirty(commentsRef.current) || !!quickRef.current?.text?.trim() || stampDirtyRef.current || guideDirtyRef.current);
+    const unsent = () => !!quickRef.current?.text?.trim() || stampDirtyRef.current || keptHtmlRef.current || mdDirtyRef.current || (!roRef.current && (dirtyRef.current || (sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || draftPendingRef.current || saveFails.current > 0 || !!savingRef.current || draftsRef.current.dirty(commentsRef.current) || guideDirtyRef.current));
     const flush = () => {
       // a Send in flight too: if it never arrives, this save holds what it carried
       if ((!draftPendingRef.current && !sendingRef.current) || roRef.current) return;
@@ -1076,7 +1179,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   function addComment(kind, anchor, pin, { text = "", quiet = false } = {}) {
     if (roRef.current) return null;
     const list = commentsRef.current;
-    if (list.length >= COMMENTS_MAX) {
+    if (listFull()) {
       say(TOO_MANY_COMMENTS); // the server refuses the next one in the same words; none is made, so none is lost
       return null;
     }
@@ -1093,6 +1196,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
     return c;
   }
 
+  // the Markdown preview's whole-block comment (onHost subscribes once and calls this, made on every render)
+  const mdPickRef = useRef(null);
+  mdPickRef.current = (p) => addComment("element", p.anchor);
+
   // the HTML view's events (onHost subscribes once and calls these, made on every render)
   const htmlOnRef = useRef(null);
   htmlOnRef.current = {
@@ -1106,15 +1213,22 @@ export default function App({ sid, initial, product, settings, suggest }) {
   function onChip() {
     const s = chipSelRef.current;
     if (!s) return;
-    addComment("text", { location: s.location, quote: s.quote, prefix: s.prefix, suffix: s.suffix, format: s.format });
+    // Markdown: the captured selection must still be what is on screen (its identity and its exact source), else nothing is anchored
+    if (hostRef.current?.format === "markdown" && !hostRef.current.isCurrent?.(s)) {
+      setChipSel(null);
+      return say(MD_OFFER_STALE);
+    }
+    // the chip's selection as it was captured (its range, identity and, for Markdown, exact source): a stale one has no place on the server
+    addComment("text", { location: s.location, quote: s.quote, prefix: s.prefix, suffix: s.suffix, format: s.format, ...(s.evidence != null ? { evidence: s.evidence } : {}) });
   }
 
   /** What the selection or caret asks about: a text anchor for selected words, else an element anchor for the paragraph / cell / shape that holds the caret. */
   function anchorFromSelection(h, sel) {
-    if (sel.kind === "text" && !sel.collapsed) return { kind: "text", anchor: { location: sel.location, quote: sel.quote, prefix: sel.prefix, suffix: sel.suffix, format: sel.format } };
+    // (`source`, Markdown only: the exact source captured with the selection; the server gives a place only where the text still is that)
+    if (sel.kind === "text" && !sel.collapsed) return { kind: "text", anchor: { location: sel.location, quote: sel.quote, prefix: sel.prefix, suffix: sel.suffix, format: sel.format, ...(sel.evidence != null ? { evidence: sel.evidence } : {}) } };
     const { start, end, ...location } = sel.location; // collapsed caret: comment on the whole place
     const para = h.format === "docx" ? paragraphText(location.blockPath) : null;
-    return { kind: "element", anchor: { location, quote: para || sel.quote || "", paraText: para || undefined, prefix: "", suffix: "", format: sel.format, hitKind: h.format === "docx" ? "paragraph" : "selection" } };
+    return { kind: "element", anchor: { location, quote: para || sel.quote || "", paraText: para || undefined, prefix: "", suffix: "", format: sel.format, hitKind: h.format === "docx" ? "paragraph" : "selection", ...(sel.evidence != null ? { evidence: sel.evidence } : {}) } };
   }
 
   /** Keyboard path: comment on the selection, or on the paragraph / cell / shape that holds the caret. */
@@ -1128,18 +1242,25 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }
 
   // ---- Quick ask: select, Cmd/Ctrl+Shift+K, type, Cmd/Ctrl+Enter = the comment is made on the selection and the batch is sent (Enter is a new line, as in every comment box) ----------------
-  function openQuick() {
+  function openQuick(opts = null) {
     const h = hostRef.current;
     if (!h) return;
     if (phone) return commentFromKeyboard(); // a phone has the review sheet, no floating box
     if (quickRef.current) return document.querySelector('[data-testid="quick-ask-text"]')?.focus();
-    const sel = h.selection();
+    // the chip's Ask acts on the selection the chip CAPTURED, never on the live caret; a Markdown chip whose selection is no longer what
+    // is on screen (an agent run, a draft change, a reload since) is withdrawn and opens nothing. The keyboard shortcut reads the live one
+    const chip = opts?.chip === true;
+    const sel = chip && h.format === "markdown" ? chipSelRef.current : h.selection(); // (the other formats keep the live selection, as before)
+    if (chip && h.format === "markdown" && !h.isCurrent?.(sel)) {
+      setChipSel(null);
+      return say(MD_OFFER_STALE);
+    }
     if (!sel) return say(`Click inside the document first, then press ${MOD}+Shift+K to ask for a change.`);
     const a = anchorFromSelection(h, sel);
     const ds = window.getSelection();
     const inDoc = ds?.rangeCount && docRef.current?.contains(ds.getRangeAt(0).commonAncestorContainer);
     quickBackRef.current = { range: inDoc ? ds.getRangeAt(0).cloneRange() : null, el: docRef.current?.contains(document.activeElement) ? document.activeElement : null, host: h };
-    const blocked = roRef.current ? "This tab is read-only. Ask from the tab that holds the file." : sessionRef.current.state === "closed" ? "This session is closed, so nothing can be sent." : commentsRef.current.length >= COMMENTS_MAX ? TOO_MANY_COMMENTS : null; // at the cap no words are typed that could not become a comment
+    const blocked = roRef.current ? "This tab is read-only. Ask from the tab that holds the file." : sessionRef.current.state === "closed" ? "This session is closed, so nothing can be sent." : listFull() ? TOO_MANY_COMMENTS : null; // at the cap no words are typed that could not become a comment
     setChipSel(null);
     setQuick({ ...a, text: "", blocked, nudge: false });
     if (suggestOn && !blocked && (h.format === "docx" || h.format === "pptx")) {
@@ -1148,9 +1269,19 @@ export default function App({ sid, initial, product, settings, suggest }) {
     }
   }
 
+  /** quickHeld for a press of the person (Send, a stamp, the X, Esc in the document): the notice says why as well. */
+  function quickFull(q, words) {
+    const why = quickHeld(q, words);
+    if (!why) return false;
+    say(why);
+    return true;
+  }
+
   /** Close the composer; with `back`, return focus to the document with the selection as it was; with `keep`, save typed words as an unsent comment. */
   function closeQuick(back, keep = false) {
     const q = quickRef.current;
+    if (keep && q?.stale && q.text.trim()) return say(STALE_WORDS); // its old place may be another paragraph now: the words stay to be copied, and Esc closes
+    if (keep && quickFull(q)) return;
     const b = quickBackRef.current;
     const loc = q?.anchor.location ?? null;
     quickBackRef.current = null;
@@ -1195,6 +1326,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (!q || q.blocked) return;
     const text = typeof words === "string" ? words : q.text.trim();
     if (!text) return setQuick({ ...q, nudge: true });
+    if (quickFull(q, text)) return; // no comment can be made: the box keeps the words, and nothing is sent
     quietRef.current = { until: Date.now() + 600, quote: q.anchor.quote }; // the selection comes back right after this: no comment chip over it
     closeQuick(true);
     const c = addComment(q.kind, q.anchor, null, { text, quiet: true });
@@ -1336,7 +1468,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
       setSg((now) => (now ? (e.code === "busy" ? { ...now, error: text } : { phase: "none", seq: now.seq, req: now.req, text, retry: false }) : now));
     };
     const ok = await send({ suggestion: true, id: cur.card.id, commentId: c.id, fail });
-    if (ok || kept) closeQuick(true);
+    // the box this was pressed in closes; one that was opened since, or one the person typed into while the request was out (its card closed
+    // with Esc), stays open with its words
+    const now = quickRef.current;
+    if ((ok || kept) && now?.anchor === q.anchor && !now.text.trim()) closeQuick(true);
   }
 
   useEffect(() => {
@@ -1354,6 +1489,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
           setSg(null);
         } else {
           const q = quickRef.current;
+          if (q?.stale && q.text.trim()) return say(STALE_WORDS);
+          if (quickFull(q)) return; // a press of the person: at the limit the notice says why (the box may be out of sight on a narrow window)
           closeQuick(false);
           if (q.text.trim()) addComment(q.kind, q.anchor, null, { text: q.text.trim(), quiet: true });
         }
@@ -1373,7 +1510,8 @@ export default function App({ sid, initial, product, settings, suggest }) {
       } else if (e.code === "F6" && !mod && !e.altKey) {
         e.preventDefault();
         cycleRegion(e.shiftKey ? -1 : 1);
-      } else if (e.key === "?" && !mod && !e.altKey && !phone && !isEditable(e.target) && !(session.format === "xlsx" && e.target.closest?.('[data-testid="docwrap"]')) && !e.target.closest?.(".scrim, .qa")) {
+      } else if (e.key === "?" && !mod && !e.altKey && !phone && !isEditable(e.target) && !(session.format === "xlsx" && e.target.closest?.('[data-testid="docwrap"]')) && !e.target.closest?.('.scrim, .qa, [data-testid="md-preview"]')) {
+        // a Markdown preview types "?" into the file (MarkdownHost.jsx swaps to Edit): the shortcuts open from outside it
         e.preventDefault();
         setKeysOpen((o) => !o);
       } else if (e.key === "Enter" && mod && !e.altKey && !e.shiftKey && !e.isComposing && !isEditable(e.target) && !inModal && (!e.target.closest?.('[data-testid="docwrap"], .scrim, .qa, .shortcuts') || !!e.target.closest?.('[data-testid="html-catch"]'))) {
@@ -1454,9 +1592,10 @@ export default function App({ sid, initial, product, settings, suggest }) {
     if (l.format === "xlsx") return l.range ? { sheetIndex: infoRef.current.sheets?.find((x) => x.name === l.sheet)?.index ?? 0, sheetName: l.sheet, range: l.range } : null;
     if (l.format === "pptx") return l.slide_index != null ? { slideIndex: l.slide_index, ...(l.shape_id != null ? { shapeId: l.shape_id } : {}) } : null;
     if (l.format === "html") return Number.isInteger(l.node_id) ? { nodeId: l.node_id } : null; // ids of the update's after version (History shows them only while it is current)
+    if (l.format === "markdown") return Number.isInteger(l.from) ? { from: l.from, to: l.to, version: l.version } : null; // drawn only on that version
     return null;
   }
-  const historyCanShow = (p) => !!hostRef.current && !!p.locator && (p.locator.format === "html" ? Number.isInteger(p.locator.node_id) : p.locator.format === "docx" ? !!p.locator.body_path : p.locator.format === "xlsx" ? !!p.locator.range && (!infoRef.current.sheets || infoRef.current.sheets.some((x) => x.name === p.locator.sheet)) : p.locator.format === "pptx" && p.locator.slide_index != null);
+  const historyCanShow = (p) => !!hostRef.current && !!p.locator && (p.locator.format === "markdown" ? Number.isInteger(p.locator.from) && p.locator.version === hostRef.current.version : p.locator.format === "html" ? Number.isInteger(p.locator.node_id) : p.locator.format === "docx" ? !!p.locator.body_path : p.locator.format === "xlsx" ? !!p.locator.range && (!infoRef.current.sheets || infoRef.current.sheets.some((x) => x.name === p.locator.sheet)) : p.locator.format === "pptx" && p.locator.slide_index != null);
   historyLocRef.current = historyLoc;
   /** Scroll to a place and outline it for about two seconds (drawn over the document, never in it). */
   function showPlace(loc) {
@@ -1518,7 +1657,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
   function anchorFrom(hit, h) {
     const { start, end, ...location } = hit.location; // element and pin anchors drop char offsets
     const para = h.format === "docx" ? paragraphText(location.blockPath) : null;
-    return { location, quote: para || hit.quote || "", paraText: para || undefined, prefix: "", suffix: "", format: hit.format, hitKind: hit.kind };
+    return { location, quote: para || hit.quote || "", paraText: para || undefined, prefix: "", suffix: "", format: hit.format, hitKind: hit.kind, ...(hit.evidence != null ? { evidence: hit.evidence } : {}) };
   }
 
   /** Where a pin sits, as fractions of what it was dropped on (DOCX keeps pixels inside the paragraph, which do not change with zoom there). */
@@ -1532,7 +1671,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
       return pin;
     }
     if (h.format === "xlsx") return { xFrac: fx, yFrac: r.height ? (e.clientY - r.top) / r.height : 0, yPx: e.clientY - r.top, on: "cell" };
-    if (h.format === "docx") return { xFrac: fx, yPx: e.clientY - r.top, on: "paragraph" };
+    if (h.format === "docx" || h.format === "markdown") return { xFrac: fx, yPx: e.clientY - r.top, on: "paragraph" }; // Markdown: on its block
     return null;
   }
 
@@ -1610,6 +1749,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
     let at = null; // what it was sent with (web/src/drafts.js)
     let html = false;
     let htmlSent = [];
+    let mdSent = null;
     try {
       clearTimeout(saveTimer.current);
       draftPendingRef.current = false; // the Send below carries the comments and the note
@@ -1627,6 +1767,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
       html = h.format === "html";
       htmlSent = html && !locked ? h.edits() : [];
       if (htmlSent.length) h.setReadOnly(true, "sending");
+      // a Markdown file: the draft goes as one exact splice of the version the page loaded; one that cannot be sent stops this Send
+      mdSent = h.format === "markdown" && !locked ? mdSendOf() : null;
+      if (mdSent?.error) throw Object.assign(new Error(mdSent.error), { code: "md_draft" });
+      if (mdSent) setMdInflight({ value: mdSent.value, sha: mdSent.sha });
+
       const bytes = !html && !locked && dirtyRef.current ? await h.saveBytes() : null;
       const hasNote = !!noteRef.current.trim();
       const sendComments = use ? commentsRef.current : commentsRef.current.filter((c) => isSendableComment(c, hasNote));
@@ -1638,6 +1783,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
         baseSha: loadedShaRef.current,
         ...(bytes ? { bytesB64: await blobToBase64(bytes) } : {}),
         ...(htmlSent.length ? { htmlEdits: htmlSent } : {}),
+        ...(mdSent ? { mdEdit: mdSent.edit } : {}),
         comments: commentsRef.current.map(toWire),
         note: noteRef.current,
         edits: locked ? [] : changesRef.current.map(({ kind, before, after, label, location }) => ({ kind, before, after, label, location })),
@@ -1673,6 +1819,28 @@ export default function App({ sid, initial, product, settings, suggest }) {
         h.clearEdits();
         setChanges([]);
         reloadNowRef.current?.(out.session);
+      } else if (mdSent) {
+        // the server wrote the splice: the draft leaves the page only when the file is now exactly the version the page predicted, and
+        // only what was sent (a key typed meanwhile stays a draft, parked on the old version, copyable)
+        // the draft leaves the page only on THIS Send's own explicit "confirmed" receipt (its tab, its number); anything else (unconfirmed,
+        // or no receipt at all: a lost answer, another tab's later Send) keeps the exact draft, parked and copyable, with the warning
+        const saved = out.session.mdSaves?.[TAB];
+        const confirmed = saved && saved.rev === body.rev && saved.outcome === "confirmed";
+        if (!confirmed) {
+          setMdInflight(null);
+          setMdDraft((d) => (d ? { ...d, parked: true, unconfirmed: true } : d));
+          setMdView("preview");
+          say(MD_SAVE_UNCONFIRMED, { label: "Copy my edit", onClick: copyMdDraft });
+        } else if (out.session.baseSha === mdSent.sha) {
+          // confirmed: the draft is cleared once the page's own reload shows exactly those bytes (the effect below); if it shows other
+          // bytes, the draft stays, parked with the warning
+          setMdInflight((i) => (i ? { ...i, answered: true, confirmed: true } : i));
+          setMdView("preview");
+        } else {
+          setMdInflight(null);
+          say("The file is not the version your edit should have made, so your edit stays in this page. Copy it before you reload.", { label: "Copy my edit", onClick: copyMdDraft });
+        }
+        reloadNowRef.current?.(out.session);
       } else if (!locked) {
         loadedShaRef.current = out.session.baseSha;
         syncedShaRef.current = out.session.baseSha;
@@ -1694,6 +1862,11 @@ export default function App({ sid, initial, product, settings, suggest }) {
       use?.fail(e);
       if (e.code === "conflict") setProblem({ kind: "conflict", message: e.message, side: e.side || "user", copy: e.copy_name ? { name: e.copy_name, path: e.copy_path } : null, copyError: e.copy_error || null, canReveal: !!e.can_reveal });
       else setProblem({ kind: "error", message: plain(e) });
+      // a Markdown edit that was not written: it stays in the page, with a way to copy it (the file is not reloaded over it)
+      if (mdSent && !mdSent.error) {
+        setMdInflight(null); // not written: the draft stays on the record it was typed on
+        say(e.message || "Your edit was not written. It is still in this page.", { label: "Copy my edit", onClick: copyMdDraft });
+      }
       // an HTML page whose edits were made on another version: it shows the file as it is now and places them again (by their text)
       if (html && e.code === "version_changed") loadFile().catch((err) => setProblem({ kind: "error", message: `Could not reload: ${err.message}` }));
     } finally {
@@ -1935,9 +2108,73 @@ export default function App({ sid, initial, product, settings, suggest }) {
     p.then(() => say(!drafts.length ? "Your note was copied." : drafts.length === 1 ? "1 comment copied." : `${drafts.length} comments copied.`), blocked);
   }
 
+  // ---- Markdown: the person's typed draft ----------------------------------------------------------------------------
+  // made on every render (it calls this render's updateComments); MarkdownHost reads it through a ref
+  const onMdDraft = (value) => {
+    const b = mdDocRef.current;
+    if (!b) return;
+    const d0 = mdDraftRef.current;
+    if (d0?.parked) return; // a parked draft stays as it is until Discard: nothing typed starts another over it
+    const v = value; // exactly as typed or pasted: nothing is dropped (a U+FEFF in it is refused at Send, with the draft kept)
+    if (d0?.base === b.version && d0.baseRev === b.rev && d0.value === v) return;
+    const ed = editability(b.tree);
+    // the draft names the record it is typed on (sha256 and id): it is live only on exactly that record. Every state of it gets a fresh
+    // random id (gen): a comment made on it names that state, and only a Send of exactly that state can give it a place
+    setMdDraft({ base: b.version, baseRev: b.rev, value: v, eol: draftEolOf(d0, ed), gen: newDraftId() });
+    dropDraftPlaces(); // the draft changed: places made on it name text that is not there any more (no shifting, no carrying)
+  };
+  /** Unsent comments made on the draft lose their place (it named the draft as it was); their words stay. */
+  function dropDraftPlaces() {
+    const placed = (c) => c.status === "draft" && !!c.anchor?.location?.draftSha;
+    if (commentsRef.current.some(placed)) updateComments((l) => l.map((c) => (placed(c) ? { ...c, anchor: { ...c.anchor, location: null } } : c)));
+  }
+  /** The draft as the file's source (its line endings), to the clipboard: the way to keep an edit that cannot be sent. */
+  function copyMdDraft() {
+    const d = mdDraftRef.current;
+    const b = mdDocRef.current;
+    if (!d) return;
+    // the line endings the draft was typed with (its own file's), not those of the file shown now
+    const text = mdDraftSource(d);
+    // the text to copy by hand: a parked draft's is in its own box (Edit shows the file as it is now); a live draft's is in Edit
+    const blocked = () => say(d.parked || d.base !== mdDocRef.current?.version ? "The browser did not allow copying. Select the text in the box under the parked edit and copy it yourself." : "The browser did not allow copying. Open Edit, select the text and copy it yourself.");
+    let p = null;
+    try {
+      p = navigator.clipboard ? navigator.clipboard.writeText(text) : null;
+    } catch {
+      p = null;
+    }
+    if (!p) return blocked();
+    p.then(() => say("Your edit was copied."), blocked);
+  }
+  /**
+   * What a Send carries of the draft: null (none, or it changes nothing), {error} (not sent: the sentence), or {edit: {from, to, old, new,
+   * sha256}, sha (the version the server will have written), value}. One exact splice of the version the page loaded, never the bytes.
+   */
+  function mdSendOf() {
+    const d = mdDraftRef.current;
+    const b = mdDocRef.current;
+    if (!d || d.parked || !b || d.base !== b.version || d.baseRev !== b.rev || d.base !== loadedShaRef.current) return null;
+    const ed = editability(b.tree);
+    if (!ed.ok) return null;
+    const source = mdDraftSource(d); // the draft's own line endings, the same bytes Copy gives
+    if (source === b.tree.text) return null;
+    const refused = draftRefusal(source);
+    if (refused) return { error: refused };
+    const bom = b.tree.bom ? "\uFEFF" : "";
+    let tree;
+    try {
+      tree = readMarkdown(bom + source);
+    } catch (e) {
+      return { error: `Your edit was not sent: ${e.message}. It is still in Edit.` };
+    }
+    const sp = draftSplice(b.tree.text, source, b.tree, tree);
+    if (!sp.ok || sp.none) return sp.ok ? null : { error: `Your edit was not sent: ${sp.reason}. It is still in Edit.` };
+    return { edit: { from: sp.from, to: sp.to, old: sp.old, new: sp.new, sha256: b.version, rev: b.rev, draftId: d.gen }, sha: sha256hex(bom + source), value: d.value, source };
+  }
+
   async function keepMine() {
     const h = hostRef.current;
-    if (!h || h.format === "html") return; // an HTML page holds no bytes of its own: its edits stay in the viewer
+    if (!h || h.format === "html" || h.format === "markdown") return; // an HTML page holds no bytes of its own: its edits stay in the viewer; a Markdown preview takes no edits
     const blob = await h.saveBytes();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1947,15 +2184,26 @@ export default function App({ sid, initial, product, settings, suggest }) {
   }
 
   useEffect(() => {
-    const hasEdits = dirtyRef.current || (session.format === "html" ? htmlEdits > 0 : changes.length > 0);
+    const hasEdits = dirtyRef.current || mdDirtyRef.current || (session.format === "html" ? htmlEdits > 0 : changes.length > 0);
     setRescueSnapshot(comments, note, hasEdits);
-  }, [comments, note, htmlEdits, changes.length, session.format]);
+  }, [comments, note, htmlEdits, changes.length, session.format, mdDraft]);
 
+  // Markdown: the draft is live on the file it was typed on; Edit is open to typing unless the file, the tab or a run says no
+  const mdBase = doc.md?.tree ? doc.md : null;
+  mdDocRef.current = mdBase;
+  // live only on the exact revision it was typed on; once not, it is parked for good (until Discard), even if those bytes come back
+  const mdLive = !!mdDraft && !mdDraft.parked && !!mdBase && mdDraft.base === mdBase.version && mdDraft.baseRev === mdBase.rev;
+  const mdDirty = mdLive && mdDraftDirty(mdDraft.value, toTextarea(mdBase.tree.text), mdInflight);
+  mdDirtyRef.current = !!mdDraft && (!mdLive || mdDirty);
+  const mdEd = mdBase ? editability(mdBase.tree) : null;
+  const mdParked = !!mdDraft && !mdLive;
+  const mdEdit = !mdEd ? { ok: false, why: "" } : ro ? { ok: false, why: MD_RO_EDIT } : session.locked ? { ok: false, why: MD_LOCKED_EDIT } : mdParked ? { ok: false, why: MD_PARKED_EDIT } : session.state === "closed" ? { ok: false, why: "This session is closed." } : !mdEd.ok ? { ok: false, why: mdEd.reason } : { ok: true, why: "" };
+  const mdModes = session.format === "markdown" ? { view: mdView, onView: setMdView, editOk: !!mdEd?.ok && !ro, why: mdEd && !mdEd.ok ? mdEd.reason : ro ? MD_RO_EDIT : "" } : null;
   const noteHasWords = !!note.trim();
   const counts = {
     comments: comments.filter((c) => c.kind !== "pin" && ["draft", "queued"].includes(c.status) && isSendableComment(c, noteHasWords)).length,
     pins: comments.filter((c) => c.kind === "pin" && ["draft", "queued"].includes(c.status) && isSendableComment(c, noteHasWords)).length,
-    edits: session.format === "html" ? htmlEdits : changes.length, // an HTML file: the viewer's pending text edits (an undo takes one away)
+    edits: session.format === "html" ? htmlEdits : session.format === "markdown" ? (mdLive && mdDirty ? 1 : 0) : changes.length, // an HTML file: the viewer's pending text edits (an undo takes one away); a Markdown file: its one draft
   };
   // While a batch is delivered, typed edits are not something to send: they are merged when the agent finishes.
   const sendCounts = session.locked ? { ...counts, edits: 0 } : counts;
@@ -1986,16 +2234,17 @@ export default function App({ sid, initial, product, settings, suggest }) {
             onBackground={() => setBgOpen((o) => !o)}
             sideOpen={sideOpen}
             onSidebar={toggleSidebar}
-            onClose={() => ((sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || dirtyRef.current ? setCloseAsk(true) : post("close"))}
+            onClose={() => ((sessionRef.current.format === "html" ? htmlEditsRef.current > 0 || (hostRef.current?.lostEdits?.()?.length ?? 0) > 0 : changesRef.current.length > 0) || dirtyRef.current || mdDirtyRef.current ? setCloseAsk(true) : post("close"))}
             keysOpen={keysOpen}
             onKeys={() => setKeysOpen((o) => !o)}
           />
-          <Toolbar mode={mode} onMode={setMode} setBar={setBar} readOnly={ro} phone={phone} />
+          <Toolbar mode={mode} onMode={setMode} setBar={setBar} readOnly={ro} phone={phone} md={mdModes} />
           <div className="docstage">
             <div className={`docwrap mode-${mode}`} ref={docRef} onMouseDownCapture={capture} onClickCapture={capture} data-testid="docwrap" data-working={state === "working" || state === "queued" ? "1" : "0"}>
               {session.format === "html" ? (
                 doc.html ? (
                   <HtmlHost
+                    onKeptDone={() => setDoc((d) => (d.html ? { ...d, html: { ...d.html, kept: undefined } } : d))}
                     view={doc.html}
                     mode={mode}
                     marks={htmlMarks(comments, resolved, doc.html.version)}
@@ -2011,6 +2260,43 @@ export default function App({ sid, initial, product, settings, suggest }) {
                     <span className="spinner" aria-hidden="true" /> Opening {session.name}
                   </p>
                 )
+              ) : session.format === "markdown" ? (
+                <>
+                {mdDraft && !mdLive && (
+                  // shown whatever the file now holds (also a file that is not UTF-8 any more), with the draft's own text, so it can be
+                  // copied by hand when the browser does not allow copying
+                  <div className="md-note md-note-flow md-draft-bar" role="status" data-testid="md-parked">
+                    {/* the warning stays with the draft (a later notice, a Quick ask, does not replace it) */}
+                    <span data-testid="md-parked-why">{mdDraft.unconfirmed ? MD_SAVE_UNCONFIRMED : "Your unsent edit was typed on an earlier version of the file, so it is not shown or sent. Copy it to keep it, then discard it."}</span>
+                    <button type="button" className="btn sm" data-testid="md-copy-draft" onClick={copyMdDraft}>Copy my edit</button>
+                    <button type="button" className="btn sm quiet" data-testid="md-discard-draft" onClick={() => setMdDraft(null)}>Discard</button>
+                    {/* a <pre>, not a textarea: a textarea's value turns CRLF into LF, this keeps the draft's own text exactly */}
+                    <pre className="md-parked-text" data-testid="md-parked-text" tabIndex={0} aria-label="Your unsent edit">
+                      {mdDraftSource(mdDraft)}
+                    </pre>
+                  </div>
+                )}
+                {doc.md?.error ? (
+                  <div className="hv-full hh-refused" role="alert" data-testid="md-unreadable">
+                    <Icon name="alert" size={20} />
+                    <p>{doc.md.error.message}</p>
+                  </div>
+                ) : doc.md ? (
+                  <>
+                    {mdLive && mdDirty && (
+                      <div className="md-draft-bar" data-testid="md-draft-bar">
+                        <span>Your edit is not sent yet. Send writes it to the file.</span>
+                        <button type="button" className="btn sm quiet" data-testid="md-copy-draft" onClick={copyMdDraft}>Copy my edit</button>
+                      </div>
+                    )}
+                    <MarkdownHost key={doc.v} doc={doc.md} draft={mdLive ? mdDraft.value : null} draftId={mdLive ? mdDraft.gen : null} draftEol={mdLive ? mdDraft.eol : null} view={mdView} edit={mdEdit} onDraft={onMdDraft} onView={setMdView} onHost={onHost} />
+                  </>
+                ) : (
+                  <p className="opening" role="status">
+                    <span className="spinner" aria-hidden="true" /> Opening {session.name}
+                  </p>
+                )}
+                </>
               ) : doc.file ? (
                 <DocViewer
                   key={doc.v}
@@ -2042,7 +2328,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
                 <Icon name={mode} size={14} />
                 <span>
                   {mode === "comment" ? "Comment mode" : "Pin mode"}
-                  <span className="mode-pill-esc"> · Esc for Edit</span>
+                  <span className="mode-pill-esc"> · Esc for {session.format === "markdown" ? "Preview" : "Edit"}</span>
                 </span>
               </div>
             )}
@@ -2052,15 +2338,15 @@ export default function App({ sid, initial, product, settings, suggest }) {
               hoverId={hoverId}
               onHover={setHoverId}
               onChip={onChip}
-              onQuickChip={openQuick}
+              onQuickChip={() => openQuick({ chip: true })}
               onPin={(id) => { setFocusId(id); openSidebar(); }}
               onThumb={(i) => hostRef.current?.scrollTo({ slideIndex: i })}
               version={doc.v}
               fresh={fresh}
-              quick={phone ? null : quick}
+              quick={phone || !quick ? null : { ...quick, held: ro ? RO_HELD : comments.length >= COMMENTS_MAX ? `${TOO_MANY_COMMENTS} Your words stay in this box until then (Esc discards them).` : null }}
               onQuickText={(text) => setQuick((q) => (q ? { ...q, text, nudge: false } : q))}
               onQuickSubmit={submitQuick}
-              stamps={session.format === "html" ? null /* PLAN-html D9: no stamps for an HTML file */ : { ...stampsCtl, dirtyRef: stampDirtyRef, suggest: { sg, busy: slow, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
+              stamps={session.format === "html" ? null /* PLAN-html D9: no stamps for an HTML file */ : { ...stampsCtl, dirtyRef: stampDirtyRef, draftRef: stampDraftRef, suggest: { sg, busy: slow, on: suggestOn, oneSentence: oneSentenceNote(), tasks: suggest?.tasks, unavailable: suggest?.unavailable, format: session.format, onOn: () => setSuggestOn(true), onStamp: stampTap, onUse: useSuggestion, onAgent: () => submitQuick(sg?.req?.words), onRetry: () => sg?.req && askSuggest(sg.req), onCardClose: () => { sgSeq.current++; setSg(null); } } }}
               onQuickClose={closeQuick}
               onAway={awayGo}
               canQuick={!phone}
@@ -2070,7 +2356,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
             readOnly={ro}
             onTakeOver={() => post("claim", { takeover: true })}
             session={session}
-            canDownload={session.format !== "html"}
+            canDownload={session.format !== "html" && session.format !== "markdown"}
             heldBack={heldBack}
             heldCopy={heldCopy}
             onHeldBackDone={() => setHeldBack(null)}
@@ -2100,7 +2386,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           />
         </main>
         {bgOpen && <BackgroundPicker ctl={bgc} onClose={(refocus) => (setBgOpen(false), refocus && document.querySelector('[data-testid="bg-button"], [data-testid="more-menu"]')?.focus())} />}
-        {phone && <Dock mode={mode} onMode={setMode} readOnly={ro} counts={sendCounts} pending={pendingSend} sideOpen={sideOpen} onSidebar={toggleSidebar} sending={slow} />}
+        {phone && <Dock mode={mode} onMode={setMode} readOnly={ro} counts={sendCounts} pending={pendingSend} sideOpen={sideOpen} onSidebar={toggleSidebar} sending={slow} md={mdModes} />}
         <Sidebar
           guideDirtyRef={guideDirtyRef}
           readOnly={ro}
@@ -2116,6 +2402,7 @@ export default function App({ sid, initial, product, settings, suggest }) {
           historyCanShow={historyCanShow}
           onHistoryShow={historyShow}
           comments={comments}
+          mdDraft={session.format === "markdown" && mdLive && mdDirty}
           resolved={resolved}
           activeSheet={activeSheet}
           note={note}
@@ -2289,6 +2576,14 @@ function changedPaint(h, fmt, session, info, active, clip, cut, local, skip) {
     for (const it of items) {
       if (it.sheetName !== active) continue;
       const rs = h.rectsFor({ sheetIndex: info.sheets?.find((x) => x.name === it.sheetName)?.index ?? 0, sheetName: it.sheetName, range: it.range });
+      if (rs[0]) add(rs[0], it.kind, tagged++ < 6);
+    }
+  } else if (fmt === "markdown") {
+    // exact ranges of the version the run left: drawn only while the page shows exactly that version
+    if (h.version !== run.postSha) return [];
+    let tagged = 0;
+    for (const it of items) {
+      const rs = Number.isInteger(it.from) ? h.rectsFor({ from: it.from, to: it.to, version: h.version }) : [];
       if (rs[0]) add(rs[0], it.kind, tagged++ < 6);
     }
   } else if (fmt === "html") {

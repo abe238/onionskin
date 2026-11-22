@@ -176,3 +176,105 @@ test("HIGH B: counting matches keeps no record per match and is linear: twice th
   // (standalone 0.65 s against 1.6 s; with the whole unit suite at a load of 35, 1.7 s against 1.9 s: the margin is the memory a list takes)
   assert.ok(count < listed, `counted ${Math.round(count)} ms, listed ${Math.round(listed)} ms`);
 });
+
+// ---- B1: a comment-bound find whose matches overlap ("banana", the last "ana" selected) ---------------------------------------------
+// The scan is non-overlapping, so it saw one "ana" (the first) and wrote "bXna" reported as applied; "banX" was meant. The anchor's
+// offsets are not trusted to choose a copy, so such a reply is refused with nothing changed. Every non-overlapping case stays as before.
+const { countOverlapping, overlapRefusal } = await import("../src/ops/runs.js");
+
+test("B1: countOverlapping and overlapRefusal", () => {
+  assert.equal(countOverlapping("banana", "ana"), 2);
+  assert.equal(findRanges("banana", "ana").length, 1);
+  assert.equal(countOverlapping("BANANA", "ana", false), 2);
+  assert.equal(countOverlapping("BANANA", "ana", true), 0);
+  assert.equal(countOverlapping("aaaa", "aa"), 3);
+  assert.equal(countOverlapping("red car and red bus", "red"), 2);
+  const bound = { target: { anchor_id: "a1" } };
+  assert.match(overlapRefusal(["banana"], "ana", true, 1, bound), /occurs 2 times .* overlapping/);
+  assert.equal(overlapRefusal(["banana"], "ana", true, 1, { target: { body_path: [0] } }), null); // not comment-bound: as before
+  assert.equal(overlapRefusal(["banana"], "ana", true, 1, { ...bound, occurrence: 1 }), null);
+  assert.equal(overlapRefusal(["banana"], "ana", true, 1, { ...bound, all: true }), null);
+  assert.equal(overlapRefusal(["the brown fox"], "brown", true, 1, bound), null);
+  assert.equal(overlapRefusal(["banana", "x"], "nan", true, 1, bound), null);
+  // across a shape's paragraphs: one match reported in all, a second overlapping copy in the same paragraph
+  assert.ok(overlapRefusal(["no match", "banana"], "ana", true, 1, bound));
+});
+
+const docxAnchor = (start, end, quote) => new Map([["a1", { id: "a1", locator: { para_id: null, body_path: [0], text_hash: null, start, end }, quote }]]);
+const runA = (bytes, format, ops, anchors, partial = false) => runOps({ bytes, format, name: `t.${format}`, ops, anchors, partial });
+const textOf = (r, input) => readDocxParagraphs(r.bytes || input).map((p) => p.text);
+
+test("B1 docx: a comment-bound find with overlapping copies is refused, nothing written", async () => {
+  const input = docxBytes(["banana"]);
+  const r = await runA(input, "docx", [{ op: "replace_text", target: { anchor_id: "a1" }, expect: { quote: "banana" }, find: "ana", replace: "X" }], docxAnchor(3, 6, "ana"));
+  assert.equal(r.results[0].status, "refused", JSON.stringify(r.results));
+  assert.equal(r.results[0].code, "overlapping_matches");
+  assert.equal(r.bytes, null);
+  const f = await runA(input, "docx", [{ op: "format_text", target: { anchor_id: "a1" }, expect: { quote: "banana" }, find: "ana", set: { bold: true } }], docxAnchor(3, 6, "ana"));
+  assert.equal(f.results[0].code, "overlapping_matches", JSON.stringify(f.results));
+  assert.equal(f.bytes, null);
+  // partial mode: the other op of the batch still applies
+  const two = docxBytes(["banana", "The lazy dog"]);
+  const anchors = new Map([...docxAnchor(3, 6, "ana"), ["a2", { id: "a2", locator: { para_id: null, body_path: [1], text_hash: null, start: 4, end: 8 }, quote: "lazy" }]]);
+  const p = await runA(two, "docx", [
+    { op: "replace_text", target: { anchor_id: "a1" }, expect: { quote: "banana" }, find: "ana", replace: "X" },
+    { op: "replace_text", target: { anchor_id: "a2" }, expect: { quote: "lazy" }, find: "lazy", replace: "sleepy" },
+  ], anchors, true);
+  assert.deepEqual(p.results.map((x) => x.status), ["refused", "applied"], JSON.stringify(p.results));
+  assert.deepEqual(textOf(p, two), ["banana", "The sleepy dog"]);
+});
+
+test("B1 docx: same as before where matches do not overlap, or the op is not comment-bound or names occurrence/all", async () => {
+  const fox = "The quick brown fox jumps over the lazy dog";
+  const rows = [
+    // [paragraph, anchor offsets, op extras, want status, want text]
+    [fox, [10, 15, "brown"], { find: "quick brown fox", replace: "Q" }, "applied", "The Q jumps over the lazy dog"],
+    [fox, [10, 15, "brown"], { find: "lazy", replace: "L" }, "applied", "The quick brown fox jumps over the L dog"],
+    [fox, [20, 24, "jump"], { find: "jumps", replace: "J" }, "applied", "The quick brown fox J over the lazy dog"],
+    ["Prix :\u00a010", [0, 9, "Prix : 10"], { find: "10", replace: "12" }, "applied", "Prix :\u00a012"],
+    ["Vraiment ?", [0, 10, "Vraiment ?"], { find: "Vraiment", replace: "Oui" }, "applied", "Oui ?"],
+    ["red car and red bus", [12, 15, "red"], { find: "red", replace: "blue" }, "anchor_not_found", "red car and red bus"],
+    ["banana", [3, 6, "ana"], { find: "ana", replace: "X", occurrence: 1 }, "applied", "bXna"],
+    ["banana", [3, 6, "ana"], { find: "ana", replace: "X", all: true }, "applied", "bXna"],
+    ["banana", [0, 6, "banana"], { find: "nan", replace: "X" }, "applied", "baXa"],
+  ];
+  for (const [para, [s, e, q], extra, status, want] of rows) {
+    const input = docxBytes([para]);
+    const r = await runA(input, "docx", [{ op: "replace_text", target: { anchor_id: "a1" }, expect: { quote: para }, ...extra }], docxAnchor(s, e, q));
+    assert.equal(r.results[0].status, status, `${para} ${JSON.stringify(extra)} ${JSON.stringify(r.results)}`);
+    assert.deepEqual(textOf(r, input), [want], para);
+  }
+  // an explicit target (the merge's and an agent's own locator): release behavior, the first copy
+  const input = docxBytes(["banana"]);
+  const x = await runA(input, "docx", [{ op: "replace_text", target: { body_path: [0] }, expect: { quote: "banana" }, find: "ana", replace: "X" }], new Map());
+  assert.equal(x.results[0].status, "applied", JSON.stringify(x.results));
+  assert.deepEqual(textOf(x, input), ["bXna"]);
+  // replace_all_text counts and replaces the non-overlapping matches, as before
+  const all = await run(input, "docx", [replaceAll("ana", "X", 1)]);
+  assert.equal(all.results[0].status, "applied", JSON.stringify(all.results));
+  assert.deepEqual(textOf(all, input), ["bXna"]);
+  // two comments on one paragraph in one atomic batch: both apply
+  const two = await runA(docxBytes([fox]), "docx", [
+    { op: "replace_text", target: { anchor_id: "a1" }, expect: { quote: fox }, find: "brown", replace: "red" },
+    { op: "replace_text", target: { anchor_id: "a2" }, expect: { quote: "lazy" }, find: "lazy", replace: "sleepy" },
+  ], new Map([...docxAnchor(10, 15, "brown"), ["a2", { id: "a2", locator: { para_id: null, body_path: [0], text_hash: null, start: 35, end: 39 }, quote: "lazy" }]]));
+  assert.deepEqual(two.results.map((r) => r.status), ["applied", "applied"], JSON.stringify(two.results));
+  assert.deepEqual(textOf(two), ["The quick red fox jumps over the sleepy dog"]);
+});
+
+const shapeAnchor = new Map([["a1", { id: "a1", locator: { slide_id: "256", shape_id: 2, text_hash: null, start: 3, end: 6 }, quote: "ana" }]]);
+test("B1 pptx: a comment-bound find with overlapping copies is refused; non-overlapping finds apply as before", { skip: SKIP_PPTX }, async () => {
+  const deck = pptxWith("banana");
+  const r = await runA(deck, "pptx", [{ op: "replace_text_in_shape", target: { anchor_id: "a1" }, expect: { quote: "banana" }, find: "ana", replace: "X" }], shapeAnchor);
+  assert.equal(r.results[0].code, "overlapping_matches", JSON.stringify(r.results));
+  assert.equal(r.bytes, null);
+  const ok = await runA(pptxWith("quick brown fox"), "pptx", [{ op: "replace_text_in_shape", target: { anchor_id: "a1" }, expect: { quote: "quick brown fox" }, find: "brown", replace: "red" }], shapeAnchor);
+  assert.equal(ok.results[0].status, "applied", JSON.stringify(ok.results));
+  assert.match(slideText(ok.bytes), /^quick red fox\|/);
+  const occ = await runA(deck, "pptx", [{ op: "replace_text_in_shape", target: { anchor_id: "a1" }, expect: { quote: "banana" }, find: "ana", replace: "X", occurrence: 1 }], shapeAnchor);
+  assert.equal(occ.results[0].status, "applied", JSON.stringify(occ.results));
+  assert.match(slideText(occ.bytes), /^bXna\|/);
+  const plain = await run(deck, "pptx", [{ op: "replace_text_in_shape", target: { slide_id: "256", shape_id: 2 }, expect: { quote: "banana" }, find: "ana", replace: "X" }]);
+  assert.equal(plain.results[0].status, "applied", JSON.stringify(plain.results));
+  assert.match(slideText(plain.bytes), /^bXna\|/);
+});

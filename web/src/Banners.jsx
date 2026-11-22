@@ -3,7 +3,7 @@ import { Icon } from "./Icons.jsx";
 import { useFocusTrap } from "./hooks.js";
 import { elapsedText, progressOf, stageOf, stopKind } from "./stage.js";
 
-const APP_NAME = { docx: "Word", xlsx: "Excel", pptx: "PowerPoint", html: "your editor" };
+const APP_NAME = { docx: "Word", xlsx: "Excel", pptx: "PowerPoint", html: "your editor", markdown: "your editor" };
 const appName = (format) => APP_NAME[format] || "your editor";
 
 export function CopyButton({ text, label = "Copy", ariaLabel, testid = "copy-command" }) {
@@ -178,7 +178,7 @@ function Elapsed({ batch }) {
   );
 }
 
-export function Banners({ readOnly, onTakeOver, session, canDownload = session.format !== "html", heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, noticeAction = null, onStop = () => {}, stopping = false, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, onCopyComments, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
+export function Banners({ readOnly, onTakeOver, session, canDownload = session.format !== "html" && session.format !== "markdown", heldBack = null, heldCopy = null, onHeldBackDone, problem, notice, noticeAction = null, onStop = () => {}, stopping = false, onTakeBack, onAgent = () => {}, onReloadDisk, onKeepMine, onShowCopy, onDismissConflict, onDismiss, onCopyComments, unsentEdits = 0, closeAsk = false, onCloseAnyway, onCloseCancel }) {
   const s = session.state;
   const agent = session.agent || null;
   const failed = agent?.state === "failed" && agent.failure ? failureCopy(agent.failure) : null;
@@ -248,7 +248,7 @@ export function Banners({ readOnly, onTakeOver, session, canDownload = session.f
                 <strong data-testid="banner-stage">{stageOf(session).text || "Agent is working"}</strong>
                 {!session.local && <Elapsed batch={session.deliveredBatchId || session.pendingBatchId} />}
               </span>
-              <span data-testid="banner-lock-line">{session.format === "html" ? "Comment now, and fix text when it is done. An HTML page is read only while the agent works." : session.local ? "Keep editing. What you type is merged with this change when it finishes." : "Keep editing. What you type is merged with the agent's changes when it finishes."}</span>
+              <span data-testid="banner-lock-line">{session.format === "html" ? "Comment now, and fix text when it is done. An HTML page is read only while the agent works." : session.format === "markdown" ? "Comment now: your comments go to the agent next. You can type in the file again when the agent is done." : session.local ? "Keep editing. What you type is merged with this change when it finishes." : "Keep editing. What you type is merged with the agent's changes when it finishes."}</span>
               {progress && <span data-testid="banner-progress-line">{progress}</span>}
             </span>
             <span className="banner-actions">
@@ -312,7 +312,7 @@ export function Banners({ readOnly, onTakeOver, session, canDownload = session.f
             <span className="banner-text">
               <strong>Someone changed this file outside Onionskin</strong>
               {/* while the agent works, a reload would replace what the person typed during the run (it is merged only when the agent finishes) */}
-              <span>{session.locked ? "Your original file was left untouched. Your edits are merged when the agent finishes." : session.format === "html" ? "Your original file was left untouched. Your unsent text edits stay in this page: reload, and they are placed on the changed file where their text still is." : "Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it."}</span>
+              <span>{session.locked ? "Your original file was left untouched. Your edits are merged when the agent finishes." : session.format === "html" ? "Your original file was left untouched. Your unsent text edits stay in this page: reload, and they are placed on the changed file where their text still is." : session.format === "markdown" ? "Your original file was left untouched. Reload it to see the changed file; a comment made on the old version must be made again on the new one." : "Your original file was left untouched. Your unsent edits are still here: when you press Send they are saved as a copy next to the file, never over it."}</span>
             </span>
             {!session.locked && (
               <button type="button" className="btn" onClick={onReloadDisk} data-testid="reload-disk-early">

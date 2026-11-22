@@ -81,8 +81,20 @@ export function decodeHtml(bytes) {
   const label = declaredCharset(b);
   // a UTF-8 BOM wins over a declaration, as in a browser
   if (!bomLen && label && !UTF8_LABELS.has(label)) {
-    const copyable = WINDOWS_1252.has(label);
-    return { ok: false, encoding: "declared-other", label: cutText(label, 40), ascii: !b.some((x) => x >= 0x80), copyable, code: "not_utf8", sentence: copyable ? NOT_UTF8 : NOT_READABLE_ENCODING };
+    const ascii = !b.some((x) => x >= 0x80);
+    // Bytes with accented text that already read as UTF-8 are not a legacy page, whatever looks like a declaration (a custom attribute
+    // such as data-charset is read as one here): decoding them as windows-1252 would turn "Café" into "CafÃ©", so no copy is offered. Ceiling: the page is still not opened; reading only a real declaration is the upgrade.
+    let mixed = false;
+    if (!ascii) {
+      try {
+        UTF8.decode(b);
+        mixed = true;
+      } catch {
+        mixed = false;
+      }
+    }
+    const copyable = WINDOWS_1252.has(label) && !mixed;
+    return { ok: false, encoding: "declared-other", label: cutText(label, 40), ascii, copyable, code: "not_utf8", sentence: copyable ? NOT_UTF8 : NOT_READABLE_ENCODING };
   }
   const body = b.subarray(bomLen);
   let text;

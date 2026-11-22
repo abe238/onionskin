@@ -288,7 +288,7 @@ test("W3: --uninstall in an empty HOME leaves no ~/.onionskin; --uninstall after
 });
 
 for (const version of ["9.9.9", "9.9.10"]) {
-  for (const defect of ["missing module", "empty CLI", "wrong version", "missing server.js", "missing server-entry.js"]) {
+  for (const defect of ["missing module", "empty CLI", "wrong version", "missing server.js", "missing server-entry.js", "server module missing watch.js", "missing open-worker.js", "missing URL worker", "missing lazy import", "missing web bundle", "empty web bundle"]) {
     test(`a package with ${defect} at ${version} leaves the working copy and launcher in place`, () => {
       const src = fakePackage(`pkg-broken-${defect}-${version}`);
       const home = path.join(tmp, `home-broken-${defect}-${version}`);
@@ -304,6 +304,19 @@ for (const version of ["9.9.9", "9.9.10"]) {
       if (defect === "missing module") fs.writeFileSync(cli, 'require("./missing-module");');
       else if (defect === "empty CLI") fs.writeFileSync(cli, "");
       else if (defect === "wrong version") fs.writeFileSync(cli, 'console.log("0.0.1");');
+      else if (defect === "server module missing watch.js") fs.writeFileSync(path.join(src, "src", "server.js"), 'require("./watch.js");\n');
+      // files the server loads only later (a worker, a lazy import): importing server.js does not reach them
+      else if (defect === "missing open-worker.js") fs.writeFileSync(path.join(src, "src", "offload.js"), 'startWorker("open-worker.js");\n');
+      else if (defect === "missing URL worker") fs.writeFileSync(path.join(src, "src", "offload.js"), 'new URL("./x-worker.js", import.meta.url);\n');
+      else if (defect === "missing lazy import") fs.writeFileSync(path.join(src, "src", "lazy.js"), 'import("./later.js");\n');
+      // the page names a bundle that is not there, or is empty: the editor would open blank
+      else if (defect === "missing web bundle" || defect === "empty web bundle") {
+        fs.writeFileSync(path.join(src, "web", "dist", "index.html"), '<!doctype html><script type="module" crossorigin src="/assets/index-x.js"></script>');
+        if (defect === "empty web bundle") {
+          fs.mkdirSync(path.join(src, "web", "dist", "assets"));
+          fs.writeFileSync(path.join(src, "web", "dist", "assets", "index-x.js"), "");
+        }
+      }
       else fs.unlinkSync(path.join(src, "src", defect.slice("missing ".length)));
       fs.writeFileSync(path.join(src, "package.json"), JSON.stringify({ version }));
       const r = install(src, home);
@@ -476,4 +489,372 @@ test("checker setup timing out leaves the direct install usable and prints the r
   assert.match(r.stdout, /Onionskin works without deeper checks/);
   assert.equal(spawnSync(path.join(home, ".local", "bin", "onionskin"), ["--version"], { env, encoding: "utf8" }).stdout, "9.9.9\n");
   assert.equal(fs.existsSync(path.join(home, ".onionskin", "install.lock")), false);
+});
+
+test("D1: a lock with no process number is never taken over; the hint names it and nothing is installed", () => {
+  const src = fakePackage("pkg-lock-empty");
+  const home = path.join(tmp, "home-lock-empty");
+  const lock = path.join(home, ".onionskin", "install.lock");
+  fs.mkdirSync(lock, { recursive: true });
+  const r = install(src, home);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(r.stdout.includes("Another Onionskin install or update is running. Try again when it finishes."), r.stdout);
+  assert.ok(r.stdout.includes(`If none is running, delete this folder and try again: ${lock}`), r.stdout);
+  assert.ok(fs.statSync(lock).isDirectory(), "the lock is left in place");
+  assert.equal(fs.existsSync(path.join(home, ".onionskin", "app")), false);
+  assert.equal(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), false);
+});
+
+test("D1: a stale lock taken over by another installer after it was read is put back, not removed", () => {
+  const src = fakePackage("pkg-lock-race");
+  const home = path.join(tmp, "home-lock-race");
+  const lock = path.join(home, ".onionskin", "install.lock");
+  const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout.trim();
+  fs.mkdirSync(lock, { recursive: true });
+  fs.writeFileSync(path.join(lock, "pid"), `${dead}\n`);
+  // Another installer (stood in for by this test process) takes over the dead lock just before this one moves it aside.
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "mv"), `#!/bin/sh
+case "$1" in */install.lock) /bin/rm -rf "$1"; /bin/mkdir "$1"; echo ${process.pid} > "$1/pid";; esac
+/bin/mv "$@"
+`, { mode: 0o755 });
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--no-checker"], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Another Onionskin install or update is running/);
+  assert.equal(fs.readFileSync(path.join(lock, "pid"), "utf8").trim(), String(process.pid), "the live installer's lock is back in place");
+  assert.deepEqual(fs.readdirSync(path.dirname(lock)).filter((n) => n.startsWith("install.lock.stale")), []);
+  assert.equal(fs.existsSync(path.join(home, ".onionskin", "app")), false, "nothing was published");
+  assert.equal(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), false);
+});
+
+test("D1: a lock folder replaced by another one holding the same number stops the install before the launcher swap", () => {
+  const src = fakePackage("pkg-lock-inode");
+  const home = path.join(tmp, "home-lock-inode");
+  const state = path.join(home, ".onionskin");
+  const other = path.join(state, "app", "1.0.0");
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(other, { recursive: true });
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "chmod"), `#!/bin/sh
+/bin/chmod "$@" || exit 1
+case "$2" in "$HOME"/.local/bin/onionskin.tmp.*)
+  L="$HOME/.onionskin/install.lock"; P=$(cat "$L/pid"); /bin/rm -rf "$L"; /bin/mkdir "$L"; echo "$P" > "$L/pid";;
+esac
+`, { mode: 0o755 });
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--no-checker"], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Another Onionskin install or update is running/);
+  assert.equal(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), false, "the launcher was not swapped");
+  assert.ok(fs.existsSync(other), "nothing was pruned");
+});
+
+test("D1: a lock taken over before a first install publishes leaves no app folder and the other lock in place", async () => {
+  const src = fakePackage("pkg-lock-first");
+  const home = path.join(tmp, "home-lock-first");
+  fs.mkdirSync(home);
+  const lock = path.join(home, ".onionskin", "install.lock", "pid");
+  const sleeper = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+  const closed = new Promise((resolve) => sleeper.once("close", resolve));
+  try {
+    fs.writeFileSync(path.join(src, "src", "cli.js"), `
+      if (process.argv[2] === "--version") {
+        require("node:fs").writeFileSync(${JSON.stringify(lock)}, "${sleeper.pid}");
+        console.log("9.9.9");
+      }
+    `);
+    const r = install(src, home);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /Another Onionskin install/);
+    assert.equal(fs.readFileSync(lock, "utf8"), String(sleeper.pid));
+    assert.equal(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9")), false);
+    assert.equal(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), false);
+  } finally {
+    sleeper.kill();
+    await closed;
+  }
+});
+
+test("D3: with ONIONSKIN_STATE_DIR set, the installer sets up the deeper checks in that folder", () => {
+  const src = fakePackage("pkg-custom-state");
+  const home = path.join(tmp, "home-custom-state");
+  const custom = path.join(tmp, "custom-state");
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(src, "src", "cli.js"), `
+    const fs = require("node:fs"), path = require("node:path");
+    if (process.argv[2] === "--version") console.log("9.9.9");
+    else if (process.argv[2] === "setup-checker") {
+      const bin = path.join(process.env.ONIONSKIN_STATE_DIR, "venv", "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, "python"), "#!/bin/sh\\n", { mode: 0o755 });
+    }
+  `);
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh")], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, ONIONSKIN_STATE_DIR: custom, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(r.stdout.includes(`Checking the Python libraries in ${custom}/venv`), r.stdout);
+  assert.match(r.stdout, /^ {2}done$/m);
+  assert.ok(fs.existsSync(path.join(custom, "venv", "bin", "python")));
+  assert.equal(fs.existsSync(path.join(home, ".onionskin", "venv")), false, "nothing in the default folder");
+  assert.ok(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9")), "the app copy stays in ~/.onionskin");
+});
+
+// Uninstall with a state folder set by ONIONSKIN_STATE_DIR and a checker: each sentence says only what is true afterwards. A custom
+// state folder outside ~/.onionskin is never removed: it is named as a quoted path on its own line, never as a command to paste.
+// `setup(home)` makes the folders and returns the ONIONSKIN_STATE_DIR value (null: unset); `venvAt(home)` is where the checker really is
+// (null: none); `opts.cwd` is the folder the uninstall runs in (for a relative value).
+function uninstallWithChecker(name, setup, venvAt, args = [], opts = {}) {
+  const src = fakePackage(`pkg-${name}`);
+  const home = path.join(tmp, `home-${name}`);
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const stateDir = setup(home);
+  const venv = venvAt(home);
+  if (venv) fs.mkdirSync(venv, { recursive: true });
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--uninstall", ...args], {
+    cwd: opts.cwd ? opts.cwd(home) : undefined,
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, ...(stateDir ? { ONIONSKIN_STATE_DIR: stateDir } : {}), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /rm -rf/, "no command to paste");
+  return { r, home, venv, lines: r.stdout.split("\n") };
+}
+const hasLines = (lines, want) => { const i = lines.indexOf(want[0]); return i >= 0 && want.every((l, k) => lines[i + k] === l); };
+// A custom state folder as the app keeps it: sessions and snapshots in it.
+const customState = (dir) => { for (const d of ["sessions", "snapshots"]) fs.mkdirSync(path.join(dir, d), { recursive: true }); fs.writeFileSync(path.join(dir, "snapshots", "a"), "x"); };
+const customLines = (dir, purge, checker = true) => [
+  `  Your ${checker ? "sessions, snapshots and checker environment" : "sessions and snapshots"} are in the state folder set by ONIONSKIN_STATE_DIR, which ${purge ? "was left in place" : "--purge also leaves in place"}. You can delete this folder yourself if you no longer want it:`,
+  `    "${dir}"`,
+];
+
+test("D3: purge with a custom state folder outside ~/.onionskin, its path with a space, leaves it and says where the snapshots are", () => {
+  const { home, venv, lines, r } = uninstallWithChecker("purge-outside", (h) => {
+    fs.mkdirSync(path.join(h, "external")); // a sibling an unquoted command would hit
+    customState(path.join(h, "external state"));
+    return path.join(h, "external state");
+  }, (h) => path.join(h, "external state", "venv"), ["--purge"]);
+  assert.equal(fs.existsSync(path.join(home, ".onionskin")), false);
+  assert.ok(fs.existsSync(venv), "the checker outside is not removed");
+  assert.ok(fs.existsSync(path.join(home, "external state", "snapshots", "a")), "the snapshots outside are not removed");
+  assert.ok(fs.existsSync(path.join(home, "external")));
+  assert.ok(lines.includes(`  removed ${home}/.onionskin`), r.stdout);
+  assert.ok(hasLines(lines, customLines(path.join(home, "external state"), true)), r.stdout);
+  assert.doesNotMatch(r.stdout, /included|left in place, outside/);
+});
+
+test("D3: purge with a custom state folder given relative, with a trailing slash, finds it where the app does", () => {
+  const { home, lines, r } = uninstallWithChecker("purge-relative", (h) => {
+    customState(path.join(h, "work", "rel state"));
+    return "rel state/";
+  }, () => null, ["--purge"], { cwd: (h) => path.join(h, "work") });
+  assert.ok(lines.includes(`  removed ${home}/.onionskin`), r.stdout);
+  assert.ok(hasLines(lines, customLines(path.join(home, "work", "rel state"), true, false)), r.stdout);
+  assert.ok(fs.existsSync(path.join(home, "work", "rel state", "snapshots", "a")));
+});
+
+test("D3: purge with a custom state folder inside ~/.onionskin says the snapshots and the checker were removed with it", () => {
+  const { home, venv, lines, r } = uninstallWithChecker("purge-inside", (h) => {
+    customState(path.join(h, ".onionskin", "custom"));
+    return path.join(h, ".onionskin", "custom") + "/";
+  }, (h) => path.join(h, ".onionskin", "custom", "venv"), ["--purge"]);
+  assert.equal(fs.existsSync(venv), false);
+  assert.equal(fs.existsSync(path.join(home, ".onionskin")), false);
+  assert.ok(lines.includes(`  removed ${home}/.onionskin (snapshots and checker environment included)`), r.stdout);
+  assert.doesNotMatch(r.stdout, /left in place|ONIONSKIN_STATE_DIR/);
+});
+
+test("D3: purge with a custom state folder reached through a link inside ~/.onionskin leaves it, at its real place", () => {
+  const { home, venv, lines, r } = uninstallWithChecker("purge-linked", (h) => {
+    customState(path.join(h, "real-state"));
+    fs.symlinkSync(path.join(h, "real-state"), path.join(h, ".onionskin", "linked"));
+    return path.join(h, ".onionskin", "linked");
+  }, (h) => path.join(h, "real-state", "venv"), ["--purge"]);
+  assert.equal(fs.existsSync(path.join(home, ".onionskin")), false);
+  assert.ok(fs.existsSync(venv), "the linked checker survives");
+  assert.ok(fs.existsSync(path.join(home, "real-state", "snapshots", "a")), "the linked snapshots survive");
+  assert.ok(lines.includes(`  removed ${home}/.onionskin`), r.stdout);
+  assert.ok(hasLines(lines, customLines(path.join(home, "real-state"), true)), r.stdout);
+  assert.doesNotMatch(r.stdout, /included/);
+});
+
+test("D3: purge after an install made with --no-checker does not report removing a checker", () => {
+  const { home, lines, r } = uninstallWithChecker("purge-none", () => null, () => null, ["--purge"]);
+  assert.equal(fs.existsSync(path.join(home, ".onionskin")), false);
+  assert.ok(lines.includes(`  removed ${home}/.onionskin (snapshots included)`), r.stdout);
+  assert.doesNotMatch(r.stdout, /checker|ONIONSKIN_STATE_DIR/);
+});
+
+test("D3: purge with the variable unset and a checker that is a link out of ~/.onionskin says the checker was left, and where", () => {
+  const { home, venv, lines, r } = uninstallWithChecker("purge-venv-link", (h) => {
+    fs.mkdirSync(path.join(h, "elsewhere", "venv"), { recursive: true });
+    fs.symlinkSync(path.join(h, "elsewhere", "venv"), path.join(h, ".onionskin", "venv"));
+    return null;
+  }, () => null, ["--purge"]);
+  assert.ok(fs.existsSync(path.join(home, "elsewhere", "venv")));
+  assert.ok(lines.includes(`  removed ${home}/.onionskin (snapshots included)`), r.stdout);
+  assert.ok(hasLines(lines, [
+    "  The checker environment was left in place, outside that folder. You can delete this folder yourself if you no longer want it:",
+    `    "${path.join(home, "elsewhere", "venv")}"`,
+  ]), r.stdout);
+  assert.equal(venv, null);
+});
+
+test("D3: uninstall without purge says where the snapshots and the checker are kept", () => {
+  const inside = uninstallWithChecker("keep-inside", () => null, (h) => path.join(h, ".onionskin", "venv"));
+  assert.ok(inside.lines.includes(`  kept ${inside.home}/.onionskin (your snapshots and the checker environment). To delete it too, run the uninstall again with --purge.`), inside.r.stdout);
+  const none = uninstallWithChecker("keep-none", () => null, () => null);
+  assert.ok(none.lines.includes(`  kept ${none.home}/.onionskin (your snapshots). To delete it too, run the uninstall again with --purge.`), none.r.stdout);
+  assert.doesNotMatch(none.r.stdout, /checker|ONIONSKIN_STATE_DIR/);
+  const outside = uninstallWithChecker("keep-outside", (h) => { customState(path.join(h, "external state")); return path.join(h, "external state"); }, (h) => path.join(h, "external state", "venv"));
+  assert.ok(outside.lines.includes(`  kept ${outside.home}/.onionskin. To delete it too, run the uninstall again with --purge.`), outside.r.stdout);
+  assert.ok(hasLines(outside.lines, customLines(path.join(outside.home, "external state"), false)), outside.r.stdout);
+  assert.doesNotMatch(outside.r.stdout, /your snapshots\)|outside that folder/);
+});
+
+test("a dry run with a space in HOME prints each removal path in double quotes", () => {
+  const src = fakePackage("pkg-dry-space");
+  const home = path.join(tmp, "home dry space");
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const r = install(src, home, "--uninstall", "--purge", "--dry-run");
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const lines = r.stdout.split("\n");
+  for (const p of [`${home}/.local/bin/onionskin`, `${home}/.onionskin/app`, `${home}/.onionskin`]) {
+    assert.ok(lines.some((l) => l.startsWith("  [dry run] ") && l.endsWith(` "${p}"`)), `${p} quoted:\n${r.stdout}`);
+  }
+  assert.ok(!lines.some((l) => l.startsWith("  [dry run] rm") && l.includes(` ${home}/`)), "no unquoted path");
+  assert.ok(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9")), "nothing removed");
+});
+
+test("the start check accepts a package whose workers, lazy imports and URL workers are all present", () => {
+  const src = fakePackage("pkg-refs-ok");
+  const home = path.join(tmp, "home-refs-ok");
+  fs.mkdirSync(home);
+  fs.mkdirSync(path.join(src, "src", "ops"));
+  fs.writeFileSync(path.join(src, "src", "offload.js"), 'startWorker("open-worker.js"); new URL("./worker-host.js", import.meta.url); import("./lazy.js");\n');
+  fs.writeFileSync(path.join(src, "src", "ops", "run.js"), 'import { x } from "../lazy.js";\nconst t = `./${"name"}`;\n');
+  for (const f of ["open-worker.js", "worker-host.js", "lazy.js"]) fs.writeFileSync(path.join(src, "src", f), "");
+  // a built page: local bundle and stylesheet present; absolute URLs, data: and anchors are not files to check
+  const dist = path.join(src, "web", "dist");
+  fs.mkdirSync(path.join(dist, "assets"));
+  fs.writeFileSync(path.join(dist, "assets", "index-a.js"), "x");
+  fs.writeFileSync(path.join(dist, "assets", "index-a.css"), "x");
+  fs.writeFileSync(path.join(dist, "index.html"), '<!doctype html><script type="module" crossorigin src="/assets/index-a.js"></script><link rel="stylesheet" href="./assets/index-a.css?v=1"><link href="https://example.com/x.css"><img src="data:image/png;base64,AA"><a href="#top"></a>');
+  const r = install(src, home);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9", "src", "open-worker.js")));
+});
+
+// A same-version reinstall whose publish fails after another installer (this test process) took the lock. `publish` is the stub
+// for the failing move of the staged copy: it can also put another installer's copy under the version's name first.
+function failedPublishAfterLockLoss(name, publish = "") {
+  const src = fakePackage(`pkg-${name}`);
+  const home = path.join(tmp, `home-${name}`);
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const apps = path.join(home, ".onionskin", "app");
+  fs.writeFileSync(path.join(apps, "9.9.9", "old-marker"), "old");
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "mv"), `#!/bin/sh
+case "$1" in */.incoming-*) echo ${process.pid} > "$HOME/.onionskin/install.lock/pid"; ${publish} exit 1;; esac
+/bin/mv "$@"
+`, { mode: 0o755 });
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--no-checker"], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Another Onionskin install or update is running/);
+  assert.equal(fs.readFileSync(path.join(home, ".onionskin", "install.lock", "pid"), "utf8").trim(), String(process.pid), "the other lock is left alone");
+  return { r, apps, aside: fs.readdirSync(apps).filter((n) => n.startsWith("9.9.9.old.")) };
+}
+
+test("D1: a failed publish that has lost the lock puts the old copy back when nothing took its name", () => {
+  const { r, apps, aside } = failedPublishAfterLockLoss("lock-rollback");
+  assert.deepEqual(aside, [], fs.readdirSync(apps).join(","));
+  assert.equal(fs.readFileSync(path.join(apps, "9.9.9", "old-marker"), "utf8"), "old", "the launcher's copy is back");
+  assert.doesNotMatch(r.stdout, /set aside/);
+});
+
+test("D1: a failed publish that has lost the lock leaves the old copy aside, and says where, when another copy took its name", () => {
+  const { r, apps, aside } = failedPublishAfterLockLoss("lock-rollback-taken", 'mkdir "$2" && echo other > "$2/other-marker";');
+  assert.equal(fs.readFileSync(path.join(apps, "9.9.9", "other-marker"), "utf8"), "other\n", "the other installer's copy is untouched");
+  assert.equal(fs.existsSync(path.join(apps, "9.9.9", "old-marker")), false);
+  assert.deepEqual(fs.readdirSync(path.join(apps, "9.9.9")), ["other-marker"], "nothing was moved inside it");
+  assert.equal(aside.length, 1, fs.readdirSync(apps).join(","));
+  assert.equal(fs.readFileSync(path.join(apps, aside[0], "old-marker"), "utf8"), "old");
+  const where = path.join(apps, aside[0]);
+  assert.ok(r.stdout.split("\n").includes(`  Another copy was installed at ${path.join(apps, "9.9.9")} meanwhile, so your previous copy was left at ${where}.`), r.stdout);
+});
+
+test("D1: --uninstall that loses its lock after removing the app leaves the skill folders alone", () => {
+  const src = fakePackage("pkg-lock-skills");
+  const home = path.join(tmp, "home-lock-skills");
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const skill = path.join(home, ".claude", "skills", "onionskin");
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: onionskin\n---\n");
+  const lock = path.join(home, ".onionskin", "install.lock");
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "rm"), `#!/bin/sh
+/bin/rm "$@" || exit 1
+case "$2" in */.onionskin/app) echo ${process.pid} > "$HOME/.onionskin/install.lock/pid";; esac
+`, { mode: 0o755 });
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--no-checker", "--uninstall"], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Another Onionskin install or update is running/);
+  assert.ok(fs.existsSync(path.join(skill, "SKILL.md")), "the skill folder was not removed without the lock");
+  assert.equal(fs.readFileSync(path.join(lock, "pid"), "utf8").trim(), String(process.pid));
+});
+
+test("D1: --uninstall that loses its lock after stopping the server removes neither the launcher nor the app", async () => {
+  const src = fakePackage("pkg-lock-uninstall");
+  const home = path.join(tmp, "home-lock-uninstall");
+  fs.mkdirSync(home);
+  const lock = path.join(home, ".onionskin", "install.lock", "pid");
+  const sleeper = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+  const closed = new Promise((resolve) => sleeper.once("close", resolve));
+  try {
+    fs.writeFileSync(path.join(src, "src", "cli.js"), versionCli + `if (process.argv[2] === "stop") require("node:fs").writeFileSync(${JSON.stringify(lock)}, "${sleeper.pid}");\n`);
+    assert.equal(install(src, home).status, 0);
+    const r = install(src, home, "--uninstall");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /Another Onionskin install or update is running/);
+    assert.ok(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), "launcher kept");
+    assert.ok(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9")), "app kept");
+    assert.equal(fs.readFileSync(lock, "utf8"), String(sleeper.pid), "the other lock is left alone");
+  } finally {
+    sleeper.kill();
+    await closed;
+  }
+});
+
+test("D1: exit cleanup removes the lock only when it is still the folder this installer made, not by number alone", () => {
+  const src = fakePackage("pkg-lock-cleanup");
+  const home = path.join(tmp, "home-lock-cleanup");
+  fs.mkdirSync(home);
+  const lock = path.join(home, ".onionskin", "install.lock");
+  // During skill setup, the lock folder is replaced by a new folder holding the installer's own number.
+  fs.writeFileSync(path.join(src, "src", "cli.js"), versionCli + `if (process.argv[2] === "setup") {
+    const fs = require("node:fs"), L = ${JSON.stringify(lock)}, pid = fs.readFileSync(L + "/pid", "utf8");
+    fs.rmSync(L, { recursive: true }); fs.mkdirSync(L); fs.writeFileSync(L + "/pid", pid);
+  }\n`);
+  const r = install(src, home);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(fs.existsSync(lock), "a lock folder this installer did not make is left in place");
+  // the ordinary case: the installer's own lock is removed on exit
+  const plain = fakePackage("pkg-lock-cleanup-plain");
+  const home2 = path.join(tmp, "home-lock-cleanup-plain");
+  fs.mkdirSync(home2);
+  assert.equal(install(plain, home2).status, 0);
+  assert.equal(fs.existsSync(path.join(home2, ".onionskin", "install.lock")), false);
 });

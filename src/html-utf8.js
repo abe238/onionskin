@@ -25,7 +25,7 @@ export const copyable = (bytes) => {
 export function utf8Bytes(bytes) {
   const d = decodeHtml(bytes);
   if (d.ok) return { ok: false, reason: "This file is saved as UTF-8 already; open it as it is." };
-  if (!d.copyable) return { ok: false, reason: NOT_READABLE_ENCODING };
+  if (!d.copyable) return { ok: false, reason: d.sentence || NOT_READABLE_ENCODING };
   let text = new TextDecoder("windows-1252").decode(bytes);
   // the declaration sits in the first 1,024 bytes (src/html.js declaredCharset); those are one byte a character in windows-1252
   const head = text.slice(0, 1024).replace(/<!--[\s\S]*?(?:-->|$)|(<meta\b[^>]*?\bcharset\s*=\s*["']?\s*)([A-Za-z0-9_.:-]+)/gi, (m, pre) => (pre ? `${pre}utf-8` : m));

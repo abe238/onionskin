@@ -6,7 +6,7 @@
 // path. Everything here fails quietly: learning never stops a Send, and a step that fails learns nothing.
 import { buildVoiceBatch, printedSize } from "./batch.js";
 import { env } from "./constants.js";
-import { checkRegularOwned, readDoc, sha256 } from "./fsutil.js";
+import { checkRegularOwned, readOwned, sha256 } from "./fsutil.js";
 import { userText } from "./sanitize.js";
 import { HttpError } from "./session.js"; // a cycle (session.js imports voiceJob from here): both only use each other inside functions
 import { readStamps } from "./stamps.js";
@@ -277,6 +277,7 @@ export async function buildVoiceRequest(sessions, key, body) {
   if (s.pending || s.delivered) throw httpError(409, "Wait for the agent to finish, then try again.", "busy");
   if (body.open_file && s.format === "xlsx") throw new VoiceError("Excel files are not used as writing samples.");
   if (body.open_file && s.format === "html") throw new VoiceError("HTML pages are not used as writing samples."); // PLAN-html D9
+  if (body.open_file && s.format === "markdown") throw new VoiceError("Markdown files are not used as writing samples in this version: paste the text instead."); // slice 1: no sample reader for them
   const examples = body.edits ? readEvidence().examples : [];
   if (!body.open_file && !files.length && !body.texts.length && !examples.length) throw new VoiceError(NO_SAMPLE);
   const saved = readGuide();
@@ -290,7 +291,7 @@ export async function buildVoiceRequest(sessions, key, body) {
     let bytes;
     try {
       checkRegularOwned(s.file);
-      bytes = readDoc(s.file);
+      bytes = readOwned(s.file);
     } catch {
       throw httpError(409, "This file could not be read. Reload it, then try again.", "gone");
     }

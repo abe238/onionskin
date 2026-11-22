@@ -22,7 +22,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const BIN = PRODUCT.bin;
 const HELP = `${PRODUCT.name}
 
-  ${BIN} open <file.docx|xlsx|pptx|html|htm> [--no-open] [--no-agent|--agent]   Open the file in the browser editor (also: ${BIN} <file>). At a terminal it also starts Claude Code on it in the background; --no-agent only opens the page, --agent prints the agent's output
+  ${BIN} open <file.docx|xlsx|pptx|html|htm|md|markdown> [--no-open] [--no-agent|--agent]   Open the file in the browser editor (also: ${BIN} <file>). At a terminal it also starts Claude Code on it in the background; --no-agent only opens the page, --agent prints the agent's output
   ${BIN} poll <file> [--ack] [--full] [--timeout <secs>] [--agent]   Block until the user hits Send, print the batch as JSON (--full: the complete batch even when you already have the rules)
   ${BIN} status <file> [--ticket]                 Print session state without blocking (--ticket: re-read your delivery's ticket)
   ${BIN} apply <file> --ops <ops.json> --lease <ticket> [--dry-run] [--partial] [--summary] [--batch <batch.json>]
@@ -652,14 +652,19 @@ async function main() {
     process.exit(2);
   }
   if (a.cmd === "open") {
+    // a bound agent gets no launch link for another file: refused before the server is asked, the same words as status and poll
+    if (!agentMayUse(process.env[`${PRODUCT.envPrefix}_HOLDER`], file)) throw new Error(NOT_YOUR_FILE);
     await ensureServer();
     // a person at a terminal (not --no-agent): the server starts its background agent on the file
-    const r = await openRequest(aud.offer ? { file, agent: "background" } : { file });
+    // the holder goes along so the server checks the binding against the file it actually opens
+    const holder = process.env[`${PRODUCT.envPrefix}_HOLDER`];
+    const r = await openRequest({ file, ...(aud.offer ? { agent: "background" } : {}), ...(holder ? { holder } : {}) });
     const j = json(r.text);
-    if (r.status !== 200 && j.code === "not_utf8" && /\.html?$/i.test(file)) {
-      // a page saved as windows-1252 or ISO-8859-1: the fixed sentence (R18) and the command that makes the copy it offers
-      const { copyable, openRefusal } = await import("./html-utf8.js");
-      if (copyable(fs.readFileSync(file))) throw new Error(openRefusal(BIN, file, shellQuote));
+    if (r.status !== 200 && j.code === "not_utf8" && j.copyable === true && /\.html?$/i.test(file)) {
+      // a page saved as windows-1252 or ISO-8859-1: the fixed sentence (R18) and the command that makes the copy it offers. Whether a copy
+      // can be made is the open worker's answer for the bytes it read (the server's refusal carries it); the file is not read again here
+      const { openRefusal } = await import("./html-utf8.js");
+      throw new Error(openRefusal(BIN, file, shellQuote));
     }
     if (r.status !== 200) throw new Error(j.error || "could not open that file");
     const realPath = fs.realpathSync(file);

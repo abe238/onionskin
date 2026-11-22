@@ -2,7 +2,7 @@ import { partRels } from "../package.js";
 import { openZip } from "../zip.js";
 import { checkExpect, engineFailure, excerpt, fail, refused } from "./common.js";
 import { openEngine } from "./engine.js";
-import { countMatches, findRanges, pickMatches, rangesOf } from "./runs.js";
+import { countMatches, findRanges, overlapRefusal, pickMatches, rangesOf } from "./runs.js";
 
 /**
  * PPTX driver (headless Engine: pptx.slide to read a slide model, pptx.setText to write one shape's paragraphs, pptx.slides to
@@ -313,6 +313,8 @@ export async function exec(st, b) {
       const slideIndex = f.slide.index;
       const hits = [];
       f.el.text.paras.forEach((p, pi) => findRanges(paraText(p), op.find, op.match_case !== false).forEach(({ start, end }) => hits.push({ pi, at: start, len: end - start })));
+      const overlap = overlapRefusal(f.el.text.paras.map(paraText), op.find, op.match_case !== false, hits.length, op);
+      if (overlap) return refused("overlapping_matches", overlap);
       const pick = pickMatches(hits.map((_, i) => i), op);
       if (pick.error) return fail("anchor_not_found", pick.error);
       const chosen = pick.starts.map((i) => hits[i]);

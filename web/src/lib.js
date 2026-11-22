@@ -53,7 +53,7 @@ export async function api(path, { method = "GET", body, raw = false, keepalive =
     });
     if (raw) {
       if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
-      return { buf: await res.arrayBuffer(), sha: res.headers.get("x-sha256") };
+      return { buf: await res.arrayBuffer(), sha: res.headers.get("x-sha256"), rev: res.headers.get("x-revision") };
     }
     const json = await res.json().catch((err) => {
       if (ctl.signal.aborted) throw err;
@@ -143,6 +143,8 @@ export function labelFor(format, loc, ctx = {}) {
   if (format === "xlsx") return `${loc.sheetName || `Sheet ${loc.sheetIndex + 1}`}!${loc.range || ""}`.replace(/!$/, "");
   // HTML: the words of the element (the server's text once re-resolved), under its heading
   if (format === "html") return [ctx.heading ? `Under "${words(ctx.heading, 5, 32)}"` : null, ctx.text ? `"${words(ctx.text)}"` : "A part of the page"].filter(Boolean).join(", ");
+  // Markdown: the source words of the range (the server's text once resolved, else the page's quote)
+  if (format === "markdown") return ctx.text ? `"${words(ctx.text)}"` : "A part of the file";
   if (format !== "pptx") return "unknown place"; // a format this page does not know: no deck words for it
   const cell = loc.cell ? `, row ${loc.cell.row + 1} col ${loc.cell.col + 1}` : "";
   return `Slide ${loc.slideIndex + 1}${loc.shapeId != null ? `, shape ${loc.shapeName ? `"${loc.shapeName}"` : loc.shapeId}` : ""}${cell}`;
@@ -158,6 +160,7 @@ export function locFromResolved(format, a) {
 
 const locKey = (format, loc) => {
   if (format === "html") return `${loc?.nodeId}`; // one source text node: typing in it is one change
+  if (format === "markdown") return `${loc?.from}:${loc?.to}`;
   if (format === "docx") return JSON.stringify(loc.blockPath);
   if (format === "xlsx") return `${loc.sheetIndex}:${loc.range}`;
   if (format !== "pptx") return `?:${JSON.stringify(loc ?? null)}`; // a format this page does not know: the place as it came

@@ -41,15 +41,16 @@ const foldChar = (ch) => {
  * matched length, which with match_case off is not always find.length: "İ" folds to two units). Matches are found in the folded text
  * and mapped back. Rule: a match must begin and end between original characters; a folded match that starts or ends inside one
  * character's expansion ("i" against the "i" + U+0307 that U+0130 folds to) is not reported, because replacing it would cut a
- * character in half. Matching is leftmost first; after a rejected candidate the search resumes one unit later.
+ * character in half. Matching is leftmost first; after a rejected candidate the search resumes one unit later. With `overlap` the search
+ * resumes one unit after the start of every match too, so matches may overlap (countOverlapping only).
  * Linear, with no record per match: the folded text and its map back to the original are built once (typed arrays, one entry per
  * folded unit) and only when match_case is off. Ceiling: a pathological text matches millions of times (8 million characters of "İ "
  * against "i̇": 4 million), each one a call of fn.
  */
-export function eachMatch(text, find, matchCase, fn) {
+export function eachMatch(text, find, matchCase, fn, overlap = false) {
   if (!find) return;
   if (matchCase) {
-    for (let at = text.indexOf(find); at >= 0; at = text.indexOf(find, at + find.length)) fn(at, at + find.length);
+    for (let at = text.indexOf(find); at >= 0; at = text.indexOf(find, at + (overlap ? 1 : find.length))) fn(at, at + find.length);
     return;
   }
   const needle = foldCase(find);
@@ -71,7 +72,7 @@ export function eachMatch(text, find, matchCase, fn) {
   if (plain) {
     // nothing but ASCII: folding keeps every offset
     const hay = text.toLowerCase();
-    for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + needle.length)) fn(at, at + needle.length);
+    for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + (overlap ? 1 : needle.length))) fn(at, at + needle.length);
     return;
   }
   const from = new Int32Array(n + 1); // folded unit -> offset in text of the character it came from
@@ -102,7 +103,7 @@ export function eachMatch(text, find, matchCase, fn) {
     const end = at + needle.length;
     if (head[at] && head[end]) {
       fn(from[at], from[end]);
-      at = hay.indexOf(needle, end);
+      at = hay.indexOf(needle, overlap ? at + 1 : end);
     } else at = hay.indexOf(needle, at + 1);
   }
 }
@@ -112,6 +113,28 @@ export function findRanges(text, find, matchCase = true) {
   const out = [];
   eachMatch(text, find, matchCase, (start, end) => out.push({ start, end }));
   return out;
+}
+
+/** How many places `find` occurs at when a match may begin inside the one before ("ana" in "banana": 2, findRanges reports 1). */
+export function countOverlapping(text, find, matchCase = true) {
+  let n = 0;
+  eachMatch(text, find, matchCase, () => n++, true);
+  return n;
+}
+
+/**
+ * B1 (refuse, not guess): a reply bound to a comment's anchor, with neither "occurrence" nor "all", where the scan reports one match
+ * but `find` occurs at more places that overlap it ("banana", the last "ana" selected). The single match is the first copy, which may
+ * not be the one the comment points at, and the anchor's offsets are not trusted to choose (stale after typing; the PowerPoint reader
+ * gives the first copy's). Returns the refusal reason, or null when the op runs as before. `n` is how many matches findRanges reported
+ * over all of `texts`. Ceiling: one more scan of the target's text, only when exactly one match was reported.
+ */
+export function overlapRefusal(texts, find, matchCase, n, op) {
+  if (n !== 1 || op.all || op.occurrence || !op.target || !("anchor_id" in op.target)) return null;
+  let total = 0;
+  for (const t of texts) total += countOverlapping(t, find, matchCase);
+  if (total <= 1) return null;
+  return `the text to find occurs ${total} times in the target, overlapping each other, so the change might land on a copy the comment does not point at; nothing was changed. Give a longer "find" that occurs only once`;
 }
 
 /** Start offsets of the matches findRanges reports. */

@@ -299,7 +299,10 @@ export async function updateCommand(args, d) {
   };
   let noChecker = true;
   try {
-    noChecker = !fs.lstatSync(path.join(home, PRODUCT.stateDirName, "venv", "pyvenv.cfg")).isFile();
+    // The state folder the app uses (src/paths.js stateDir): ONIONSKIN_STATE_DIR when set, else ~/.onionskin.
+    const customState = env[`${PRODUCT.envPrefix}_STATE_DIR`];
+    const state = customState ? path.resolve(customState) : path.join(home, PRODUCT.stateDirName);
+    noChecker = !fs.lstatSync(path.join(state, "venv", "pyvenv.cfg")).isFile();
   } catch {
     // An inaccessible or missing configuration means there is no environment to update.
   }

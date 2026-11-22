@@ -10,6 +10,7 @@ import { ReviewDraftButton } from "./VoiceReviewButton.jsx";
 import { pendingWords, stageOf } from "./stage.js";
 import { buildStack } from "./stack.js";
 import { Question } from "./Question.jsx";
+import { MD_SELECT_AGAIN, MD_SELECT_AGAIN_FILE, MD_SEND_NO_PLACES } from "./md-edit.js";
 import { QuickChange } from "./QuickChange.jsx";
 import { ReviewDropped, ReviewRow, Suggestions } from "./Suggestions.jsx";
 import { ShieldChip, ShieldNote } from "./Shield.jsx";
@@ -25,6 +26,7 @@ const STACK_EMPTY = {
   xlsx: "Edit a cell, or click a cell or drag a range in Comment mode. Each thing you do lands here, newest at the bottom, with the agent's answers.",
   pptx: "Edit a slide, or click a shape or slide in Comment mode. Each thing you do lands here, newest at the bottom, with the agent's answers.",
   html: "Click text to edit, or select text and press Comment. Each thing you do lands here, newest at the bottom, with the agent's answers.",
+  markdown: "Select words in the preview and press Comment, or click a block in Comment mode. Each thing you do lands here, newest at the bottom, with the agent's answers.",
   docx: "Edit the document, or select text and press Comment. Each thing you do lands here, newest at the bottom, with the agent's answers.",
 };
 
@@ -43,6 +45,18 @@ function Diff({ before, after }) {
   );
 }
 
+// near a box's limit: a count; at the limit: say the text may have been cut (the box drops what is pasted past it, with no other sign)
+function LimitCount({ value, max, testid }) {
+  const n = String(value || "").length;
+  if (n < max - 200) return null;
+  const atMax = n >= max;
+  return (
+    <p className={`limit-note${atMax ? " warn" : ""}`} data-testid={testid} data-at-limit={atMax ? "1" : "0"} role="status">
+      {atMax ? "This is the most the box holds. Text you pasted may have been cut: check the end of it." : `${n.toLocaleString("en-US")} of ${max.toLocaleString("en-US")} characters`}
+    </p>
+  );
+}
+
 function Num({ n, pin, done }) {
   return (
     <span className={`num ${pin ? "pin2" : ""} ${done ? "done" : ""}`} aria-hidden="true">
@@ -51,7 +65,7 @@ function Num({ n, pin, done }) {
   );
 }
 
-function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus, hovered, noteHasWords, onFocused, onText, onDelete, onGoto, onBack, onAnswer, onHover, format, activeSheet, open, canFold, onToggle }) {
+function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus, hovered, noteHasWords, onFocused, onText, onDelete, onGoto, onBack, onAnswer, onHover, format, activeSheet, open, canFold, onToggle, mdDraft = false }) {
   const ta = useRef(null);
   const li = useRef(null);
   useEffect(() => {
@@ -64,12 +78,19 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
     }
   }, [focus, open]); // eslint-disable-line react-hooks/exhaustive-deps
   const editable = c.status === "draft" && !c.answer && !readOnly; // an answered comment keeps the words the question was about
-  const moved = rz && !rz.loc;
+  // Markdown: a comment has a place only on the revision it was made on. With none: one the agent answered just shows its answer (no
+  // claim about a place, no warning); an open one asks, calmly, to be selected again (MD_SELECT_AGAIN)
+  // (an unsent comment while the person has an unsent typed edit: that edit is written first, so no place of the file as it is stands)
+  // (a comment on the file while the person has an unsent edit: the text changed after it was made. A comment made ON that draft has
+  // its place in it: an ordinary draft card)
+  const mdNoPlace = format === "markdown" && ((rz ? !rz.loc : !c.anchor?.location) || (mdDraft && c.status === "draft" && !c.anchor?.location?.draftSha));
+  const mdAgain = mdNoPlace && !["done", "declined", "asked"].includes(c.status);
+  const moved = format === "markdown" ? false : rz && !rz.loc;
   const loc = rz?.loc || c.anchor?.location;
-  const state = moved ? "moved" : rz ? "ok" : "local";
+  const state = mdAgain ? "select-again" : mdNoPlace ? "no-place" : moved ? "moved" : rz ? "ok" : "local";
   const pin = c.kind === "pin";
   const prot = isProtected(loc);
-  const label = labelFor(format, loc, { text: rz?.text, heading: rz?.heading });
+  const label = labelFor(format, loc, { text: rz?.text ?? (format === "markdown" ? c.anchor?.quote : undefined), heading: rz?.heading });
   const otherSheet = format === "xlsx" && !!loc?.sheetName && !!activeSheet && loc.sheetName !== activeSheet;
   // A comment on selected words inside a PPTX shape: the host reports only the shape box, so the card quotes the words and says the outline is the whole shape.
   const inShape = format === "pptx" && c.kind === "text" && !!c.anchor?.quote && loc?.shapeId != null;
@@ -109,8 +130,12 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
             {c.text || label}
           </button>
         )}
-        <button type="button" className="locate" hidden={!open} onClick={() => onGoto(c)} aria-label={moved ? `${pin ? "Pin" : "Comment"} ${n}: moved or removed` : `${pin ? "Pin" : "Comment"} ${n}: go to ${label}${otherSheet ? " (another sheet)" : ""}`}>
-          {moved ? (
+        <button type="button" className="locate" hidden={!open} onClick={() => onGoto(c)} aria-label={mdAgain ? `${pin ? "Pin" : "Comment"} ${n}: select the words again` : moved ? `${pin ? "Pin" : "Comment"} ${n}: moved or removed` : `${pin ? "Pin" : "Comment"} ${n}: go to ${label}${otherSheet ? " (another sheet)" : ""}`}>
+          {mdAgain ? (
+            <>
+              <Icon name="info" size={13} /> Select again
+            </>
+          ) : moved ? (
             <>
               <Icon name="alert" size={13} /> Moved or removed
             </>
@@ -140,6 +165,11 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
       </div>
       <div className="card-b" hidden={!open}>
       {moved && <p className="moved-note">This place is no longer in the file. Your comment is still sent.</p>}
+      {mdAgain && (
+        <p className="select-again-note" data-testid="select-again">
+          {mdDraft ? MD_SELECT_AGAIN : MD_SELECT_AGAIN_FILE}
+        </p>
+      )}
       {((!pin && c.anchor?.quote) || (unitText && preview)) && !moved && (
         <blockquote data-testid="card-preview" data-in-shape={inShape ? "1" : undefined}>
           <span>{String(unitText ? preview : c.anchor.quote).slice(0, 140)}</span>
@@ -169,7 +199,13 @@ function Card({ ack, live, mac, readOnly, held, checking, slow, c, n, rz, focus,
         }}
         aria-label={`${pin ? "Pin" : "Comment"} ${n} text`}
       />
+      <LimitCount value={c.text} max={COMMENT_TEXT_MAX} testid="comment-limit" />
       <Question c={c} readOnly={readOnly} onAnswer={onAnswer} />
+      {c.reopened && c.status === "draft" && (
+        <p className="reopened-note" data-testid="reopened">
+          {c.reopened}
+        </p>
+      )}
       {c.result && (
         <p className="agentnote" data-testid="agent-note">
           {mac ? c.result : `Agent: ${c.result}`}
@@ -231,7 +267,7 @@ function RunChecks({ a, canRevert, onRevert, newest }) {
           ))}
         </ul>
       )}
-      {hasError && (
+      {hasError && !a.noRevert && (
         <div className="check-revert" data-testid="check-revert">
           <p>{a.by === "local" ? "The check found something this change may have broken. You can go back to the file as it was before it." : "The check found something the agent may have broken. You can go back to the file as it was before this run."}</p>
           {canRevert && (
@@ -403,6 +439,11 @@ function Run({ a, open, canFold, onToggle, newest, canRevert, onRevert, nOf, byI
               </p>
             ))}
           </div>
+        )}
+        {a.noRevert && (
+          <p className="h-line" data-testid="no-revert">
+            {a.noRevert}
+          </p>
         )}
         <RunChecks a={a.kind === "review" ? { ...a, flags: (a.flags || []).filter((f) => f.code !== "bad_suggestion") } : a} newest={newest} canRevert={canRevert} onRevert={onRevert} />
         {canRevert && !(a.flags || []).some((f) => f.severity === "error") && (
@@ -589,7 +630,7 @@ export function Sidebar(p) {
           <ul className="list stack" data-testid="panel-stack" aria-label="Your edits and comments and the agent's answers, oldest first">
             {stack.map((it) =>
               it.t === "comment" ? (
-                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} held={!!p.held?.ids.has(it.c.id)} checking={!!p.held?.checking} slow={p.sending} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} focus={p.focusId === it.c.id} hovered={p.hoverId === it.c.id} noteHasWords={!!p.note.trim()} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} onHover={p.onHover} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
+                <Card key={it.key} ack={p.ack} mac={macBatches.has(it.c.batchId)} live={waitingOn(it.c, session)} readOnly={p.readOnly} held={!!p.held?.ids.has(it.c.id)} checking={!!p.held?.checking} slow={p.sending} c={it.c} n={nOf.get(it.c.id)} rz={resolved[it.c.id]} mdDraft={!!p.mdDraft} focus={p.focusId === it.c.id} hovered={p.hoverId === it.c.id} noteHasWords={!!p.note.trim()} onFocused={p.onFocused} onText={p.onText} onDelete={p.onDelete} onGoto={p.onGoto} onBack={p.onBack} onAnswer={p.onAnswer} onHover={p.onHover} format={session.format} activeSheet={p.activeSheet} open={cardOpen(it.c)} canFold={cardFold(it.c)} onToggle={() => toggle(it.c.id, cardOpen(it.c))} />
               ) : it.t === "edit" ? (
                 <li key={it.key} className="change" data-testid="change-item" data-kind={it.e.kind}>
                   <div className="change-h">
@@ -621,7 +662,7 @@ export function Sidebar(p) {
                   )}
                 </li>
               ) : (
-                <Run key={it.key} a={it.a} open={runOpen(it.a)} canFold onToggle={() => toggle(it.a.id, runOpen(it.a))} newest={it.a === latest} canRevert={it.a === latest && !session.locked && !p.readOnly} onRevert={p.onRevert} nOf={nOf} byId={byId} />
+                <Run key={it.key} a={it.a} open={runOpen(it.a)} canFold onToggle={() => toggle(it.a.id, runOpen(it.a))} newest={it.a === latest} canRevert={it.a === latest && !session.locked && !p.readOnly && !it.a.noRevert} onRevert={p.onRevert} nOf={nOf} byId={byId} />
               )
             )}
             <Suggestions cards={session.suggestions || []} reviewId={session.activity.find((a) => a.kind === "review")?.batchId} readOnly={p.readOnly} waiting={waitingBatch} resetOn={`${session.seq}`} onChoose={p.onSuggest} onShow={p.onShowSuggestion} />
@@ -629,9 +670,10 @@ export function Sidebar(p) {
         </div>
         </div>
         <div className="pane composer">
-          {session.format !== "html" && <ReviewRow why={closed ? "This session is closed." : waitingBatch ? "Wait for the agent to finish, then try again." : p.counts.edits > 0 ? "Send your edits first, so the agent reads your latest text." : null} readOnly={p.readOnly} resetOn={`${session.seq}`} onReview={p.onReview} />}
+          {session.format !== "html" && session.format !== "markdown" && <ReviewRow why={closed ? "This session is closed." : waitingBatch ? "Wait for the agent to finish, then try again." : p.counts.edits > 0 ? "Send your edits first, so the agent reads your latest text." : null} readOnly={p.readOnly} resetOn={`${session.seq}`} onReview={p.onReview} />}
           <label htmlFor="overall">Overall instructions</label>
           <textarea id="overall" data-testid="overall-note" rows={3} value={p.note} disabled={p.readOnly} readOnly={!!p.held?.note || !!p.rewriting} maxLength={NOTE_MAX} onChange={(e) => p.onNote(e.target.value)} placeholder="Anything the agent should know about this whole batch" />
+          <LimitCount value={p.note} max={NOTE_MAX} testid="note-limit" />
           <QuickChange match={p.quickMatch} agent={p.quickAgent} onAgent={p.onQuickAgent} />
           <StylePrefs guideDirtyRef={p.guideDirtyRef} sid={p.sid} session={session} readOnly={p.readOnly} />
           <button type="button" className="btn primary send" data-testid="send" disabled={!canSend} onClick={p.onSend} title={`${label} (${MOD}+Enter)`} aria-keyshortcuts="Meta+Enter Control+Enter" aria-describedby="send-hint" data-busy={p.busy ? "1" : "0"} data-slow={p.sending ? "1" : "0"}>
@@ -639,6 +681,11 @@ export function Sidebar(p) {
             <span className="send-label">{label}</span>
             {parts.length > 0 && <span className="send-counts">{parts.join(", ")}</span>}
           </button>
+          {p.mdDraft && comments.some((c) => c.status === "draft" && !c.anchor?.location?.draftSha) && (
+            <p className="send-hint" data-testid="md-send-no-places">
+              {MD_SEND_NO_PLACES}
+            </p>
+          )}
           <p className="send-hint" id="send-hint">
             {closed ? "This session is closed." : p.quickLabel ? "Onionskin does this itself on this Mac. You can undo it." : p.readOnly ? "This tab is read-only. Use the other tab to send." : p.pendingSend === 0 && p.heldEdits > 0 ? "What you type now is merged when the agent finishes." : p.pendingSend === 0 ? (working ? `${stage.text || "The agent is working"}. Nothing new to send yet.` : "Nothing to send yet. Edit, comment or write a note.") : working ? `${stage.text || "The agent is working"}. Your next batch waits until it finishes.` : `The agent gets your edits, comments, pins and note as one batch. ${MOD}+Enter sends from any comment box.`}
           </p>

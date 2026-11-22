@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PRODUCT, unknownFormat } from "./constants.js";
+import { ONLY_FORMATS, PRODUCT, unknownFormat } from "./constants.js";
 import { ApplyError, APPLY_EXIT, applyCommand, formatOfPath } from "./apply.js";
 import { loadTicketRecord, parseTicket } from "./lease.js";
 import { NOT_YOUR_FILE, agentMayUse, isAgentHolder } from "./agent-detect.js";
@@ -164,6 +164,8 @@ export function planReplies(batch, input, { partial = false } = {}) {
       return;
     }
     if (r.note !== undefined && typeof r.note !== "string") return errors.push(bad(id, "bad_reply", "note must be a string"));
+    // Markdown: a comment delivered with reply_with "decline" has no place this batch may change: only a decline (or a question) answers it
+    if (format === "markdown" && byId.get(id).reply_with === "decline" && mode !== "decline") return errors.push(bad(id, "decline_only", "this comment has no exact place in this revision of the file (its reply_with is decline), so it cannot be answered with a change", "decline it with a note; put a change you still want elsewhere in the reply's top-level ops"));
     const rep = { comment: id, decline: mode === "decline", note: r.note || autoNote(r, mode), opIndexes: [] };
     replies.push(rep);
     if (mode === "decline") {
@@ -172,11 +174,22 @@ export function planReplies(batch, input, { partial = false } = {}) {
     }
     if (mode === "ops") {
       if (!Array.isArray(r.ops) || !r.ops.length || !r.ops.every(isObj)) return errors.push(bad(id, "bad_reply", "ops must be a non-empty array of full ops"));
+      // Markdown: an op that answers a comment changes that comment's exact range and nothing else, so changing another copy of the
+      // words can never report the selected one as done. Changes elsewhere go in the reply's top-level `ops`.
+      if (format === "markdown") {
+        const a = anchors.get(byId.get(id).anchor_id);
+        const on = a?.resolved && a.locator?.format === "markdown" ? a.locator : null;
+        if (!on) return errors.push(bad(id, "anchor_unresolved", "this comment's anchor is not an exact range of the version the batch was made on, so no op can answer it", "decline it; put a change you still want in the reply's top-level ops"));
+        if (r.ops.some((op) => op.op !== "replace_source" || op.target?.from !== on.from || op.target?.to !== on.to || on.sha256 !== batch.base_sha256 || op.expect?.sha256 !== batch.base_sha256)) return errors.push(bad(id, "op_not_on_anchor", `an op that answers this comment must replace exactly its range (target.from ${on.from}, target.to ${on.to})`, "put a change of any other range in the reply's top-level ops"));
+      }
       for (const op of r.ops) (rep.opIndexes.push(ops.length), ops.push(op), owners.push(id));
       return;
     }
     // shorthand: the anchor of this comment supplies target and expect
     const anchor = anchors.get(byId.get(id).anchor_id);
+    // Markdown: `text` replaces the anchor's exact range; its old text is the anchor's exact source in the batch the session holds, and
+    // its base the batch's. Nothing searches for words, so find+replace is not offered
+    if (format === "markdown") return planMarkdown(batch, anchor, mode, r, rep, ops, owners, (code, reason, fix) => errors.push(bad(id, code, reason, fix)));
     const hash = anchor?.resolved ? anchor.locator?.text_hash : null;
     const refuse = (code, reason, fix) => errors.push(bad(id, code, reason, fix));
     if (!anchor?.resolved || !anchor.locator) return refuse("anchor_unresolved", "this comment's anchor did not resolve to a place in the file", "decline it, or send full `ops` with your own target");
@@ -215,6 +228,20 @@ export function planReplies(batch, input, { partial = false } = {}) {
   const missing = comments.filter((c) => !seen.has(c.id)).map((c) => c.id);
   if (missing.length && !partial) errors.push(bad(null, "missing_reply", `no reply for comment(s): ${missing.join(", ")}`, "answer every comment (decline what you will not do), or pass --partial"));
   return { ops, owners, replies, errors };
+}
+
+const MD_FIX = 'use {"comment":"<id>","text":"<new text>"} for the anchor\'s exact range, or `ops` with replace_source (target.from, target.to, expect.sha256, expect.source: reference/ops.md, "Markdown")';
+/** planReplies' shorthand for one Markdown comment: `text` becomes one replace_source op on the anchor's exact range, or a refusal with its fix. */
+function planMarkdown(batch, anchor, mode, r, rep, ops, owners, refuse) {
+  if (mode === "find") return refuse("shorthand_not_for_format", "find+replace is not available for a Markdown file: a change names its exact range, never words to search for", MD_FIX);
+  if (mode === "set") return refuse("shorthand_not_for_format", "set applies to a .xlsx cell or range, not a Markdown file", MD_FIX);
+  if (!anchor?.resolved || anchor.locator?.format !== "markdown") return refuse("anchor_unresolved", "this comment's anchor is not an exact range of the version the batch was made on (it was made on another version of the file)", "decline it, or send `ops` with replace_source for a range you read in untrusted_document_evidence.markdown");
+  if (anchor.protected) return refuse("protected", "this comment is on protected text (the front matter), which a reply never changes", "decline it and say why in its note");
+  if (typeof anchor.locator.source !== "string") return refuse("anchor_has_no_source", "this anchor's text is too long to carry in the batch, so the shorthand cannot name its old text", MD_FIX);
+  if (typeof r.text !== "string") return refuse("bad_reply", "text must be a string");
+  rep.opIndexes.push(ops.length);
+  ops.push({ op: "replace_source", id: rep.comment, target: { from: anchor.locator.from, to: anchor.locator.to }, expect: { sha256: batch.base_sha256, source: anchor.locator.source }, text: r.text });
+  owners.push(rep.comment);
 }
 
 /** The run's summary when the agent gave none. A change that answered only the overall note has no comment to count, so `written` says it. */
@@ -266,7 +293,14 @@ const FIX = {
   anchor_not_found: "Read the reason: the find text must occur in the anchor (once, or add occurrence/all), or the anchor no longer resolves to one place. Correct the reply, decline this comment, or send full `ops` with an explicit target.",
   skipped_protected: "Protected place (field, equation, content control or similar): it cannot be rewritten losslessly. Decline this comment with a note.",
 };
-const fixFor = (r) => FIX[r.status] || (r.status === "refused" ? `Refused by the engine${r.code ? ` (${r.code})` : ""}. Change the op as the reason says, or decline.` : undefined);
+// refusals whose code has a fix of its own (FIX above is by status)
+const FIX_CODE = {
+  overlapping_matches: 'The find text overlaps another copy of itself here, so the change could land on the wrong one. Give a longer "find" that occurs only once (include a word around it), or name the "occurrence" (copies counted without overlap, from the start), or decline.',
+};
+// Markdown: a stale batch is never fixed by polling again (the lease is still held, so a new poll only waits): decline and finish
+const MD_FIX_CODE = { old_text_differs: "The text there is not expect.source exactly. Copy it again from the batch (a block's source or the anchor's locator.source); if this batch has no exact source for it, decline the comment.", no_change: "Nothing changes there. To answer without a change, decline the comment with a note.", stale_base: "Nothing was written: the file is not this batch's revision. Decline the comments it affects, say why, and run done.", one_write_per_batch: "A Markdown batch is written once. Decline what is left and run done.", protected: "Front matter is never changed by a reply. Decline this comment and say why.", op_not_on_anchor: "Answer the comment only on its own range; put any other change in the reply's top-level ops." };
+const fixFor = (r) => (r.op === "replace_source" && MD_FIX_CODE[r.code]) ||
+  FIX[r.status] || (r.status === "refused" && FIX_CODE[r.code]) || (r.status === "refused" ? `Refused by the engine${r.code ? ` (${r.code})` : ""}. Change the op as the reason says, or decline.` : undefined);
 const brief = (comment, r) => ({ comment, op: r.op, status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.reason ? { reason: r.reason } : {}), ...(Array.isArray(r.reasons) ? { reasons: r.reasons } : {}), ...(r.actual_excerpt ? { actual_excerpt: r.actual_excerpt } : {}), ...(fixFor(r) ? { fix: fixFor(r) } : {}) });
 
 /**
@@ -312,7 +346,7 @@ export async function replyCommand(rest, deps) {
   } catch {
     throw new ReplyError(`File not found: ${JSON.stringify(a.file.slice(0, 200))}`, { exit: APPLY_EXIT.error });
   }
-  if (!formatOfPath(real)) throw new ReplyError("Only .docx, .xlsx, .pptx, .html and .htm files are supported");
+  if (!formatOfPath(real)) throw new ReplyError(ONLY_FORMATS);
   const ticket = ticketOfArgs;
   if (!ticket) throw ticketRequired();
   if (!bg) input = await readInput(a, deps.readStdin, { quiet: false });
@@ -339,6 +373,7 @@ export async function replyCommand(rest, deps) {
   const failedReplies = new Map(); // comment id -> first failing op result (partial mode)
   const partlyApplied = new Map(); // comment id -> note: some of its ops applied, some did not (partial mode)
   let written = false;
+  let unconfirmed = null; // Markdown: {outcome, note} when the write was published but not confirmed
   let opsApplied = 0;
   let problems = [];
   if (plan.ops.length) {
@@ -354,6 +389,7 @@ export async function replyCommand(rest, deps) {
     }
     const { report, exit } = out;
     written = !!report.written;
+    if (report.confirmed === false) unconfirmed = { outcome: report.outcome, note: report.note };
     opsApplied = report.results.filter((x) => x.status === "applied").length;
     const failed = report.results.filter((x) => x.status !== "applied");
     problems = failed.filter((x) => x.status !== "not_applied").map((x) => brief(plan.owners[x.index], x));
@@ -409,14 +445,18 @@ export async function replyCommand(rest, deps) {
   } catch (err) {
     throw new ReplyError(`${written ? "The edit is in the file, but " : ""}the batch could not be finished: ${err.message}`, { exit: APPLY_EXIT.error, body: { code: "done_failed", written, results: finishBody } });
   }
+  // Markdown: done's own outcome for each comment (a comment it reopened is not applied), never this command's guess
+  const outcome = Array.isArray(j.outcomes) ? j.outcomes : null;
   const body = {
     ok: !!j.ok,
     // `applied` lists comment ids only: a reply whose ops answered the overall note has none, so these two say whether the file changed
     changed: written,
     ops_applied: opsApplied,
-    applied,
-    declined,
+    applied: outcome ? outcome.filter((o) => o.status === "done").map((o) => o.comment_id) : applied,
+    declined: outcome ? outcome.filter((o) => o.status === "declined").map((o) => o.comment_id) : declined,
+    ...(outcome ? { reopened: outcome.filter((o) => o.reopened).map((o) => o.comment_id) } : {}),
     asked,
+    ...(unconfirmed ? { confirmed: false, save_outcome: unconfirmed.outcome, save_note: unconfirmed.note } : {}),
     ...(problems.length ? { not_applied: problems } : {}),
     ...(review ? { suggested: Number(j.suggestions) || 0, not_shown: Number(j.dropped) || 0 } : {}),
     // "received": kept for the user to review (they read and approve every word before it is saved); "not_kept": done refused it

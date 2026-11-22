@@ -1,6 +1,6 @@
 {
   "name": "onionskin",
-  "description": "Open a Word, Excel, PowerPoint or HTML file in Onionskin, mark it up in the browser, and have the agent make the changes in the real file.",
+  "description": "Open a Word, Excel, PowerPoint, HTML or Markdown file in Onionskin, mark it up in the browser, and have the agent make the changes in the real file.",
   "author": { "name": "abe238", "url": "https://github.com/abe238" },
   "homepage": "https://github.com/abe238/onionskin",
   "repository": "https://github.com/abe238/onionskin",

@@ -5,6 +5,7 @@ import { walkXml } from "./xml.js";
 import { runDeepCheck } from "./checker.js";
 import { cleanFlag } from "./sanitize.js";
 import { decodeHtml, HtmlEncodingError, readHtml } from "./html.js";
+import { decodeMarkdown, readMarkdownFile } from "./markdown-file.js";
 
 const MAX_TYPES_BYTES = 4 * 1024 * 1024; // [Content_Types].xml of a real document is a few KB
 // Cumulative work of the relationship scan: a hostile archive can hold thousands of individually allowed .rels parts.
@@ -20,6 +21,11 @@ export function validatePackage(bytes, format) {
   if (format === "html") {
     const d = decodeHtml(bytes);
     if (!d.ok) throw new HtmlEncodingError(d);
+    return null;
+  }
+  // a Markdown file is no package either: valid UTF-8 within the byte limit (src/markdown-file.js); src/markdown.js reads it whole later
+  if (format === "markdown") {
+    decodeMarkdown(bytes);
     return null;
   }
   const zip = openZip(bytes);
@@ -205,8 +211,20 @@ const flagKey = (f) => JSON.stringify([f.code, f.part, f.element, f.rels, f.targ
  * Node checks plus the deeper Python/LibreOffice check when a Python with lxml is available.
  * Returns {flags, checks}: `flags` are findings (severity info/warn/error); `checks` says what ran, so a skipped deep check is never silent.
  */
+/** A Markdown file the agent left: it still reads within Onionskin's limits (the deeper checks are for Office files). */
+function markdownChecks(postBytes) {
+  const skipped = { status: "skipped", reason: "the deeper checks are for Word, Excel and PowerPoint files", code: "not_for_markdown" };
+  try {
+    readMarkdownFile(postBytes);
+    return { flags: [], checks: { node: "ran", deep: skipped, notice: "Checked that the file still reads as Markdown (UTF-8) within Onionskin's limits. The deeper checks are for Word, Excel and PowerPoint files." } };
+  } catch (err) {
+    return { flags: [cleanFlag({ code: "markdown_unreadable", severity: "error", detail: String(err?.message || err).slice(0, 200) })], checks: { node: "ran", deep: skipped, notice: "The file the agent left cannot be read as Markdown by Onionskin. Revert restores the version before the run." } };
+  }
+}
+
 export function checkPackages(preBytes, postBytes, format, opts = {}) {
   if (format === "html") return htmlChecks(postBytes);
+  if (format === "markdown") return markdownChecks(postBytes);
   const node = rawNodeChecks(preBytes, postBytes, format);
   if (node.some((f) => f.code === "invalid_package")) return { flags: node.map(cleanFlag), checks: { node: "ran", deep: { status: "skipped", reason: "the package is invalid" } } };
   const deep = runDeepCheck(preBytes, postBytes, format, { deferSoffice: !!opts.deferSoffice });

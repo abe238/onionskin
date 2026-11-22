@@ -333,14 +333,36 @@ test("xlsx: cells without addresses keep their positions when a write is refused
   assert.deepEqual(openZip(ok.bytes).read(part), openZip(bytes).read(part));
 });
 
+test("xlsx: an elapsed-hours format takes hours past 23, and still refuses minutes or seconds that do not exist", async () => {
+  const bytes = styledXlsx({ Data: { A1: "old" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const fmt = (number_format) => ({ op: "format_cells", target, expect, set: { number_format } });
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const apply = (ops) => runOps({ bytes, format: "xlsx", name: "elapsed.xlsx", ops });
+  const { parseWorkbook } = await import("../src/xlsx.js");
+  for (const [code, value] of [["[h]:mm", "36:15"], ["[h]:mm:ss", "24:00:00"], ["[hh]:mm", "99:59"]]) {
+    const r = await apply([fmt(code), set(value)]);
+    assert.equal(r.results[1].status, "applied", `${code} ${value}`);
+    const wb = parseWorkbook(r.bytes);
+    assert.equal(wb.sheetCells(wb.sheets[0]).cells.get(0).text, value);
+  }
+  for (const [code, value] of [["[h]:mm", "36:61"], ["[h]:mm:ss", "24:00:60"], ["h:mm", "36:15"]]) {
+    const r = await apply([fmt(code), set(value)]);
+    assert.equal(r.results[1].code, "invalid_date", `${code} ${value}`);
+    assert.equal(r.bytes, null);
+  }
+});
+
 test("xlsx: nonexistent dates cannot roll over in date-formatted cells", async () => {
-  const bytes = xlsxBytes({ Data: { A1: "old" } });
+  const bytes = styledXlsx({ Data: { A1: "old" } });
   const target = { sheet: "Data", range: "A1" };
   const expect = { quote: "old" };
   const format = { op: "format_cells", target, expect, set: { number_format: "yyyy-mm-dd" } };
   const set = (values) => ({ op: "set_cells", target, expect, values });
   const apply = (ops) => runOps({ bytes, format: "xlsx", name: "dates.xlsx", ops });
-  const invalid = ["31/02/2026", " 2026-02-29T12:05 ", "2026-02-28 24:00", "2026-01-31 25:61", "2026-01-31 23:59:99", "2026-01-31T12:60", "31/01/2026 24:00"];
+  const invalid = ["31/02/2026", " 2026-02-29T12:05 ", "2026-02-28 24:00", "2026-01-31 25:61", "2026-01-31 23:59:99", "2026-01-31T12:60", "31/01/2026 24:00",
+    "0096-02-29", "29/02/0096", "1899-12-31", "1900-02-28", "24:00", " 23:60 ", "12:00:60"];
   for (const op of [...invalid.map(set), { op: "replace_all_text", find: "old", replace: "00/01/2026", expect: { count: 1 } }]) {
     const r = await apply([format, op]);
     assert.equal(r.results[1].code, "invalid_date");
@@ -352,11 +374,29 @@ test("xlsx: nonexistent dates cannot roll over in date-formatted cells", async (
     [[set("2026-02-28 24:00")], ["text", "2026-02-28 24:00"]],
     [[format, set("29/02/2024 23:59:59")], ["number", String(Date.UTC(2024, 1, 29, 23, 59, 59) / 86400000 + 25569)]],
     [[format, set("2024-02-29")], ["number", "45351"]],
+    [[format, set("1900-03-01")], ["number", "61"]],
+    [[set("24:00")], ["text", "24:00"]],
+    [[format, set("23:59")], ["text", "23:59"]],
   ]) {
     const wb = parseWorkbook((await apply(ops)).bytes);
     const cell = wb.sheetCells(wb.sheets[0]).cells.get(0);
     assert.deepEqual([cell.k, cell.text], expected);
   }
+});
+
+test("xlsx: a percent with more than 15 significant digits is refused (Excel shows 15)", async () => {
+  const { numberWriteRefusal } = await import("../src/ops/xlsx.js");
+  for (const value of ["1.249999999999999%", "12.49999999999999%", "1234567890123456%", "-0.1234567890123456%"]) {
+    const result = numberWriteRefusal(value, 0, 0);
+    assert.equal(result?.code, "number_would_change", value);
+    assert.match(result.reason, /has more than 15 significant digits, and Excel shows only 15/, value);
+  }
+  for (const value of ["123456789012345%", "1.500000000000000000%", "0.000000000000001%", "99.99999999999999"]) assert.equal(numberWriteRefusal(value, 0, 0), null, value);
+  const r = await runOps({ bytes: styledXlsx({ Data: { A1: "old" } }), format: "xlsx", name: "d.xlsx", ops: [
+    { op: "format_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, set: { number_format: "0.0%" } },
+    { op: "set_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, values: "1.249999999999999%" }] });
+  assert.equal(r.results[1].code, "number_would_change");
+  assert.equal(r.bytes, null);
 });
 
 test("xlsx: numeric text guard refuses leading zeros and decimal values that change", async () => {
@@ -366,17 +406,313 @@ test("xlsx: numeric text guard refuses leading zeros and decimal values that cha
     assert.equal(result?.code, "number_would_change", value);
     assert.match(result.reason, /leading zeros are not kept in this version$/, value);
   }
-  for (const value of ["12345678901234567890", "0.1234567890123456789", "9007199254740993", "12345678901234567%", "1e400", "1e-400"]) {
+  for (const value of ["12345678901234567890", "0.1234567890123456789", "9007199254740993", "1234567890123456789%", "1e400", "1e-400", Infinity, -Infinity]) {
     const result = numberWriteRefusal(value, 0, 0);
     assert.equal(result?.code, "number_would_change", value);
-    assert.match(result.reason, /the number cannot be stored exactly$/, value);
+    assert.match(result.reason, /the number cannot be stored exactly$|the number is too large to store$/, String(value));
   }
   for (const value of [
     "0", "-0.00", "0.5", "-0.25", "123", "1.50", "1400", "12.50", "1e5", "+5", "5.", ".5",
     "33.333333333333336", "0.30000000000000004", "3.141592653589793", "1234567890123456", ".1234567890123456e2",
-    "0.000123456789012345e20", "10E+20", "0.0000001", "5%", "12.5%", "0.5%", "001e2%", "abc", "", "ID-00123", "0x10", 1234567890123456,
+    "0.000123456789012345e20", "10E+20", "0.0000001", "5%", "12.5%", "0.5%", "0.07%", "1.1%", "33.3%", "001e2%", "abc", "", "ID-00123", "0x10", 1234567890123456,
   ]) {
     assert.equal(numberWriteRefusal(value, 0, 0), null, String(value));
+  }
+});
+
+// The test workbook with a linked styles part (and optionally the 1904 date system), as Excel writes one.
+function styledXlsx(sheets, { date1904 = false } = {}) {
+  const zip = openZip(xlsxBytes(sheets));
+  const files = Object.fromEntries(zip.names.map((n) => [n, zip.read(n)]));
+  files["[Content_Types].xml"] = zip.readText("[Content_Types].xml").replace("</Types>", '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
+  files["xl/_rels/workbook.xml.rels"] = zip.readText("xl/_rels/workbook.xml.rels").replace("</Relationships>", '<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+  if (date1904) files["xl/workbook.xml"] = zip.readText("xl/workbook.xml").replace("<sheets>", '<workbookPr date1904="1"/><sheets>');
+  files["xl/styles.xml"] = '<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>';
+  return buildZip(files);
+}
+
+// Reopen saved bytes in a fresh engine: what a cell stores, what it shows and its effective number format.
+async function reopenCell(bytes, r, c, sh = 0) {
+  const { openEngine } = await import("../src/ops/engine.js");
+  const h = await openEngine(bytes, "reopen.xlsx");
+  const done = h.waitFor((ev, d) => ev === "xlsx:progress" && d.sheet === sh && d.done);
+  await h.engine.call("xlsx.load", [sh]);
+  await done;
+  const cell = (await h.engine.call("xlsx.block", [sh, r, r + 1])).rows[0]?.cells.find((x) => x[0] === c);
+  return { value: (await h.engine.call("xlsx.cell", [sh, r, c]))?.value, shown: cell?.[1], format: h.info.xlsx.formats[cell?.[2]] };
+}
+
+test("xlsx: percentShown accepts a display only when it is the input rounded half away from zero, or an exact tie rounded down", async () => {
+  const { percentShown } = await import("../src/ops/xlsx.js");
+  for (const [input, shown] of [["5%", "5%"], ["5%", " 5.00% "], ["5%", "+5%"], ["1234%", "1,234%"], ["-1.1%", "(1.1%)"], ["-5%", "-5%"], ["12.5%", "13%"], ["-12.5%", "-13%"],
+    ["12.34%", "12.3%"], ["0.45%", "0.5%"], ["0.45%", "0.4%"], ["0.55%", "0.5%"], ["12.25%", "12.2%"], ["12.25%", "12.3%"], ["-0.45%", "-0.4%"], ["-0.45%", "(0.5%)"], ["14.5%", "14%"], ["12.5%", "12%"], ["0%", "0%"], ["-0%", "0.0%"], ["5%", "05%"], [".5%", "0.5%"], ["5.%", "5%"], ["1234567%", "1,234,567%"], ["0.0000000000000001%", "0.0000000000000001%"]])
+    assert.equal(percentShown(input, shown), true, `${input} ${shown}`);
+  for (const [input, shown] of [["5%", "50%"], ["5%", "-5%"], ["5%", "(5%)"], ["0%", "%"], ["-5%", "5%"], ["-5%", "+5%"], ["5%", "−5%"], ["123%", "1e23%"], ["5%", "0"], ["5%", "0.005%"],
+    ["5000%", "5.00%"], ["5%", "0.05%"], ["5%", "1899-12-31 %"], ["5%", "0.05"], ["12.5%", "12.5% p.a."], ["0.07%", "0%"], ["-0.4%", "-0%"], ["12.25%", "12.1%"], ["12.6%", "12%"], ["5%", "0,005%"], ["5%", "0,005.0%"], ["0.46%", "0.4%"], ["0.449%", "0.5%"], ["0.5%", "0%"], ["0.05%", "0.0%"],
+    ["5%", "500%%"], ["5%", "5 %"], ["5%", "5%%"], ["1234%", "1,23,4%"], ["1234%", "12,34%"], ["1234%", ",234%"], ["5%", ".5%"], ["5%", "5.%"], ["0%", "-0%"], ["0%", "+0%"], ["0%", "(0%)"],
+    ["5%", "(5)%"], ["-5%", "-(5%)"], ["5%", "\t5%"], ["5%", "５%"], ["5%", ""], ["5%", "5％"]])
+    assert.equal(percentShown(input, shown), false, `${input} ${shown}`);
+});
+
+// A workbook with a linked styles part where cell style 1 and up come from `xfs`, plus optional number formats, dxfs and sheet XML edits.
+// Font 1 is bold, fill 2 is solid yellow.
+function rawStyledXlsx({ cells = { A1: "old" }, numFmts = "", xfs = "", dxfs = "", sheet = (x) => x }) {
+  const styles = `<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${numFmts ? `<numFmts>${numFmts}</numFmts>` : ""}<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${xfs}</cellXfs>${dxfs ? `<dxfs>${dxfs}</dxfs>` : ""}</styleSheet>`;
+  return rezip(styledXlsx({ Data: cells }), { "xl/styles.xml": () => styles, "xl/worksheets/sheet1.xml": sheet });
+}
+
+// Each row writes, saves and REOPENS: an accepted percent reopens showing what was written, a refused one leaves no bytes.
+test("xlsx: a percent string is written only when the saved cell shows it as written", async () => {
+  const bytes = styledXlsx({ Data: { A1: "old" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const format = (number_format) => ({ op: "format_cells", target, expect, set: { number_format } });
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const apply = (ops, from = bytes) => runOps({ bytes: from, format: "xlsx", name: "pct.xlsx", ops });
+  const refusedRows = [
+    ['0"0"%', "5%", "50%"], ["-0%", "5%", "-5%"], ["(0%)", "5%", "(5%)"], ["#%", "0%", "%"], ["0%;-0%;#%;@", "0%", "%"], ["0%;0%", "-5%", "5%"], ["[Red]-0%", "5%", "-5%"],
+    ['[Red]"−"0%', "5%", "−5%"], ['[Red]0"e"00%', "123%", "1e23%"], ["0%;[<1]0;0", "5%", "0"], ['\\"[<0]\\" 0%;0', "5%", "0"], ["[Blue]0_;%", "5%", "0"], ["[Blue]0*;%", "5%", "0"],
+    ["0.000,%", "5%", "0.005%"], ["0.00,%", "5000%", "5.00%"], ['0.00"%"', "5%", "0.05%"], ["yyyy-mm-dd %", "5%", "1899-12-31 %"], ["General", "5%", "0.05"],
+    ['0.0% "p.a."', "12.5%", "12.5% p.a."], ['0.0% "[>= goal]"', "5%", "5.0% [>= goal]"], ["0%", "0.07%", "0%"], ["0%", "-0.4%", "-0%"],
+    ["0.00\\%", "5%", "0.05%"], ["0%%", "5%", "500%%"], ["[>1]0%;0", "5%", "0"],
+  ];
+  for (const [fmt, value, shows] of refusedRows) {
+    const r = await apply([format(fmt), set(value)]);
+    assert.equal(r.results[1].code, "number_would_change", `${fmt} ${value}`);
+    assert.equal(r.results[1].reason, `A1 would show ${JSON.stringify(shows)}, not ${JSON.stringify(value)}. Nothing was changed. Set a percent number_format such as "0%" with format_cells first, or send the number itself.`, `${fmt} ${value}`);
+    assert.equal(r.bytes, null, `${fmt} ${value}`);
+  }
+  // the precision gate refuses these before any write
+  for (const [fmt, value] of [["0.00%", "12345678901234567%"], ["0%;[<1]0;0", "0.12345678901234567%"]]) {
+    const r = await apply([format(fmt), set(value)]);
+    assert.equal(r.results[1].code, "number_would_change", value);
+    assert.match(r.results[1].reason, /cannot be stored exactly/);
+    assert.equal(r.bytes, null);
+  }
+  for (const [fmt, value, stored, shown] of [["0%", "5%", "0.05", "5%"], ["0.00%", "5%", "0.05", "5.00%"], ["[Blue]0.00%", "5%", "0.05", "5.00%"], ["[Red]0%", "5%", "0.05", "5%"], ["+0%", "5%", "0.05", "+5%"],
+    ["#,0%", "1234%", "12.34", "1,234%"], ["0.0%;(0.0%)", "-1.1%", "-0.011", "(1.1%)"], ["0.0%;(0.0%)", "1.1%", "0.011", "1.1%"], ["0%", "12.5%", "0.125", "13%"], ["0.0%", "12.34%", "0.1234", "12.3%"],
+    ["0%", "-5%", "-0.05", "-5%"], ["0.00%", "0.07%", "0.0007", "0.07%"], ["0.0%", " 12.5% ", "0.125", "12.5%"], ["0%_)", "5%", "0.05", "5% "],
+    // an exact tie: the stored number is exact, and Onionskin's own viewer may show it rounded down
+    ["0.0%", "0.45%", "0.0045", "0.4%"], ["0.0%", "0.55%", "0.0055", "0.5%"]]) {
+    const r = await apply([format(fmt), set(value)]);
+    assert.deepEqual(status(r), ["applied", "applied"], `${fmt} ${value}`);
+    assert.deepEqual(await reopenCell(r.bytes, 0, 0), { value: stored, shown, format: fmt }, `${fmt} ${value}`);
+  }
+  // replace_all_text that produces a percent goes through the same check
+  const replaced = await apply([{ op: "replace_all_text", find: "x", replace: "", expect: { count: 1 } }], styledXlsx({ Data: { A1: "x12.5%" } }));
+  assert.equal(replaced.results[0].code, "number_would_change");
+  assert.match(replaced.results[0].reason, /^A1 would show "0\.125", not "12\.5%"\./);
+  assert.equal(replaced.bytes, null);
+  const okReplace = await apply([{ op: "format_cells", target, expect: { quote: "x12.5%" }, set: { number_format: "0.0%" } }, { op: "replace_all_text", find: "x", replace: "", expect: { count: 1 } }], styledXlsx({ Data: { A1: "x12.5%" } }));
+  assert.deepEqual(status(okReplace), ["applied", "applied"]);
+  assert.deepEqual(await reopenCell(okReplace.bytes, 0, 0), { value: "0.125", shown: "12.5%", format: "0.0%" });
+});
+
+// The engine draws these as written, desktop Excel probably does not: refused before the display check, which still decides every acceptance.
+// The format code must be in a small known-good grammar AND the display check must pass: either one alone can only refuse.
+const REVIEW_REFUSED = ["0%;;", "[<1e-2]0%;0", "[DBNum1]0%", "0%*;0", "0;[<1]0%", ";0%", "0%;", "[$-409]0.0%", "0%_;", '0%*"x"',
+  "0%;[Red]", "0%;[Blue]", "0%;[Color10]", "0%;*-", "0%;-0%;[Red]", "0%;-0%;*-", "0%;-0%;[Red]*-", "0%;[Red]*-", "0%;*x;0%", "0%0", "0.0.0%", "0%,", "0%,,", "#,##0%,",
+  "0,.0%", "#,##0,.0%", "0%b", "b0%", "@0%", "0%@", '0%"', "0*0%", "*-0%", "*00%", "0%*9", "0%*%", "*%0%", '0.0% "p.a."', "0%;-0%;0%", "0.0%_)_)", '0%_"', "0%\\%", "0.%", "General", "",
+  "[ Red ]0%", "[Red][Blue]0%", "0%[Red]", "(0%", "0%)", "-(0%)", "+-0%", "0 %", "0%%", "0.0%;(0.0%);0.0%"];
+test("xlsx: a percent format with a color number Excel does not have is refused", async () => {
+  const { knownPercentFormat } = await import("../src/ops/xlsx.js");
+  for (const code of ["[Color0]0%", "[Color57]0%", "[Color99]0%", "[Color 10]0%", "[Color 3]0%", "[Color012]0%"]) assert.equal(knownPercentFormat(code), false, code);
+  for (const code of ["[Color1]0%", "[color12]0%", "[COLOR56]0.0%"]) assert.equal(knownPercentFormat(code), true, code);
+});
+
+const REVIEW_ACCEPTED = ["[Blue]0.00%", "[Red]0%", "[color12]0%", "[Color56]0%", "+0%", "-0%", "(0%)", "#,0%", "#,##0.0%", "0.0%;(0.0%)", "0%", "0.00%", "0%_)", "0.0%_);(0.0%)", "?%", "[Red]0%;[Blue]-0%", "#,##0.00%_);[Red](#,##0.00%)"];
+
+test("xlsx: knownPercentFormat takes only a plain percent picture of one or two sections", async () => {
+  const { knownPercentFormat } = await import("../src/ops/xlsx.js");
+  for (const code of REVIEW_REFUSED) assert.equal(knownPercentFormat(code), false, code);
+  for (const code of REVIEW_ACCEPTED) assert.equal(knownPercentFormat(code), true, code);
+  assert.equal(knownPercentFormat(undefined), false);
+});
+
+test("xlsx: a percent into a format this version cannot check is refused, whatever the engine shows", async () => {
+  const bytes = styledXlsx({ Data: { A1: "old" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const format = (number_format) => ({ op: "format_cells", target, expect, set: { number_format } });
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const sentence = (code, value) => `A1 has a number format (${JSON.stringify(code)}) that this version cannot check, so ${JSON.stringify(value)} was not written. Set a plain percent number_format such as "0%" with format_cells first, or send the number itself.`;
+  // the engine draws each of these as the input (or the review's cases), so only the grammar refuses them
+  for (const [fmt, value] of [["0%;;", "-5%"], ["[<1e-2]0%;0", "5%"], ["[DBNum1]0%", "5%"], ["0%*;0", "5%"], ["0;[<1]0%", "5%"], [";0%", "5%"], ["0%;", "5%"], ["[$-409]0.0%", "10%"], ["0%_;", "5%"],
+    ["0%;[Red]", "-5%"], ["0%;[Blue]", "-5%"], ["0%;-0%;[Red]", "0%"], ["0%;*-", "-5%"], ["0%;-0%;*-", "0%"], ["0%;*x;0%", "-5%"], ["0.0.0%", "5%"], ["0%,", "5%"], ["0%,,", "5000%"],
+    ["#,##0%,", "1234567%"], ["0,.0%", "5%"], ["0%b", "5%"], ["b0%", "5%"], ["@0%", "5%"], ["0%@", "5%"], ['0%"', "5%"], ["0*0%", "5%"], ["*-0%", "5%"], ["0%*9", "5%"]]) {
+    const r = await runOps({ bytes, format: "xlsx", name: "pct.xlsx", ops: [format(fmt), set(value)] });
+    assert.equal(r.results[1].code, "number_would_change", fmt);
+    assert.match(r.results[1].reason, /that this version cannot check|^A1 would show/, fmt);
+    assert.equal(r.bytes, null, fmt);
+  }
+  // the probe rows the engine shows exactly as the input: the grammar decides the sentence
+  for (const [fmt, value] of [["0%;;", "-5%"], ["[DBNum1]0%", "5%"], ["0%;[Red]", "-5%"], ["0%;*-", "-5%"], ["0*0%", "5%"], ["0%b", "5%"]]) {
+    const r = await runOps({ bytes, format: "xlsx", name: "pct.xlsx", ops: [format(fmt), set(value)] });
+    assert.equal(r.results[1].reason, sentence(fmt, value), fmt);
+  }
+  // a cell style that says not to apply its number format
+  const off = rawStyledXlsx({ xfs: '<xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="0"/>', sheet: (x) => x.replace('<c r="A1"', '<c r="A1" s="1"') });
+  const r = await runOps({ bytes: off, format: "xlsx", name: "pct.xlsx", ops: [set("5%")] });
+  assert.equal(r.results[0].reason, sentence("0%", "5%"));
+  assert.equal(r.bytes, null);
+  // the brief's accepted list is unchanged
+  for (const [fmt, value, shown] of [["[Blue]0.00%", "5%", "5.00%"], ["[Red]0%", "5%", "5%"], ["[color12]0%", "5%", "5%"], ["+0%", "5%", "+5%"], ["#,0%", "1234%", "1,234%"], ["0.0%;(0.0%)", "-1.1%", "(1.1%)"],
+    ["0.0%;(0.0%)", "1.1%", "1.1%"], ["0%", "5%", "5%"], ["0.00%", "5%", "5.00%"], ["0%_)", "5%", "5% "]]) {
+    const ok = await runOps({ bytes, format: "xlsx", name: "pct.xlsx", ops: [format(fmt), set(value)] });
+    assert.deepEqual(status(ok), ["applied", "applied"], fmt);
+    assert.equal((await reopenCell(ok.bytes, 0, 0)).shown, shown, fmt);
+  }
+  // the saved bytes get the same format check: a later format_cells to such a format publishes nothing
+  for (const partial of [false, true]) {
+    const later = await runOps({ bytes, format: "xlsx", name: "pct.xlsx", partial, ops: [format("0%"), set("5%"), format("[DBNum1]0%")] });
+    assert.equal(later.bytes, null, `partial ${partial}`);
+    assert.equal(later.results[1].reason, 'A1 has a number format ("[DBNum1]0%") that this version cannot check, so "5%" was not written, in the saved file. Nothing was written. Set a plain percent number_format such as "0%" with format_cells first, or send the number itself.');
+  }
+});
+
+test("xlsx: a percent into a built-in currency, an inherited format or a conditional number format is refused", async () => {
+  const set = (range, values, quote = "old") => ({ op: "set_cells", target: { sheet: "Data", range }, expect: { quote }, values });
+  const apply = (bytes, ops) => runOps({ bytes, format: "xlsx", name: "pct.xlsx", ops });
+  // built-in currency (5) and accounting (44): the engine shows them as General
+  for (const id of [5, 44]) {
+    const r = await apply(rawStyledXlsx({ xfs: `<xf numFmtId="${id}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`, sheet: (x) => x.replace('<c r="A1"', '<c r="A1" s="1"') }), [set("A1", "5%")]);
+    assert.equal(r.results[0].code, "number_would_change", String(id));
+    assert.match(r.results[0].reason, /^A1 would show "0\.05", not "5%"\. Nothing was changed\./);
+    assert.equal(r.bytes, null);
+  }
+  // a 0% format (with bold and fill) inherited from the column or the row, into a cell that does not exist yet
+  const xfs = '<xf numFmtId="9" fontId="1" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>';
+  const byCol = rawStyledXlsx({ xfs, sheet: (x) => x.replace("<sheetData>", '<cols><col min="2" max="2" width="9" style="1"/></cols><sheetData>') });
+  const byRow = rawStyledXlsx({ xfs, sheet: (x) => x.replace('<row r="1">', '<row r="1" s="1" customFormat="1">') });
+  for (const [name, bytes] of [["column", byCol], ["row", byRow]]) {
+    const r = await apply(bytes, [set("B1", "5%", "")]);
+    assert.equal(r.results[0].code, "number_would_change", name);
+    assert.match(r.results[0].reason, /^B1 would show "0\.05", not "5%"\./, name);
+    assert.equal(r.bytes, null, name);
+  }
+  // a conditional format that sets a number format: the engine does not draw it, so its display cannot be trusted
+  const pct = { xfs: '<xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' };
+  const cf = (dxf, sqref = "A1") => rawStyledXlsx({ ...pct, dxfs: dxf, sheet: (x) => x.replace('<c r="A1"', '<c r="A1" s="1"').replace("</sheetData>", `</sheetData><conditionalFormatting sqref="${sqref}"><cfRule type="expression" dxfId="0" priority="1"><formula>TRUE</formula></cfRule></conditionalFormatting>`) });
+  const x14 = rawStyledXlsx({ ...pct, sheet: (x) => x.replace('<c r="A1"', '<c r="A1" s="1"').replace("</sheetData>", '</sheetData><extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="expression" priority="1" id="{00000000-0000-0000-0000-000000000001}"><xm:f>TRUE</xm:f><x14:dxf><numFmt numFmtId="164" formatCode="0.0"/></x14:dxf></x14:cfRule><xm:sqref>A1:B9</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst>') });
+  for (const [name, bytes] of [["dxf numFmt", cf('<dxf><numFmt numFmtId="164" formatCode="&quot;fifty&quot;"/></dxf>')], ["range", cf('<dxf><numFmt numFmtId="164" formatCode="0.0"/></dxf>', "$C$9 A1:$B$2")], ["x14", x14]]) {
+    const r = await apply(bytes, [set("A1", "5%")]);
+    assert.equal(r.results[0].code, "number_would_change", name);
+    assert.match(r.results[0].reason, /^A1 is under a conditional format that sets its own number format/, name);
+    assert.equal(r.bytes, null, name);
+  }
+  for (const [name, bytes] of [["dxf without numFmt", cf("<dxf><font><b/></font></dxf>")], ["other range", cf('<dxf><numFmt numFmtId="164" formatCode="0.0"/></dxf>', "B1:C9")]]) {
+    const r = await apply(bytes, [set("A1", "5%")]);
+    assert.deepEqual(status(r), ["applied"], name);
+    assert.equal((await reopenCell(r.bytes, 0, 0)).shown, "5%", name);
+  }
+});
+
+test("xlsx: the saved bytes are checked again for every percent written, so a later op cannot change what it shows", async () => {
+  const bytes = styledXlsx({ Data: { A1: "old", B1: "keep" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const format = (number_format) => ({ op: "format_cells", target, expect, set: { number_format } });
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const apply = (ops, partial = false) => runOps({ bytes, format: "xlsx", name: "pct.xlsx", ops, partial });
+  const other = { op: "set_cells", target: { sheet: "Data", range: "B1" }, expect: { quote: "keep" }, values: "changed" };
+  // a later format_cells sets the cell to General: nothing is published, in atomic and in partial mode
+  for (const partial of [false, true]) {
+    const r = await apply([format("0%"), set("5%"), other, format("General")], partial);
+    assert.equal(r.bytes, null, `partial ${partial}`);
+    assert.equal(r.results[1].status, "refused");
+    assert.equal(r.results[1].code, "number_would_change");
+    assert.equal(r.results[1].reason, 'A1 would show "0.05", not "5%", in the saved file. Nothing was written. Set a percent number_format such as "0%" with format_cells first, or send the number itself.');
+    assert.deepEqual(status(r).filter((_, i) => i !== 1), ["not_applied", "not_applied", "not_applied"], `partial ${partial}`);
+  }
+  // a row inserted above moves the cell: the moved cell is checked at its new address
+  const moved = await apply([format("0%"), set("5%"), format("General"), { op: "insert_rows", target: { sheet: "Data", at: 1 }, expect: { quote: "old\tkeep" } }]);
+  assert.equal(moved.bytes, null);
+  assert.match(moved.results[1].reason, /^A2 would show "0\.05", not "5%", in the saved file\./);
+  const movedRow = await apply([format("0%"), set("5%"), { op: "insert_rows", target: { sheet: "Data", at: 1 }, expect: { quote: "old\tkeep" } }]);
+  assert.deepEqual(status(movedRow), ["applied", "applied", "applied"]);
+  assert.deepEqual(await reopenCell(movedRow.bytes, 1, 0), { value: "0.05", shown: "5%", format: "0%" });
+  const movedCol = await apply([format("0%"), set("5%"), format("General"), { op: "insert_columns", target: { sheet: "Data", at: "A" }, expect: { quote: "old" } }]);
+  assert.equal(movedCol.bytes, null);
+  assert.match(movedCol.results[1].reason, /^B1 would show "0\.05", not "5%", in the saved file\./);
+  const movedColOk = await apply([format("0%"), set("5%"), { op: "insert_columns", target: { sheet: "Data", at: "A" }, expect: { quote: "old" } }]);
+  assert.deepEqual(status(movedColOk), ["applied", "applied", "applied"]);
+  assert.deepEqual(await reopenCell(movedColOk.bytes, 0, 1), { value: "0.05", shown: "5%", format: "0%" });
+  // a deleted row takes the write with it: nothing left to check
+  const gone = await apply([format("0%"), set("5%"), format("General"), { op: "delete_rows", target: { sheet: "Data", at: 1 }, expect: { quote: "old\tkeep" } }]);
+  assert.deepEqual(status(gone), ["applied", "applied", "applied", "applied"]);
+  // a percent on a second sheet is checked on that sheet
+  const two = styledXlsx({ Data: { A1: "old" }, More: { B2: "there" } });
+  const B2 = { sheet: "More", range: "B2" };
+  const on2 = (ops) => runOps({ bytes: two, format: "xlsx", name: "two.xlsx", ops });
+  const second = await on2([{ op: "format_cells", target: B2, expect: { quote: "there" }, set: { number_format: "0.0%" } }, { op: "set_cells", target: B2, expect: { quote: "there" }, values: "7.5%" }]);
+  assert.deepEqual(status(second), ["applied", "applied"]);
+  assert.deepEqual(await reopenCell(second.bytes, 1, 1, 1), { value: "0.075", shown: "7.5%", format: "0.0%" });
+  const secondLater = await on2([{ op: "format_cells", target: B2, expect: { quote: "there" }, set: { number_format: "0.0%" } }, { op: "set_cells", target: B2, expect: { quote: "there" }, values: "7.5%" },
+    { op: "format_cells", target: B2, expect: { quote: "there" }, set: { number_format: "General" } }]);
+  assert.equal(secondLater.bytes, null);
+  assert.match(secondLater.results[1].reason, /^B2 would show "0\.075", not "7\.5%", in the saved file\./);
+  // a percent overwritten by plain text in the same batch is not checked
+  const over = await apply([format("0%"), set("5%"), format("General"), set("plain")]);
+  assert.deepEqual(status(over), ["applied", "applied", "applied", "applied"]);
+  assert.equal((await reopenCell(over.bytes, 0, 0)).value, "plain");
+});
+
+test("xlsx: percent strings keep the other guards: no styles part, partial mode, a wide row", async () => {
+  const bytes = styledXlsx({ Data: { A1: "old", B1: "x12.5%" } });
+  const target = { sheet: "Data", range: "A1" };
+  const expect = { quote: "old" };
+  const format = (number_format) => ({ op: "format_cells", target, expect, set: { number_format } });
+  const set = (values) => ({ op: "set_cells", target, expect, values });
+  const apply = (ops, partial = false, from = bytes) => runOps({ bytes: from, format: "xlsx", name: "pct.xlsx", ops, partial });
+  // No styles part: the engine would add one the saved file does not link, and the percent format would be lost on reopen.
+  const bare = await apply([format("0.00%"), set("5%")], false, xlsxBytes({ Data: { A1: "old" } }));
+  assert.equal(bare.results[1].code, "number_would_change");
+  assert.match(bare.results[1].reason, /no styles part/);
+  assert.equal(bare.bytes, null);
+  const mixed = await apply([{ op: "set_cells", target: { sheet: "Data", range: "B1" }, expect: { quote: "x12.5%" }, values: "kept" }, set("12.5%")], true);
+  assert.deepEqual(status(mixed), ["applied", "refused"]);
+  assert.equal((await reopenCell(mixed.bytes, 0, 1)).value, "kept");
+  assert.equal((await reopenCell(mixed.bytes, 0, 0)).value, "old");
+  const wide = await apply([{ op: "format_cells", target: { sheet: "Data", range: "A2:ALL2" }, expect: { quote: "\t".repeat(999) }, set: { number_format: "0%" } },
+    { op: "set_cells", target: { sheet: "Data", range: "A2:ALL2" }, expect: { quote: "\t".repeat(999) }, values: [Array(1000).fill("5%")] }]);
+  assert.deepEqual(status(wide), ["applied", "applied"]);
+  assert.deepEqual(await reopenCell(wide.bytes, 1, 999), { value: "0.05", shown: "5%", format: "0%" });
+  const tall = await apply([{ op: "format_cells", target: { sheet: "Data", range: "C1:C1000" }, expect: { quote: "\n".repeat(999) }, set: { number_format: "0%" } },
+    { op: "set_cells", target: { sheet: "Data", range: "C1:C1000" }, expect: { quote: "\n".repeat(999) }, values: Array.from({ length: 1000 }, () => ["5%"]) }]);
+  assert.deepEqual(status(tall), ["applied", "applied"]);
+  assert.deepEqual(await reopenCell(tall.bytes, 999, 2), { value: "0.05", shown: "5%", format: "0%" });
+});
+
+test("xlsx: a date into a 1904 workbook's date cell is refused; a 1900 workbook reopens with the same day", async () => {
+  const ops = [{ op: "format_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, set: { number_format: "yyyy-mm-dd" } },
+    { op: "set_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, values: "2024-02-29" }];
+  const late = await runOps({ bytes: styledXlsx({ Data: { A1: "old" } }, { date1904: true }), format: "xlsx", name: "d.xlsx", ops });
+  assert.equal(late.results[1].code, "invalid_date");
+  assert.match(late.results[1].reason, /counts dates from 1904/);
+  assert.equal(late.bytes, null);
+  const text = await runOps({ bytes: styledXlsx({ Data: { A1: "old" } }, { date1904: true }), format: "xlsx", name: "d.xlsx", ops: ops.slice(1) });
+  assert.deepEqual(status(text), ["applied"]);
+  assert.equal((await reopenCell(text.bytes, 0, 0)).value, "2024-02-29");
+  // No linked styles part: the date format would not be saved and the cell would reopen as 45351.
+  const bare = await runOps({ bytes: xlsxBytes({ Data: { A1: "old" } }), format: "xlsx", name: "d.xlsx", ops });
+  assert.equal(bare.results[1].code, "invalid_date");
+  assert.match(bare.results[1].reason, /no styles part/);
+  assert.equal(bare.bytes, null);
+  const bareText = await runOps({ bytes: xlsxBytes({ Data: { A1: "old" } }), format: "xlsx", name: "d.xlsx", ops: ops.slice(1) });
+  assert.deepEqual(status(bareText), ["applied"]);
+  assert.equal((await reopenCell(bareText.bytes, 0, 0)).value, "2024-02-29");
+  const ok = await runOps({ bytes: styledXlsx({ Data: { A1: "old" } }), format: "xlsx", name: "d.xlsx", ops });
+  assert.deepEqual(status(ok), ["applied", "applied"]);
+  assert.deepEqual(await reopenCell(ok.bytes, 0, 0), { value: "45351", shown: "2024-02-29", format: "yyyy-mm-dd" });
+});
+
+test("xlsx: set_cells refuses numbers too small or too large to store", async () => {
+  for (const values of ["1e-400", "1e400"]) {
+    const r = await runOps({ bytes: xlsxBytes({ Data: { A1: "old" } }), format: "xlsx", name: "big.xlsx", ops: [
+      { op: "set_cells", target: { sheet: "Data", range: "A1" }, expect: { quote: "old" }, values },
+    ] });
+    assert.equal(r.results[0].code, "number_would_change", values);
+    assert.equal(r.bytes, null);
   }
 });
 
@@ -416,7 +752,7 @@ test("xlsx: safe replacements and typed inputs keep the engine's stored cell typ
   const out = await runOps({ bytes: xlsxBytes({ Data: { B1: "ID-123" } }), format: "xlsx", name: "values.xlsx", ops: [
     { op: "replace_all_text", find: "ID-", replace: "", expect: { count: 1 } },
     { op: "set_cells", target: { sheet: "Data", range: "C1:J1" }, expect: { quote: "\t".repeat(7) },
-      values: [["1400", "12.50", "0", "0.5", "5%", "TRUE", "=A1+1", 123]] },
+      values: [["1400", "12.50", "0", "0.5", "0.05", "TRUE", "=A1+1", 123]] },
   ] });
   assert.deepEqual(status(out), ["applied", "applied"]);
   const wb = parseWorkbook(out.bytes);

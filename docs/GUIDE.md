@@ -2,7 +2,7 @@
 
 The full reference for Onionskin. The short version is in the [README](../README.md); install, commands and troubleshooting are in [DEVELOPERS.md](DEVELOPERS.md).
 
-Review a Word, Excel, PowerPoint or HTML file with a coding agent, in the browser, without losing the file's own formatting.
+Review a Word, Excel, PowerPoint, HTML or Markdown file with a coding agent, in the browser, without losing the file's own formatting.
 
 You open the file. You type edits straight into it, comment on a selection, a cell, a range, a shape or a slide, drop numbered pins, and write one overall note. You press Send. The agent receives your batch (it is tested with Claude Code and Codex, which have each been run end to end by a real agent; other agents are untested), changes the file, and tells you what it did per comment. The page reloads at the same place and shows each answer in an activity feed, with a Revert button if the check found damage.
 
@@ -42,7 +42,7 @@ If you open a file with `--no-agent` and press Send with nobody listening, the p
 
 After each run the browser page refreshes and keeps your place; in a Word file the agent's changed words are then drawn in where they stand, with the old words shown for a moment (the refresh still happens underneath).
 
-In the browser: Edit mode types into the document (in Excel, Shift+Enter or Alt+Enter while typing in a cell starts a new line inside the cell; in a narrow column the first line of a tall cell can be clipped until the column is widened); Comment mode comments on whatever you click (drag across cells for a range); Pin mode drops a numbered pin anywhere. While the agent works you can keep working in a Word, Excel or PowerPoint document (an HTML page is read-only during a run, see [HTML files](#html-files)): when the agent finishes, what you changed is merged with its changes (Word by paragraph, including the formatting you changed and the paragraphs you moved; Excel by cell; PowerPoint by text box). If you and the agent changed the same paragraph, cell or text box, the agent's version stays and yours is shown with a Copy button. In Word, your edit goes only into the paragraph you edited: Word gives each paragraph an id, and when the agent changed, split, merged or removed that paragraph, or Onionskin cannot tell which paragraph it is now, your text is shown with a Copy button instead of being written elsewhere. If merging takes longer than two minutes, nothing is written, a copy of your version is saved next to the file, and your edits stay in the page. In Word, formatting or a move that could not be carried over safely is listed with the reason, and a paragraph you moved keeps the agent's formatting, with a line asking you to check it. In a spreadsheet your values go in only where Onionskin knows the cell is still the same one: on a sheet the agent left alone, or one it changed only with Onionskin's own cell edits. If the agent added, removed or moved rows or columns on a sheet you edited, or changed the file with another tool, your values on that sheet are listed and your version of the file is saved next to the original. Comments you add meanwhile go out as the next batch. While Onionskin's background agent works, the banner has **Stop the agent**: it takes your batch back (comments become drafts again, the note goes back to its box, anything the agent already wrote can be reverted), then stops the agent; a late write from it is refused. The next Send starts a new agent at once, in a fresh conversation that never saw the request you took back, and that start does not count toward the hourly limit. With your own agent (or one open in Terminal) the banner has "Take back editing" instead, which takes the batch back and leaves the agent alone.
+In the browser: Edit mode types into the document (in Excel, Shift+Enter or Alt+Enter while typing in a cell starts a new line inside the cell; in a narrow column the first line of a tall cell can be clipped until the column is widened); Comment mode comments on whatever you click (drag across cells for a range); Pin mode drops a numbered pin anywhere. While the agent works you can keep working in a Word, Excel or PowerPoint document (an HTML page is read-only during a run, see [HTML files](#html-files), and a Markdown file takes comments only, see [Markdown files](#markdown-files)): when the agent finishes, what you changed is merged with its changes (Word by paragraph, including the formatting you changed and the paragraphs you moved; Excel by cell; PowerPoint by text box). If you and the agent changed the same paragraph, cell or text box, the agent's version stays and yours is shown with a Copy button. In Word, your edit goes only into the paragraph you edited: Word gives each paragraph an id, and when the agent changed, split, merged or removed that paragraph, or Onionskin cannot tell which paragraph it is now, your text is shown with a Copy button instead of being written elsewhere. If merging takes longer than two minutes, nothing is written, a copy of your version is saved next to the file, and your edits stay in the page. In Word, formatting or a move that could not be carried over safely is listed with the reason, and a paragraph you moved keeps the agent's formatting, with a line asking you to check it. In a spreadsheet your values go in only where Onionskin knows the cell is still the same one: on a sheet the agent left alone, or one it changed only with Onionskin's own cell edits. If the agent added, removed or moved rows or columns on a sheet you edited, or changed the file with another tool, your values on that sheet are listed and your version of the file is saved next to the original. Comments you add meanwhile go out as the next batch. While Onionskin's background agent works, the banner has **Stop the agent**: it takes your batch back (comments become drafts again, the note goes back to its box, anything the agent already wrote can be reverted), then stops the agent; a late write from it is refused. The next Send starts a new agent at once, in a fresh conversation that never saw the request you took back, and that start does not count toward the hourly limit. With your own agent (or one open in Terminal) the banner has "Take back editing" instead, which takes the batch back and leaves the agent alone.
 
 ### Structure edits and other abilities
 
@@ -78,11 +78,11 @@ The picture icon in the top bar opens the Background picker: five presets (paper
 
 ### Quick changes
 
-Type a very plain request as the overall note, such as "Replace Acme with Initech" or "Make every heading bold" (headings: Word files), and the line under the box says how many places it will change. The Send button then shows the count ("Replace in 12 places"). Press it and Onionskin does the change itself on this Mac, with no AI, and it shows up as "Done on this Mac" with a Revert button like any other change. If the file turns out to have a different number of places than the button showed, nothing is written and the note goes to the agent. A word that only appears inside longer words ("he" inside "the"), a match inside a spreadsheet formula, or a note sent with comments or typed edits goes to the agent. "Ask the agent instead" sends it the usual way.
+Type a very plain request as the overall note, such as "Replace Acme with Initech" or "Make every heading bold" (headings: Word files), and the line under the box says how many places it will change. The Send button then shows the count ("Replace in 12 places"). Press it and Onionskin does the change itself on this Mac, with no AI, and it shows up as "Done on this Mac" with a Revert button like any other change. If the file turns out to have a different number of places than the button showed, nothing is written and the note goes to the agent. A word that only appears inside longer words ("he" inside "the"), a match inside a spreadsheet formula, or a note sent with comments or typed edits goes to the agent. "Ask the agent instead" sends it the usual way. In a Markdown file a quick change is never offered: the note goes to the agent.
 
 ### History
 
-The review panel keeps a History section: the last 20 updates to the file (your edits at each Send, each agent run, a revert, and a file changed outside Onionskin that you chose to reload), newest first, one line each. Click one to see what changed: words removed in red and added in green, spreadsheet cells as old to new, and plain lines for added, removed, moved and formatting changes (bold, a different style, a number format). "Show" scrolls the document to a place and outlines it for a moment. History is a view only: red and green stay in the panel, nothing is ever written into the document, and it does not merge or restore anything (Revert still undoes an agent run). It is not shown on a phone.
+The review panel keeps a History section: the last 20 updates to the file (your edits at each Send, each agent run, a revert, and a file changed outside Onionskin that you chose to reload), newest first, one line each. Click one to see what changed: words removed in red and added in green, spreadsheet cells as old to new, and plain lines for added, removed, moved and formatting changes (bold, a different style, a number format). "Show" scrolls the document to a place and outlines it for a moment. History is a view only: red and green stay in the panel, nothing is ever written into the document, and it does not merge or restore anything (Revert still undoes an agent run). It is not shown on a phone. In a Markdown file History compares block by block, so two changes in one paragraph count as one place.
 
 ## HTML files
 
@@ -141,8 +141,8 @@ The first time the agent writes a character outside plain ASCII into a page that
 
 Onionskin opens pages saved as UTF-8, with or without a byte order mark. Others are refused:
 
-- A page that declares windows-1252, ISO-8859-1 or US-ASCII: "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." `onionskin open` prints that sentence and the command that makes the copy: `onionskin utf8-copy page.html`. The copy is written next to the page as `page.utf8.html`, only if that name is free, and the original is not changed. Then open the copy.
-- A page that declares any other encoding (UTF-16, Shift_JIS and the like), or holds bytes that are not valid UTF-8: "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." Save the page as UTF-8 in your editor and open that.
+- A page that declares windows-1252, ISO-8859-1 or US-ASCII, and whose accented letters do not already read as UTF-8: "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." `onionskin open` prints that sentence and the command that makes the copy: `onionskin utf8-copy page.html`. The copy is written next to the page as `page.utf8.html`, only if that name is free, and the original is not changed. Then open the copy.
+- A page that declares any other encoding (UTF-16, Shift_JIS and the like), a page that declares one of the three above but whose accented letters already read as UTF-8, or one that holds bytes that are not valid UTF-8: "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." Save the page as UTF-8 in your editor and open that.
 
 ### Files that are refused
 
@@ -151,11 +151,59 @@ Onionskin opens pages saved as UTF-8, with or without a byte order mark. Others 
 | `.mhtml`, `.mht`, `.webarchive` | "Onionskin cannot open this kind of saved page; in Chrome choose Save As, Webpage, Complete." |
 | `.xhtml` | "Onionskin cannot open .xhtml pages; save the page as .html and open that." |
 | `.svg` | "Onionskin cannot open .svg pictures; it opens .html and .htm pages." |
-| Any other kind | "Only .docx, .xlsx, .pptx, .html and .htm files are supported" |
+| Any other kind | "Only .docx, .xlsx, .pptx, .html, .htm, .md and .markdown files are supported" |
 
 ### Not in this version
 
 One file per session: a linked stylesheet or script file is never edited. Pages built by scripts show nothing to edit. Chrome is the tested browser; Safari has not been tested with HTML files.
+
+## Markdown files
+
+Onionskin opens `.md` and `.markdown` files: notes, READMEs, drafts and other text written in Markdown. The file's source is the document. You read it as a rendered preview, comment on words, type edits, and press Send. The agent changes the exact words you pointed at, History shows what changed, and Revert undoes the agent's last run. Everything outside a change stays byte for byte as it was: line endings, the final newline and a byte order mark.
+
+### What the preview shows
+
+The preview shows headings, paragraphs, bold and italic, code and code blocks, block quotes, bullet and numbered lists, tables, links and rules. It is built from Onionskin's own page elements, so nothing in the file runs or loads:
+
+- Links are styled text. They cannot be clicked or followed.
+- Images are shown as the text they are written as (`![alt](picture.png)`). Nothing is loaded.
+- Raw HTML and front matter (the block between `---` lines at the very top) are shown as written, in a box of their own.
+- Also shown as written: reference links, links in angle brackets, task boxes (`[ ]`), headings underlined with `===` or `---`, strikethrough and footnotes.
+
+### Comment
+
+Select words in the preview, then press Comment or Ask on the button that appears, or click a block in Comment mode, or drop a pin in Pin mode. The comment points at exactly the words you selected in the file's source, and goes to the agent when you press Send.
+
+- A selection that runs across two blocks is refused: "A comment can point at words inside one block only. Select within one paragraph, heading, list item, table cell or code block."
+- Words that cross formatting the preview hides (part of a link and the text after it, for example) do not map to one exact place: "These words do not map to one exact place in the file: they cross formatting the preview hides. You can comment on the whole block instead." The block's source is shown as written, with a "Comment on the whole block" button. If the preview changes before you press it, the offer is withdrawn: "The text changed under that offer, so it was withdrawn and nothing was anchored. Select the words again."
+
+### Edit
+
+The toolbar has Preview, Edit, Comment and Pin. Edit is a plain text box on the file's Markdown source. You can also just start typing in the preview: the page switches to Edit with your key typed at that spot. Where a spot does not map to one exact place in the file, the key is not typed: "That spot does not map to one exact place in the file, so the key was not typed. The editor opened at the start of that block." In an empty file the first key always lands. Esc goes back to Preview, which then shows your edit. Typing works in files whose line endings are LF or CRLF; an edit keeps the line endings of the file it was typed on, so Copy and Send give the same bytes.
+
+You can comment on your edited text in the preview before you send. Send writes your edit into the file first, then the agent gets the batch: comments on the edited text point at the exact words in the file as it is now. The agent is told that your edit is already in the file.
+
+A comment points at one exact version of the file. A comment you made before typing, or one still waiting when the file changed (an agent's write, Revert, a save in another program), no longer has a place. Its card says "You edited the text after making this comment, so it no longer points at a place. Select the words again, or send it as it is." (or "The file changed after you made this comment, ..."). Sent as it is, it reaches the agent as words only: the agent can decline it with a note or ask you a question, but cannot change the file for it.
+
+If the file changes outside Onionskin while you have an unsent edit, the edit is kept but not sent: "Your unsent edit was typed on an earlier version of the file, so it is not shown or sent. Copy it to keep it, then discard it." Typing stays off until you discard it.
+
+Typing is off:
+
+- while the agent works: "The agent is working on this file. You can type again when it is done." Comments still work and go out with the next Send.
+- in a second tab on the same file: "This tab is read-only. Edit from the tab that holds the file."
+- in a file with mixed line endings: "This file mixes line endings, so it opens for reading and comments only. Save it with one kind of line ending to edit it here."
+- in a file whose line endings are carriage returns alone: "This file uses old-style line endings (a carriage return alone), which this version does not edit, so it opens for reading and comments only. Save it with LF or CRLF line endings to edit it here."
+- in a file whose text holds an invisible byte order mark character. An edit that adds one is not sent: "Your edit was not sent: it contains an invisible byte order mark character (U+FEFF), which would change how the file is read. Remove it in Edit, then send again."
+
+When Onionskin wrote your edit but could not confirm the save (some network shares and external disks cannot confirm one), it says "Your edit was written to the file, but Onionskin could not confirm the save. Check the file; your edit is kept here to copy."
+
+### What the agent can change
+
+The agent changes text only by naming an exact range of the source and its exact old text. If the file is not the version the batch was made on, nothing is written. If the old text of one replacement differs by one character, that replacement is refused; in an ordinary reply nothing is written, while a reply sent with `--partial` still writes the other replacements that check out. The agent cannot change front matter a file already has; in a file with none, it can still add a block at the very top that then reads as front matter. You can edit front matter yourself in Edit. Revert is off when the file was changed outside Onionskin after the agent's write: "Revert is off for this run: the file was changed outside Onionskin after the agent's checked write, and reverting would erase that change."
+
+### Not in this version
+
+Review first, Quick changes, Download my edits, using the open file as a writing sample, and merging your typing with an agent's run (typing is off while it works). Files that are not saved as UTF-8 are refused: "This Markdown file is not saved as UTF-8, so Onionskin cannot read it. Save it as UTF-8 (in most editors: Save As, Encoding, UTF-8) and open it again." Files over 1 MB, over 20,000 lines, or nested more than 32 levels deep are refused with a sentence that names the limit.
 
 ## Speed
 
@@ -168,7 +216,7 @@ Onionskin's own part of a round is about 0.5 seconds (measured with a scripted a
 
 ## Size limits
 
-Onionskin reads a whole file at Send, at each hand-off to an agent and for a review (a review on its own thread, the others in a worker thread), so it refuses a file it could not read quickly, with the number and what to do ("Onionskin cannot read this file: this workbook has more than 1,000,000 cells, more than Onionskin can read. Split it into smaller workbooks and open those."). A file is refused whole, never read in part. Each limit was set from measurement: a plain file at the limit kept Onionskin's other requests waiting at most about 0.9 seconds (Excel), 0.8 seconds (Word) and 0.3 seconds (PowerPoint) on a busy test Mac (load average 15 to 28; an idle Mac is faster), and the hostile files in the tests under 2 seconds.
+Onionskin reads a whole file at Send, at each hand-off to an agent and for a review (a review on its own thread, the others in a worker thread), so it refuses a file it could not read quickly, with the number and what to do ("Onionskin cannot read this file: this workbook has more than 1,000,000 cells, more than Onionskin can read. Split it into smaller workbooks and open those."). A file is refused whole, never read in part. Each Office and HTML limit was set from measurement: a plain file at the limit kept Onionskin's other requests waiting at most about 0.9 seconds (Excel), 0.8 seconds (Word) and 0.3 seconds (PowerPoint) on a busy test Mac (load average 15 to 28; an idle Mac is faster), and the hostile files in the tests under 2 seconds.
 
 | What | Limit | Why this number |
 | --- | --- | --- |
@@ -179,6 +227,7 @@ Onionskin reads a whole file at Send, at each hand-off to an agent and for a rev
 | Excel | 1,000,000 cells, 1,000,000 shared strings, 50,000 merged ranges, 20,000 named ranges, 1,000 sheets, 3.2 million XML elements, 6.4 million attributes, 32 million characters of text, 32 million characters of text the cells show from shared strings, sheet names of 255 characters | 50,000 rows by 20 columns. 999,000 cells: 0.74 to 0.83 s at most, the server at 1.5 GB (Onionskin 0.0.3 took 3.1 s at 1,000,000); with longer texts, 0.86 s and 1.6 GB. 2,000,000 cells would be about twice that, past the aim; a higher limit needs the Send's reading moved off Onionskin's thread. The others are far above ordinary files and hold the worst shapes down: 999,000 cells with 49,000 merged ranges 0.64 s, 999,000 cells all showing one shared string 0.57 s, one string of 31 million characters 0.41 s. Excel itself allows 31 characters in a sheet name. |
 | PowerPoint | 50,000 shapes, 500,000 XML elements, 1,000,000 attributes, 8 million characters of text | A deck of 5,000 slides (20,000 shapes) took 0.3 s at most. |
 | HTML | 10 MB on disk; 200,000 elements, 400,000 attributes, 8 million characters of text, elements 512 levels deep, 1 MB for one attribute value (a `data:` value counts against the 10 MB instead) | Memory runs out first, at about 2.5 to 3 KB per element while a write is checked. A 10 MB page of 200,000 elements took 1.2 to 1.5 s to read; a 20 MB page of 400,000 elements ran out of memory in a worker thread. No real page tried came near these limits. The view has its own caps on pictures and styles (see [HTML files](#html-files)). |
+| Markdown | 1 MB on disk (1,048,576 bytes), 20,000 lines, quotes, lists or emphasis nested 32 levels deep | A batch carries the file's blocks whole, in order, until the next block would pass 200,000 characters (UTF-16 code units); the rest is not shown to the agent, so one paragraph longer than that is not shown at all. A comment carries its own selected words (up to 100,000 characters each, 2,000,000 for all comments of one batch together) wherever they are; past that a comment goes as words only. |
 
 A file that grows past a limit after it was opened is refused at Send, and nothing is written. To open a larger file, split it (by chapter, by sheet, by section of slides) and open the parts.
 
@@ -193,7 +242,7 @@ A file that grows past a limit after it was opened is refused at Send, and nothi
 - Only one browser tab per file can edit; others open read-only.
 - The browser needs two things on every request: the cookie and a launch token that was handed to the page once and lives only in that page's own origin storage. Another program on another local port can be sent the cookie but never the token. A new tab needs a fresh link from Onionskin.
 - An agent never writes your document's path directly: `apply` and `commit` go through the server, which checks the lease, compares the file with the version it expects, snapshots what it replaces, and holds a lock from the comparison to the rename. `done` flags a file that changed any other way.
-- If someone else changes the file while Onionskin has it open (Word, a sync tool, a person), Onionskin never overwrites it and never loses the version it holds: that version is saved next to the original as `<name> (Onionskin copy YYYY-MM-DD HHMM).<ext>` and the page tells you in plain words, with Show in folder and Reload buttons. Onionskin watches the file's folder, so the page says so within about 1 to 2 seconds of the outside save, also while the agent works; it also checks when the tab regains focus. A tab that is read-only shows nothing. A file in a synced folder (iCloud, Dropbox) may be noticed only by the focus and 30-second checks.
+- If someone else changes the file while Onionskin has it open (Word, a sync tool, a person), Onionskin checks the file right before every write and does not write over a change it finds there, and it keeps the version it holds: that version is saved next to the original as `<name> (Onionskin copy YYYY-MM-DD HHMM).<ext>` and the page tells you in plain words, with Show in folder and Reload buttons. (In a Markdown file, your own unsent edit is not saved as a copy: it stays in the page to copy.) The limit: a save by another program in the instant between that check and the write is not seen, and is overwritten; in a Markdown file, a program writing into Onionskin's temporary file while it is checked can have those bytes published, and the save is then reported as not confirmed. Onionskin watches the file's folder, so the page says so within about 1 to 2 seconds of the outside save, also while the agent works; it also checks when the tab regains focus. A tab that is read-only shows nothing. A file in a synced folder (iCloud, Dropbox) may be noticed only by the focus and 30-second checks.
 - Documents are size-checked before they are read, archives have per-part and total expansion limits, and the heavy checks at `done` run off the server's main thread.
 - Text from the file that appears in check results (part names, link targets, messages) is cut to one printable line before it reaches the agent. LibreOffice is used only for the optional conversion check.
 

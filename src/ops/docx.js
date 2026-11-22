@@ -4,7 +4,7 @@ import { replaceEntry } from "../zip-write.js";
 import { checkExpect, engineFailure, excerpt, fail, textHash, normText, refused } from "./common.js";
 import { TableError, tableEditor } from "./docx-table.js";
 import { loadEngine, openEngine } from "./engine.js";
-import { applySet, applySets, countMatches, findRanges, hasObjects, layout, pickMatches, rangesOf, replaceRanges, setAllText, splitForRange, splitForRanges } from "./runs.js";
+import { applySet, applySets, countMatches, findRanges, hasObjects, layout, overlapRefusal, pickMatches, rangesOf, replaceRanges, setAllText, splitForRange, splitForRanges } from "./runs.js";
 
 /**
  * DOCX driver. Two phases per run (see run.js): bind() resolves anchors and checks `expect` against the file as it was before any
@@ -316,6 +316,8 @@ const after = (p, block, edited) => ({ ...block, edited, ...(p.pd ? { pd: p.pd }
 function matchesIn(p, find, matchCase, pick) {
   const { text } = layout(p.runs);
   const found = findRanges(text, find, matchCase !== false);
+  const overlap = overlapRefusal([text], find, matchCase !== false, found.length, pick);
+  if (overlap) return { overlap };
   const m = pickMatches(found.map((_, i) => i), pick);
   if (m.error) return m;
   const chosen = m.starts.map((i) => found[i]);
@@ -337,6 +339,7 @@ export async function exec(st, b) {
           return { status: "applied" };
         }
         const m = matchesIn(p, op.find, op.match_case, op);
+        if (m.overlap) return refused("overlapping_matches", m.overlap);
         if (m.error) return fail("anchor_not_found", m.error);
         await editRuns(st, b.pid, replaceRanges(p.runs, m.starts, m.lens, op.replace));
         return { status: "applied", detail: { replaced: m.starts.length } };
@@ -345,6 +348,7 @@ export async function exec(st, b) {
         const p = st.cur.get(b.pid);
         if (!p) return wasDeleted();
         const m = matchesIn(p, op.find, op.match_case, op);
+        if (m.overlap) return refused("overlapping_matches", m.overlap);
         if (m.error) return fail("anchor_not_found", m.error);
         const patch = runProps(op.set);
         const sp = splitForRanges(p.runs, rangesOf(m.starts, m.lens));

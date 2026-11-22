@@ -37,14 +37,17 @@ export function useStamps() {
  * (quick fixes on, one sentence selected, a built-in Shorter, Friendlier or Fix grammar) shows a suggestion first. `suggest` =
  * {on, format, onOn, oneSentence}: whether quick fixes are set up, what the one-time offer needs, and whether the selection is certainly not one sentence.
  */
-export function Stamps({ own, save, load, dirtyRef, disabled, onStamp, suggest }) {
-  const [mode, setMode] = useState("row"); // row | language | edit
+export function Stamps({ own, save, load, dirtyRef, draftRef, disabled, onStamp, suggest }) {
+  // `draftRef` (App.jsx): an edit that was not saved when the box closed by itself (its words scrolled away, a click elsewhere). The next
+  // box opens on that edit, so nothing typed into a stamp is lost with the box; Save, Done and Cancel end it.
+  const held = draftRef?.current || null;
+  const [mode, setMode] = useState(held ? "edit" : "row"); // row | language | edit
   const [pending, setPending] = useState(null); // the stamp waiting for a language
-  const [draft, setDraft] = useState([]);
+  const [draft, setDraft] = useState(held || []);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [hot, setHot] = useState(null); // the stamp under the pointer or focus: the one-sentence notice is for a stamp that can suggest
-  const keyRef = useRef(0);
+  const keyRef = useRef(held ? Math.max(0, ...held.map((s) => s._key || 0)) : 0);
   const stripKeys = (list) => list.map(({ _key, ...s }) => s);
 
   const tap = (stamp) => {
@@ -73,8 +76,9 @@ export function Stamps({ own, save, load, dirtyRef, disabled, onStamp, suggest }
   const dirty = mode === "edit" && JSON.stringify(stripKeys(draft)) !== JSON.stringify(own);
   useLayoutEffect(() => {
     dirtyRef.current = dirty;
-    return () => { dirtyRef.current = false; };
-  }, [dirtyRef, dirty]);
+    if (draftRef) draftRef.current = dirty ? draft : null;
+    return () => { dirtyRef.current = !!draftRef?.current; }; // a kept edit is still unsaved: leaving the page asks
+  }, [dirtyRef, draftRef, dirty, draft]);
   const saveAll = async () => {
     if (busy) return;
     setBusy(true);

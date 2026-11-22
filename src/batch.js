@@ -8,6 +8,7 @@ import { htmlLocator } from "./html.js";
 import { GUIDE_MAX, SECTIONS, SHORT_MAX } from "./voice-guide.js";
 import { xlsxLocator } from "./xlsx.js";
 import { NOTE_MAX } from "./retain.js";
+import { SOURCE_MAX, SOURCE_TOTAL } from "./markdown-file.js";
 
 const REFERENCE = "The skill's SKILL.md and reference/ files (batch.md, ops.md, troubleshooting.md) hold the full rules and every op.";
 
@@ -36,6 +37,14 @@ const EXAMPLES = [
   { format: "docx", description: "Replace text inside the paragraph an anchor names.", op: { op: "replace_text", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, find: "<text inside the paragraph>", replace: "<new text>" } },
   { format: "html", description: "Replace text inside the element an anchor names (inside one text: not across a link or bold text).", op: { op: "replace_text", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, find: "<text inside the element>", replace: "<new text>" } },
   { format: "html", description: "Add markup after the element an anchor names (text, formatting, lists, tables, local images and links only).", op: { op: "insert_html", target: { anchor_id: "a1" }, expect: { text_hash: "<locator.text_hash of a1>" }, where: "after", html: "<p>New paragraph with a <a href=\"https://example.com\">link</a>.</p>" } },
+  { format: "markdown", description: "Replace an exact range of the file's source: from and to (UTF-16 offsets after any BOM), the exact old source there, the base sha256 of the batch.", op: { op: "replace_source", target: { from: 120, to: 131 }, expect: { sha256: "<base_sha256 of the batch>", source: "<the exact source from 120 to 131>" }, text: "<new source text>" } },
+];
+// Markdown (slice 1): one op, by exact range; what the agent reads, and what is refused
+const MARKDOWN_RULES = [
+  "Markdown: the only op is replace_source. Give target.from and target.to (UTF-16 offsets of the file's text after any BOM, as untrusted_document_evidence.markdown and each anchor's locator give them), expect.sha256 (the batch's base_sha256) and expect.source (the exact text there, copied whole from a block's or anchor's source, never retyped from a quote). A range off by one character, a different file, or an end inside an escape, an entity or a line break is refused, and nothing is written.",
+  "Markdown: every replacement of one reply uses the offsets of the base version, so an earlier one never moves a later one; two that overlap refuse the whole reply. Raw commits, find+replace and document-wide ops are not available for Markdown files.",
+  "Markdown: an op inside a comment's reply must replace exactly that comment's range; put a change of any other range in the reply's top-level ops. A batch is written once: put every change in one reply. If the file changed since this batch (stale_base), nothing is written: decline what it affects and run done.",
+  "Markdown: a comment whose reply_with is decline has no exact place you may change (made on an earlier revision of the file, on the front matter, or longer than the batch can carry): decline it with a plain reason. Never read the file to find its place.",
 ];
 // HTML (PLAN-html R1): what a write may add, and what the refusal looks like
 const HTML_RULES = [
@@ -58,10 +67,13 @@ function howToApply(file, batchId = "batch", format = null) {
     ops_schema: OPS_SCHEMA,
     rules: [
       `Fastest: \`${PRODUCT.bin} reply ${shellQuote(file)} --lease <ticket> --then-poll\` answers the whole batch in one call; each comment's reply_with names the shorthand (reference/ops.md).`,
-      `Or with apply (same engine as the browser): target ops by anchor id and give each an expect copied from what you read. ${REFERENCE}`,
-      `If you edit with other tools, never regenerate the file from scratch and never write the document's own path: edit a COPY, then run \`${PRODUCT.bin} commit ${shellQuote(file)} --from <copy> --lease <ticket>\` (the same checked write as apply; \`done\` flags a file that changed any other way).`,
-      "Anchors with protected: true cannot be edited losslessly; apply skips them (see protected_reason).",
+      // a Markdown op names an exact range, never an anchor id (replace_source takes target.from and target.to only)
+      format === "markdown" ? `Or with apply: replace_source ops with target.from and target.to (never an anchor_id) and expect copied whole from what you read. ${REFERENCE}` : `Or with apply (same engine as the browser): target ops by anchor id and give each an expect copied from what you read. ${REFERENCE}`,
+      // a Markdown file has no commit route (src/session.js agentWrite): its rules say so instead
+      ...(format === "markdown" ? [] : [`If you edit with other tools, never regenerate the file from scratch and never write the document's own path: edit a COPY, then run \`${PRODUCT.bin} commit ${shellQuote(file)} --from <copy> --lease <ticket>\` (the same checked write as apply; \`done\` flags a file that changed any other way).`]),
+      format === "markdown" ? "Anchors and blocks with protected: true (the front matter) are never changed: a replacement that touches one is refused, so decline those comments." : "Anchors with protected: true cannot be edited losslessly; apply skips them (see protected_reason).",
       ...(format === "html" ? HTML_RULES : []),
+      ...(format === "markdown" ? MARKDOWN_RULES : []),
     ],
     examples: EXAMPLES.filter((e) => !format || e.format === format),
   };
@@ -72,7 +84,12 @@ function howToApply(file, batchId = "batch", format = null) {
  * an xlsx hash exists only for a cell or range, a pptx shorthand only for a text shape (not a table, picture, group or slide anchor).
  */
 export function replyWithOf(anchor, format) {
+  // Markdown: a comment with no exact place on this revision, or on protected text, can only be declined (no op may answer it)
+  if (format === "markdown" && (!anchor.resolved || anchor.protected || !anchor.locator)) return "decline";
   if (!anchor.resolved || anchor.protected || !anchor.locator) return "decline_or_ops";
+  // Markdown: `text` replaces the anchor's exact range, when the batch carries its exact source; otherwise a replace_source op
+  // (an unresolved, protected or too-long anchor never offers a write: "decline", above and here)
+  if (format === "markdown") return typeof anchor.locator.source === "string" ? "text_or_ops" : "decline";
   if (!anchor.locator.text_hash) return "ops";
   if (format === "xlsx") return "set";
   if (format === "pptx") return anchor.unit === "shape" ? "find_replace_or_text" : "ops";
@@ -94,6 +111,7 @@ function labelFor(d, pin) {
   if (!d) return "unresolved location";
   if (d.format === "xlsx") return `${d.sheetName}${d.range ? `!${d.range}` : ""}`;
   if (d.format === "pptx") return `Slide ${d.slideIndex + 1}${d.slideTitle ? ` "${d.slideTitle}"` : ""}${d.shapeId != null ? `, shape ${d.shapeName ? `"${d.shapeName}"` : d.shapeId}` : ""}`;
+  if (d.format === "markdown") return d.label || "Markdown text";
   if (d.format && d.format !== "docx") return `${d.format} element`;
   const p = d.path;
   if (d.protectInfo?.toc && d.paraText) return `table of contents entry '${d.paraText.slice(0, 60)}'`;
@@ -108,7 +126,10 @@ const MAX_VALUES = { rows: 20, cols: 10 };
 const unitOfXlsx = (d) => (d.cell ? (d.r0 === d.r1 && d.c0 === d.c1 ? "cell" : "range") : /^\d+:\d+$/.test(d.range) ? "rows" : /^[A-Za-z]+:[A-Za-z]+$/.test(d.range) ? "columns" : "sheet");
 
 /** Format-specific evidence of a durable anchor: locator, quote, unit and context. All strings are document-derived and sanitized by the caller. */
-function evidenceOf(d, extra, clean = (f) => untrusted(f, 100)) {
+function evidenceOf(d, extra, clean = (f) => untrusted(f, 100), source = null) {
+  // Markdown: the exact range, the version it was made on and, from that version's text, its exact source (never cleaned or cut: the
+  // agent copies it into expect.source). The quote stays display evidence.
+  if (d?.format === "markdown") return { unit: d.kind, locator: { format: "markdown", from: d.from, to: d.to, sha256: d.sha256, ...(source ? source(d) : {}) }, quote: d.quote, prefix: "", suffix: "" };
   if (d?.format === "xlsx") {
     // the anchor keeps its top-left cells (src/xlsx.js rangeOf); one stored by an earlier version has its whole text instead
     const grid = Array.isArray(d.values) ? d.values : d.cell ? d.text.split("\n").map((r) => r.split("\t")) : null;
@@ -136,7 +157,7 @@ function evidenceOf(d, extra, clean = (f) => untrusted(f, 100)) {
   * A review (src/review.js) passes `review` ({kind, ask}: the fixed sentence of the tapped button) and `units` (the code-built outline, quoted
   * document text that goes into the evidence, never into `instructions`); its next step is a `reply` with `suggest`.
   */
-export function buildBatch({ file, format, baseSha, note, comments, edits, style = "", guide = "", review = null, units = null, unitsMore = 0 }) {
+export function buildBatch({ file, format, baseSha, note, comments, edits, style = "", guide = "", review = null, units = null, unitsMore = 0, mdText = null }) {
   const batchId = `b_${crypto.randomBytes(6).toString("hex")}`;
   const anchors = [];
   let n = 0;
@@ -147,9 +168,17 @@ export function buildBatch({ file, format, baseSha, note, comments, edits, style
     if (v === undefined) formats.set(f, (v = untrusted(f, 100)));
     return v;
   };
+  // Markdown: an anchor's exact source, from the base version's text (`mdText`, without a BOM) when the anchor was made on that version,
+  // at most SOURCE_MAX characters each and SOURCE_TOTAL in all (past that the agent copies the source from the blocks or the file)
+  let mdTotal = 0;
+  const mdSource = (d) => {
+    if (typeof mdText !== "string" || d.sha256 !== baseSha || d.to - d.from > SOURCE_MAX || mdTotal + (d.to - d.from) > SOURCE_TOTAL) return {};
+    mdTotal += d.to - d.from;
+    return { source: mdText.slice(d.from, d.to) };
+  };
   const addAnchor = (d, extra = {}) => {
     const id = `a${++n}`;
-    const ev = evidenceOf(d, extra, cleanFormat);
+    const ev = evidenceOf(d, extra, cleanFormat, mdSource);
     anchors.push({
       id,
       kind: extra.kind || "paragraph",
@@ -187,14 +216,16 @@ export function buildBatch({ file, format, baseSha, note, comments, edits, style
     edit_kind: untrusted(e.kind || "text", 40),
     before: untrusted(e.before),
     after: untrusted(e.after),
-    already_in_file: true,
+    // a Markdown edit an earlier Send wrote and a later one changed again: its text may no longer be in the file as it was
+    already_in_file: e.superseded !== true,
   }));
   return {
     schema: `${PRODUCT.bin}.batch/1`,
     batch_id: batchId,
     format,
     base_sha256: baseSha,
-    note: "user_edits are changes the user already made; they are in the file; do not redo or revert them",
+    // (a Markdown edit a later Send changed again is not in the file as it was: the note says only what is true)
+    note: edits.some((e) => e.superseded === true) ? "user_edits with already_in_file: true are changes the user already made; they are in the file; do not redo or revert them. One with already_in_file: false was changed again by a later edit: it is not in the file as it was" : "user_edits are changes the user already made; they are in the file; do not redo or revert them",
     // the note at NOTE_MAX: a waiting batch's note and the next one together are never cut here (longer is refused at Send, src/session.js)
     instructions: { overall_note: userText(note, NOTE_MAX), ...(style ? { style_note: style } : {}), ...(guide ? { voice_guide: guide } : {}), ...(review ? { review: { kind: review.kind, ask: review.ask } } : {}), comments: instructionComments },
     untrusted_document_evidence: { file_name: untrusted(path.basename(file)), anchors, user_edits: userEdits, ...(questions.length ? { questions } : {}), ...(units ? { units, ...(unitsMore ? { units_more: unitsMore } : {}) } : {}) },

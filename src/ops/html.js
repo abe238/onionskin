@@ -3,7 +3,7 @@ import { byPath, elementAddressable, elementPath, escapeAttr, escapeText, hasDup
 import { assemble, checkedHtmlWrite, conflicts, editDelta, emptyEdit, textEdit } from "../html-write.js";
 import { CapError } from "../xml.js";
 import { excerpt, fail, normText, refused } from "./common.js";
-import { countMatches, findRanges, pickMatches } from "./runs.js";
+import { countMatches, findRanges, overlapRefusal, pickMatches } from "./runs.js";
 
 /**
  * HTML driver (PLAN-html 3.1, 3.5 as changed by R1, R7, R8, R10, R11, R12, R22). No engine: every op is a splice of the file's source
@@ -204,7 +204,17 @@ export async function bind(st, op) {
       }
       const mc = op.match_case !== false;
       const hits = [];
-      for (const node of textsUnder(r.el)) for (const m of matchesIn(node.value, op.find, mc).ranges) hits.push({ node, ...m });
+      const nodes = textsUnder(r.el);
+      for (const node of nodes) for (const m of matchesIn(node.value, op.find, mc).ranges) hits.push({ node, ...m });
+      // B1: the same rule as Word and PowerPoint, over the same folded text, node by node, that the matches above come from
+      const overlap = overlapRefusal(hits.length === 1 ? nodes.map((node) => folded(node.value).n) : [], foldFind(op.find), mc, hits.length, op);
+      if (overlap) return refused("overlapping_matches", overlap);
+      // and over the element's whole text (its text nodes joined in order): a copy that runs across formatting ("ba<b>n</b>ana", the
+      // first "ana") is not one of the matches above, and the one match found may not be the copy the comment points at. Ceiling: text
+      // nodes of two blocks inside the element join with nothing between, which can only refuse more, never write elsewhere.
+      if (hits.length === 1 && overlapRefusal([folded(nodes.map((node) => node.value).join("")).n], foldFind(op.find), mc, 1, op)) {
+        return refused("overlapping_matches", 'a copy of these words runs across formatting (bold, a link or similar) in the target, so the change might land on a different copy than the comment points at; nothing was changed. Give a longer "find" that occurs only once');
+      }
       const pick = pickMatches(hits.map((_, i) => i), op);
       if (pick.error) {
         const seen = visibleCount(st, r.el, op.find, mc);

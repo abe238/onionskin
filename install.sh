@@ -32,34 +32,54 @@ STATE="$HOME_DIR/.onionskin"
 APPS="$STATE/app"
 BINDIR="$HOME_DIR/.local/bin"
 LAUNCHER="$BINDIR/onionskin"
+# The deeper checks live where the app looks for them: ONIONSKIN_STATE_DIR when it is set (src/paths.js resolves it the same way).
+CHECKER_STATE=${ONIONSKIN_STATE_DIR:-$STATE}
+case "$CHECKER_STATE" in /*) ;; *) CHECKER_STATE="$(pwd -P)/$CHECKER_STATE" ;; esac
 APP=""
 TMP=""
 SETUP_OUT=""
 LOCK="$STATE/install.lock"
 LOCK_HELD=0
+LOCK_INO=""
 STATE_CREATED=0
 
 cleanup() {
   [ -n "${TMP:-}" ] && rm -rf "$TMP"
-  if [ -n "${APP:-}" ] && [ -e "$APP.old.$$" ] && [ ! -e "$APP" ]; then
-    mv "$APP.old.$$" "$APP" 2>/dev/null || true
-  fi
+  put_back_old || true
   [ -n "${LAUNCHER:-}" ] && rm -f "${LAUNCHER}.tmp.$$"
   [ -n "${SETUP_OUT:-}" ] && rm -f "$SETUP_OUT"
-  [ "${LOCK_HELD:-0}" = 1 ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+  [ "${LOCK_HELD:-0}" = 1 ] && lock_ours && rm -rf "$LOCK"
   [ "${UNINSTALL:-0}" = 1 ] && [ "${STATE_CREATED:-0}" = 1 ] && rmdir "$STATE" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'cleanup; trap - EXIT; exit 1' INT TERM HUP
 
 say() { printf '%s\n' "$*"; }
+# A same-version reinstall sets the old copy aside before publishing the new one. Put it back under the version's name only while that
+# name is free, whether or not the lock is still ours: a free name holds no other installer's copy to clobber. rename(2), not mv: mv onto a
+# folder that appeared after the check would move the old copy inside it (mv -n too, on macOS and Linux); rename refuses a folder that
+# holds anything, and a link. An empty folder at the name is replaced (it is no copy). Returns 1 when the copy stays aside.
+put_back_old() {
+  [ -n "${APP:-}" ] && [ -e "$APP.old.$$" ] || return 0
+  [ ! -e "$APP" ] && [ ! -L "$APP" ] && node -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' "$APP.old.$$" "$APP" 2>/dev/null
+}
 lock_busy() {
   say "Another Onionskin install or update is running. Try again when it finishes."
   say "If none is running, delete this folder and try again: $LOCK"
+  # An old copy set aside by a same-version reinstall that could not be put back: say how to get a working copy back.
+  if [ -n "${APP:-}" ] && [ -e "$APP.old.$$" ] && [ ! -e "$APP" ]; then
+    say "Your previous copy was set aside at $APP.old.$$. Run the install again once the other one finishes."
+  fi
   exit 1
 }
+# The inode of the lock folder: a folder made by another installer is a different folder even if it held the same text.
+lock_ino() { ls -di "$LOCK" 2>/dev/null | awk '{print $1}'; }
+# The lock is ours while it holds this installer's number AND is the folder this installer made.
+lock_ours() { [ -n "${LOCK_INO:-}" ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && [ "$(lock_ino)" = "$LOCK_INO" ]; }
+# Run right before each step that changes what is installed (publish, launcher swap, each removal, uninstall). A dry run holds no lock.
 check_lock() {
-  if [ "$(cat "$LOCK/pid" 2>/dev/null)" != "$$" ]; then
+  [ "$DRY" = 1 ] && return 0
+  if ! lock_ours; then
     LOCK_HELD=0
     lock_busy
   fi
@@ -74,6 +94,7 @@ take_lock() {
   if mkdir "$LOCK" 2>/dev/null; then
     LOCK_HELD=1
     printf '%s\n' "$$" > "$LOCK/pid"
+    LOCK_INO=$(lock_ino)
     return 0
   fi
   TRIES=0
@@ -85,7 +106,8 @@ take_lock() {
   case "$LPID" in
     ''|*[!0-9]*) LPID="" ;;
   esac
-  if [ -n "$LPID" ] && kill -0 "$LPID" 2>/dev/null; then
+  # A lock is taken over only when its owner is proven dead: one with no readable process number is left alone.
+  if [ -z "$LPID" ] || kill -0 "$LPID" 2>/dev/null; then
     lock_busy
   fi
   LPID2=$(cat "$LOCK/pid" 2>/dev/null || true)
@@ -95,10 +117,19 @@ take_lock() {
   if [ "$LPID2" != "$LPID" ]; then
     lock_busy
   fi
-  mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null && rm -rf "$LOCK.stale.$$"
+  # Another installer may have taken over the same stale lock since it was read. Only the dead owner's folder is removed: a folder
+  # moved aside that holds any other number is a live installer's lock, and is put back (unless a new lock appeared meanwhile).
+  if mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then
+    if [ "$(cat "$LOCK.stale.$$/pid" 2>/dev/null || true)" != "$LPID" ]; then
+      [ -e "$LOCK" ] || mv "$LOCK.stale.$$" "$LOCK" 2>/dev/null
+      lock_busy
+    fi
+    rm -rf "$LOCK.stale.$$"
+  fi
   if mkdir "$LOCK" 2>/dev/null; then
     LOCK_HELD=1
     { printf '%s\n' "$$" > "$LOCK/pid"; } 2>/dev/null || true
+    LOCK_INO=$(lock_ino)
     sleep 0.2
     CURPID=$(cat "$LOCK/pid" 2>/dev/null || true)
     if [ "$CURPID" != "$$" ]; then
@@ -109,8 +140,12 @@ take_lock() {
   fi
   lock_busy
 }
-do_() { # run a change unless --dry-run
-  if [ "$DRY" = 1 ]; then say "  [dry run] $*"; else "$@"; fi
+do_() { # run a change unless --dry-run; a dry run prints each path in double quotes, so a pasted line cannot split it at a space
+  if [ "$DRY" = 1 ]; then
+    DO_LINE="  [dry run] $1"; shift
+    for DO_ARG in "$@"; do case "$DO_ARG" in -*) DO_LINE="$DO_LINE $DO_ARG" ;; *) DO_LINE="$DO_LINE \"$DO_ARG\"" ;; esac; done
+    say "$DO_LINE"
+  else "$@"; fi
 }
 is_our_skill() { [ -d "$1" ] && [ ! -L "$1" ] && head -c 400 "$1/SKILL.md" 2>/dev/null | grep -q '^name:[[:space:]]*onionskin[[:space:]]*$'; }
 is_our_launcher() { [ -f "$LAUNCHER" ] && [ ! -L "$LAUNCHER" ] && grep -q '/.onionskin/app/' "$LAUNCHER" 2>/dev/null; }
@@ -120,8 +155,45 @@ check_app() {
       encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10000, killSignal: "SIGKILL"
     });
     const version = process.argv[2];
-    process.exit(r.status === 0 && (r.stdout === version || r.stdout === version + "\n") ? 0 : 1);
-  ' "$1/src/cli.js" "$2"; then
+    if (r.status !== 0 || (r.stdout !== version && r.stdout !== version + "\n")) process.exit(1);
+    // Load the server module and everything it imports, so a copy missing one of its files (src/watch.js, say) is refused here.
+    const url = require("node:url").pathToFileURL(process.argv[3]).href;
+    const s = require("node:child_process").spawnSync(process.execPath, ["-e", "import(process.argv[1]).then(() => process.exit(0), () => process.exit(1))", url], {
+      stdio: "ignore", timeout: 20000, killSignal: "SIGKILL"
+    });
+    process.exit(s.status === 0 ? 0 : 1);
+  ' "$1/src/cli.js" "$2" "$1/src/server.js" || ! node -e '
+    // Files the server loads later (workers, lazy imports) are not loaded above: every relative file named in src/ must exist.
+    // Ceiling: a text scan for literal specifiers (from/import "./x", import("./x"), new URL("./x", import.meta.url), startWorker("x.js")),
+    // so a name built at run time is not checked; the upgrade path is a file list written when the package is built.
+    const fs = require("node:fs"), path = require("node:path");
+    const root = process.argv[1], src = path.join(root, "src"), missing = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const f = path.join(dir, e.name);
+        if (e.isDirectory()) { walk(f); continue; }
+        if (!/\.m?js$/.test(e.name)) continue;
+        const text = fs.readFileSync(f, "utf8"), want = [];
+        for (const m of text.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*["\x27](\.\.?\/[^"\x27]+)["\x27]/g)) want.push(path.resolve(dir, m[1]));
+        for (const m of text.matchAll(/new URL\(\s*["\x27`](\.\.?\/[^"\x27`$]+)["\x27`]\s*,\s*import\.meta\.url/g)) want.push(path.resolve(dir, m[1]));
+        for (const m of text.matchAll(/\bstartWorker\(\s*["\x27]([^"\x27\/]+)["\x27]/g)) want.push(path.join(src, m[1]));
+        for (const t of want) if (!fs.existsSync(t)) missing.push(t);
+      }
+    };
+    walk(src);
+    // The page the editor loads: every local script, stylesheet and preload that web/dist/index.html names must be there and not empty.
+    const dist = path.join(root, "web", "dist");
+    const html = fs.readFileSync(path.join(dist, "index.html"), "utf8");
+    for (const m of html.matchAll(/\b(?:src|href)\s*=\s*["\x27]([^"\x27]+)["\x27]/gi)) {
+      const ref = m[1].trim().split(/[?#]/)[0];
+      if (!ref || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(ref)) continue; // absolute URLs, data: and the like
+      const t = ref.startsWith("/") ? path.join(dist, ref) : path.resolve(dist, ref);
+      let ok = false;
+      try { ok = fs.statSync(t).isFile() && fs.statSync(t).size > 0; } catch {}
+      if (!ok) missing.push(t);
+    }
+    process.exit(missing.length ? 1 : 0);
+  ' "$1"; then
     say "  The new copy could not start. Any previous installation was kept."
     exit 1
   fi
@@ -165,19 +237,67 @@ if [ "$UNINSTALL" = 1 ]; then
   say "Uninstalling Onionskin"
   take_lock
   if is_our_launcher && command -v node >/dev/null 2>&1 && [ "$DRY" = 0 ]; then "$LAUNCHER" stop >/dev/null 2>&1 || true; fi
+  check_lock
   if is_our_launcher; then do_ rm -f "$LAUNCHER"; say "  removed $LAUNCHER"; elif [ -e "$LAUNCHER" ]; then say "  left alone: $LAUNCHER (not made by this installer)"; else say "  not present: $LAUNCHER"; fi
+  check_lock
   if [ -d "$APPS" ]; then do_ rm -rf "$APPS"; say "  removed $APPS"; else say "  not present: $APPS"; fi
   for s in "$HOME_DIR/.claude/skills/onionskin" "$HOME_DIR/.agents/skills/onionskin"; do
+    check_lock
     if is_our_skill "$s"; then do_ rm -rf "$s"; say "  removed $s"; elif [ -e "$s" ]; then say "  left alone: $s (not an onionskin skill folder)"; else say "  not present: $s"; fi
   done
+  # By real place (a link, or a linked folder, can put either outside $STATE): the checker environment (empty when there is none),
+  # and the state folder set by ONIONSKIN_STATE_DIR (empty when unset or missing). CHECKER_STATE is that folder, made absolute the way
+  # src/paths.js does; its real place also settles a trailing slash. A custom folder outside $STATE is never removed: it may hold other
+  # things. Every path left behind is printed quoted on its own line, never as a command to paste.
+  under() { [ -n "$1" ] && [ -n "$2" ] && case "$1/" in "$2"/*) true ;; *) false ;; esac; }
+  CHECKER_REAL=$( [ -d "$CHECKER_STATE/venv" ] && cd "$CHECKER_STATE/venv" 2>/dev/null && pwd -P )
+  STATE_REAL=$( [ -d "$STATE" ] && cd "$STATE" 2>/dev/null && pwd -P )
+  CUSTOM_REAL=""
+  [ -n "${ONIONSKIN_STATE_DIR:-}" ] && CUSTOM_REAL=$( [ -d "$CHECKER_STATE" ] && cd "$CHECKER_STATE" 2>/dev/null && pwd -P )
+  CHECKER_IN=0; under "$CHECKER_REAL" "$STATE_REAL" && CHECKER_IN=1
+  CUSTOM_OUT=0; [ -n "$CUSTOM_REAL" ] && ! under "$CUSTOM_REAL" "$STATE_REAL" && CUSTOM_OUT=1
+  CHECKER_IN_CUSTOM=0; [ "$CUSTOM_OUT" = 1 ] && under "$CHECKER_REAL" "$CUSTOM_REAL" && CHECKER_IN_CUSTOM=1
   if [ "$PURGE" = 1 ]; then
     if [ "$STATE_CREATED" = 0 ] && [ -d "$STATE" ]; then
-      do_ rm -rf "$STATE"; say "  removed $STATE (snapshots and checker environment included)"
+      check_lock
+      do_ rm -rf "$STATE"
+      # After a real removal, what still exists decides; a dry run goes by the real places.
+      if [ "$DRY" = 0 ]; then
+        if [ -n "$CHECKER_REAL" ]; then if [ -e "$CHECKER_REAL" ]; then CHECKER_IN=0; else CHECKER_IN=1; fi; fi
+        if [ -n "$CUSTOM_REAL" ]; then if [ -e "$CUSTOM_REAL" ]; then CUSTOM_OUT=1; else CUSTOM_OUT=0; fi; fi
+      fi
+      if [ "$CUSTOM_OUT" = 1 ]; then
+        say "  removed $STATE"
+      elif [ "$CHECKER_IN" = 1 ]; then
+        say "  removed $STATE (snapshots and checker environment included)"
+      else
+        say "  removed $STATE (snapshots included)"
+      fi
     else
       say "  not present: $STATE"
     fi
   elif [ "$STATE_CREATED" = 0 ] && [ -d "$STATE" ]; then
-    say "  kept $STATE (your snapshots and the checker environment); to delete it: rm -rf $STATE"
+    if [ "$CUSTOM_OUT" = 1 ]; then
+      say "  kept $STATE. To delete it too, run the uninstall again with --purge."
+    elif [ "$CHECKER_IN" = 1 ]; then
+      say "  kept $STATE (your snapshots and the checker environment). To delete it too, run the uninstall again with --purge."
+    else
+      say "  kept $STATE (your snapshots). To delete it too, run the uninstall again with --purge."
+    fi
+  fi
+  if [ "$CUSTOM_OUT" = 1 ]; then
+    WHAT="sessions and snapshots"; [ "$CHECKER_IN_CUSTOM" = 1 ] && WHAT="sessions, snapshots and checker environment"
+    if [ "$PURGE" = 1 ]; then LEFT="was left in place"; else LEFT="--purge also leaves in place"; fi
+    say "  Your $WHAT are in the state folder set by ONIONSKIN_STATE_DIR, which $LEFT. You can delete this folder yourself if you no longer want it:"
+    say "    \"$CUSTOM_REAL\""
+  fi
+  if [ -n "$CHECKER_REAL" ] && [ "$CHECKER_IN" = 0 ] && [ "$CHECKER_IN_CUSTOM" = 0 ]; then
+    if [ "$PURGE" = 1 ]; then
+      say "  The checker environment was left in place, outside that folder. You can delete this folder yourself if you no longer want it:"
+    else
+      say "  The checker environment is outside that folder, and --purge leaves it in place. You can delete this folder yourself if you no longer want it:"
+    fi
+    say "    \"$CHECKER_REAL\""
   fi
   say "Your documents were not touched."
   exit 0
@@ -253,13 +373,19 @@ else
       if [ -e "$APP.old.$$" ] || [ -L "$APP.old.$$" ]; then say "  Could not set aside the old copy. $APP.old.$$ already exists."; exit 1; fi
       check_lock
       mv "$APP" "$APP.old.$$" || exit 1
+      # no lock check here: stopping between these two moves would leave no copy under the version's name
       if mv "$TMP" "$APP"; then
         TMP=""
       else
-        mv "$APP.old.$$" "$APP" 2>/dev/null || true
+        # Before the lock check: put_back_old is safe without the lock, and the launcher needs a copy under this name.
+        if ! put_back_old && { [ -e "$APP" ] || [ -L "$APP" ]; }; then
+          say "  Another copy was installed at $APP meanwhile, so your previous copy was left at $APP.old.$$."
+        fi
+        check_lock
         exit 1
       fi
     else
+      check_lock
       mv "$TMP" "$APP" || exit 1
       TMP=""
     fi
@@ -301,6 +427,7 @@ if [ "$DRY" = 0 ]; then
   check_lock
   for d in "$APPS"/*; do
     [ -d "$d" ] && [ "$d" != "$APP" ] || continue
+    check_lock
     guide="$d/skills/onionskin/voice.md"
     if [ -L "$guide" ] || [ -f "$guide" ]; then
       dest="$APP/skills/onionskin/voice.md"
@@ -312,6 +439,7 @@ if [ "$DRY" = 0 ]; then
         continue
       fi
     fi
+    check_lock
     rm -rf "$d"
   done
 else
@@ -346,10 +474,10 @@ say "Deeper checks"
 if [ "$NOCHECKER" = 1 ]; then
   say "  skipped (--no-checker). You can turn them on later from the review panel."
 elif [ "$DRY" = 1 ]; then
-  say "  [dry run] would download five small Python libraries from PyPI once into $STATE/venv (about a minute; the system Python is left alone)"
+  say "  [dry run] would download five small Python libraries from PyPI once into $CHECKER_STATE/venv (about a minute; the system Python is left alone)"
 else
-  say "  Checking the Python libraries in $STATE/venv and installing them if needed."
-  if ONIONSKIN_SETUP_IF_NEEDED=1 ONIONSKIN_STATE_DIR="$STATE" node "$APP/src/cli.js" setup-checker > "$CHECKER_LOG" 2>&1 && [ -x "$STATE/venv/bin/python" ]; then
+  say "  Checking the Python libraries in $CHECKER_STATE/venv and installing them if needed."
+  if ONIONSKIN_SETUP_IF_NEEDED=1 ONIONSKIN_STATE_DIR="$CHECKER_STATE" node "$APP/src/cli.js" setup-checker > "$CHECKER_LOG" 2>&1 && [ -x "$CHECKER_STATE/venv/bin/python" ]; then
     say "  done"
   else
     if grep -Fxq 'Deeper check setup timed out.' "$CHECKER_LOG"; then say "  Deeper check setup timed out."; fi

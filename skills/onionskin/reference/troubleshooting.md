@@ -65,7 +65,7 @@ The file is not a package of that type (wrong extension, truncated, or a differe
 Tell the user the sentence Onionskin printed; do not convert or repair the file yourself.
 
 - "Onionskin cannot open this kind of saved page; in Chrome choose Save As, Webpage, Complete." (`.mhtml`, `.mht`, `.webarchive`), "Onionskin cannot open .xhtml pages; save the page as .html and open that.", "Onionskin cannot open .svg pictures; it opens .html and .htm pages.": these kinds are refused by design.
-- "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." (a page that declares windows-1252, ISO-8859-1 or US-ASCII; `onionskin open` also prints the command `onionskin utf8-copy <file>`, which writes `<name>.utf8.html` next to the page, only if that name is free, and leaves the original unchanged: run it, then open the copy) and "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." (a page that declares another encoding, or holds bytes that are not valid UTF-8): only UTF-8 pages open.
+- "This file is not saved as UTF-8; Onionskin can save a UTF-8 copy and open that." (a page that declares windows-1252, ISO-8859-1 or US-ASCII and whose accented bytes do not already read as UTF-8; `onionskin open` also prints the command `onionskin utf8-copy <file>`, which writes `<name>.utf8.html` next to the page, only if that name is free, and leaves the original unchanged: run it, then open the copy) and "This file is not saved as UTF-8, and Onionskin cannot tell how it is saved, so it cannot open it." (a page that declares another encoding, one that declares windows-1252 or its aliases while its accented bytes already read as UTF-8, where no copy is offered, or one that holds bytes that are not valid UTF-8): only UTF-8 pages open.
 - "This file could not be opened: this page is 10.5 MB, more than the 10 MB Onionskin can read. Split it into smaller pages and open those." The same form names the other limits: 200,000 elements, 400,000 attributes, 8 million characters of text, 512 levels of nesting, 1 MB for one attribute value.
 
 ## HTML op codes
@@ -80,6 +80,14 @@ Each comes with `status: "refused"` and a `reason`. Nothing of the batch was wri
 - `overlapping_edit`: two ops of the file change the same place. Give one op per place, or one `replace_element`.
 - `charset_needs_head`: the page does not declare UTF-8 and has no place near its top to add the declaration. Write the characters as references (`&eacute;`) or decline.
 - `too_large`, `not_utf8`: the page is past a limit or is not UTF-8. Decline and tell the user the reason.
+
+## A Markdown file will not open, or a replacement is refused
+
+- "This Markdown file is not saved as UTF-8, so Onionskin cannot read it. Save it as UTF-8 (in most editors: Save As, Encoding, UTF-8) and open it again.": only UTF-8 files open. Tell the user; do not convert the file yourself.
+- "This Markdown file is 1,153,433 bytes, more than the 1,048,576 bytes (1 MB) Onionskin can read. Split it into smaller files and open those." (with the file's own size), and "This file could not be opened: this Markdown file has more than 20,000 lines, more than Onionskin can read. Split it into smaller files and open those." The same form names the other limit: 32 levels of nested quotes, lists or emphasis.
+- `stale_base`, `old_text_differs`, `not_a_boundary`, `bad_range`, `overlap` (`reference/ops.md`, "Markdown ops"): nothing was written and the batch is still yours. Copy `from`, `to` and the old text again from the batch (never from a `quote`) and send the whole reply again; after `stale_base` (the file changed outside this batch) do not poll again: decline the comments it affects, say why in their notes and run done; the user sends again on the new version. `op_not_on_anchor`: an op inside a comment's reply names another range; put that change in the top-level `ops`. `protected`: the range touches the front matter, or the new text would end it (text added right after its closing `---` must start with a new line); start such an addition with a new line, or decline the comment.
+- "A Markdown file is changed only by exact replacements (replace_source ops, through onionskin reply or apply): commit and other writes are not available for it.": by design. Use `reply` or `apply`.
+- "Review first is not available for Markdown files in this version. Select words in the preview, comment and press Send.": by design.
 
 ## The HTML view is empty, plain or missing pictures
 

@@ -16,11 +16,106 @@ export function checkRegularOwned(file) {
   return st;
 }
 
+const tooLarge = (file, max) => Object.assign(new Error(`${path.basename(file)} is larger than ${Math.round(max / 1024 / 1024)} MB, more than Onionskin can read. Make it smaller (pictures and videos are often most of a file) or split it, and open that`), { code: "TOO_LARGE" });
+
 /** Reads a document, refusing by size first (an oversized file is never pulled into memory). */
 export function readDoc(file, max = MAX_DOC_BYTES) {
   const st = fs.statSync(file);
-  if (st.size > max) throw Object.assign(new Error(`${path.basename(file)} is larger than ${Math.round(max / 1024 / 1024)} MB, more than Onionskin can read. Make it smaller (pictures and videos are often most of a file) or split it, and open that`), { code: "TOO_LARGE" });
+  if (st.size > max) throw tooLarge(file, max);
   return fs.readFileSync(file);
+}
+
+/**
+ * Reads an open document the way checkRegularOwned + readDoc would, on one descriptor so nothing can be swapped in between: opened with
+ * O_NOFOLLOW (a symbolic link is refused, code SYMLINK) and O_NONBLOCK (a FIFO swapped in does not block the open; fstat refuses it), then the
+ * descriptor must be a regular file this user owns, and its size is checked against the cap before a byte is read. Same words as those two.
+ * Ceiling: O_NOFOLLOW covers only the last path component; a folder on the path replaced by a link after open is followed (the session
+ * holds the real path, so this needs the folder itself swapped). Upgrade path: lstat each folder on the path and check it again after the open, as
+ * src/html-render.js does for page assets. Also, like readDoc, a file that grows between the fstat and the read is read to its end.
+ */
+export function readOwned(file, max = MAX_DOC_BYTES) {
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (err) {
+    if (err.code === "ELOOP") throw Object.assign(new Error(`${file} is a symbolic link`), { code: "SYMLINK" });
+    throw err;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw Object.assign(new Error(`${file} is not a regular file`), { code: "NOT_REGULAR" });
+    if (st.uid !== process.getuid()) throw Object.assign(new Error(`${file} is not owned by the current user`), { code: "NOT_OWNED" });
+    if (st.size > max) throw tooLarge(file, max);
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * A file's identity on disk as one string: device, inode, size and modification time in nanoseconds (a bigint fstat). NOT the change
+ * time: a sync client (iCloud Drive, measured), a chmod, an extended attribute or a Finder tag moves ctime alone, seconds after a save,
+ * and that is not a change of the text. Stated limits (docs/contracts/anchors.md): a program that rewrites the file in place within one
+ * timestamp tick and restores the same bytes (on HFS+, FAT, exFAT and some network shares the tick is long), and one that restores
+ * identical bytes AND sets the modification time back to the exact nanosecond on purpose.
+ */
+export const stampOf = (st) => `${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}`;
+
+/**
+ * readOwned, with the file's identity: {bytes, stamp}. The stamp is taken twice from the SAME descriptor the bytes are read from, before
+ * and after the read; when the two differ (the file was written meanwhile) it is read again, at most `tries` times, then refused
+ * (UNSTABLE). So the bytes and the stamp always belong together.
+ */
+export function readStamped(file, max = MAX_DOC_BYTES, tries = 3) {
+  for (let i = 0; i < tries; i++) {
+    const dir0 = dirIdOf(file);
+    let fd;
+    try {
+      fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    } catch (err) {
+      if (err.code === "ELOOP") throw Object.assign(new Error(`${file} is a symbolic link`), { code: "SYMLINK" });
+      throw err;
+    }
+    try {
+      hooks.readOpened?.({ file }); // tests: an outside save between the open and the first stat
+      const a = fs.fstatSync(fd, { bigint: true });
+      if (!a.isFile()) throw Object.assign(new Error(`${file} is not a regular file`), { code: "NOT_REGULAR" });
+      if (Number(a.uid) !== process.getuid()) throw Object.assign(new Error(`${file} is not owned by the current user`), { code: "NOT_OWNED" });
+      if (a.size > BigInt(max)) throw tooLarge(file, max);
+      const bytes = readAllAt(fd, Number(a.size));
+      const b = fs.fstatSync(fd, { bigint: true });
+      // the stamp names the parent folder too (its device and inode, not followed): a swapped folder or a folder symlink is another file
+      // ... and after the read, the pathname still names the inode that was read (an outside save renamed onto it meanwhile is another file)
+      const named = fs.lstatSync(file, { bigint: true });
+      if (stampOf(a) === stampOf(b) && bytes.length === Number(b.size) && dirIdOf(file) === dir0 && stampOf(named) === stampOf(b)) return { bytes, stamp: `${stampOf(b)}|${dir0}` };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  throw Object.assign(new Error(`${file} kept changing while it was read`), { code: "UNSTABLE" });
+}
+
+/** The parent folder's device and inode as the path names it (lstat: a symlink in its place is its own inode). */
+function dirIdOf(file) {
+  const d = fs.lstatSync(path.dirname(file), { bigint: true });
+  return `${d.dev}:${d.ino}`;
+}
+
+/** All of the file behind `fd` from offset 0 (at most `size` plus whatever was appended meanwhile: the caller compares sizes). */
+function readAllAt(fd, size) {
+  const chunks = [];
+  let total = 0;
+  let pos = 0;
+  const buf = Buffer.alloc(Math.max(64 * 1024, Math.min(size + 1, 1 << 24)));
+  for (;;) {
+    const n = fs.readSync(fd, buf, 0, buf.length, pos);
+    if (!n) break;
+    chunks.push(Buffer.from(buf.subarray(0, n)));
+    total += n;
+    pos += n;
+    if (total > size + (1 << 20)) break; // still growing: the stamps will differ and the read is retried
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function copyXattrs(from, to) {
@@ -69,6 +164,7 @@ export const lockPathFor = (file) => path.join(path.dirname(file), `.${path.base
 export function acquireLock(file, { waitMs = 5000 } = {}) {
   const lock = lockPathFor(file);
   const deadline = Date.now() + waitMs;
+  let retriedStale = false;
   for (;;) {
     try {
       const fd = fs.openSync(lock, "wx", 0o600);
@@ -94,9 +190,17 @@ export function acquireLock(file, { waitMs = 5000 } = {}) {
       } else stale = Date.now() - fs.statSync(lock).mtimeMs > 2000; // being created, or garbage
     } catch {} // it may have been released, or its pid may be unreadable
     if (stale) {
+      let removed = false;
       try {
         fs.unlinkSync(lock);
+        removed = true;
       } catch {}
+      // The lock just removed was stale, so it is free now: try once more at once, even with no wait left (waitMs: 0).
+      // At most one such immediate retry per call, so a lock that keeps reappearing stale cannot spin here.
+      if (removed && !retriedStale) {
+        retriedStale = true;
+        continue;
+      }
     }
     if (Date.now() >= deadline) throw new LockBusy(file);
     sleepSync(20);
@@ -123,7 +227,8 @@ export function aclOf(file) {
  * verified to be on the temp file too, otherwise the replace is refused and nothing was touched. Elsewhere: O_EXCL temp file, fchmod,
  * xattrs best effort (there is no ACL support on those paths; reported as "not applicable").
  */
-function stage(file, bytes, before) {
+function stage(file, bytes, before, keep = false) {
+  let kept = null;
   const dir = path.dirname(file);
   const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`);
   const origAcl = aclOf(file);
@@ -143,11 +248,13 @@ function stage(file, bytes, before) {
       fs.chmodSync(tmp, 0o600); // keeps the ACL; lets us open a read-only original for writing
       fd = fs.openSync(tmp, "r+");
       fs.ftruncateSync(fd, 0);
-    } else fd = fs.openSync(tmp, "wx", 0o600);
+    } else fd = fs.openSync(tmp, keep ? "wx+" : "wx", 0o600);
     writeFully(fd, bytes, hooks.write || fs.writeSync);
     fs.fchmodSync(fd, before.mode & 0o7777);
     fs.fsyncSync(fd);
-    fs.closeSync(fd);
+    // `keep` (the Markdown writer): the descriptor that wrote the staged bytes stays open, so what is checked and published is that file
+    kept = keep ? fd : null;
+    if (!keep) fs.closeSync(fd);
     fd = undefined;
     let xattrs = "preserved by cp -p";
     if (!cloned) xattrs = copyXattrs(file, tmp);
@@ -156,11 +263,16 @@ function stage(file, bytes, before) {
       if (aclOf(tmp) !== origAcl) throw Object.assign(new Error("this file has an access control list that could not be preserved, so it was not replaced"), { code: "ACL_NOT_PRESERVED" });
       acl = "preserved";
     }
-    return { tmp, info: { mode: before.mode & 0o7777, xattrs, acl } };
+    return { tmp, info: { mode: before.mode & 0o7777, xattrs, acl }, ...(keep ? { fd: kept } : {}) };
   } catch (err) {
     if (fd !== undefined) {
       try {
         fs.closeSync(fd);
+      } catch {}
+    }
+    if (kept !== null) {
+      try {
+        fs.closeSync(kept);
       } catch {}
     }
     fs.rmSync(tmp, { force: true });
@@ -178,11 +290,13 @@ function stage(file, bytes, before) {
  * Ceiling: a writer that ignores the lock can still land between step 3 and the rename (microseconds, one syscall); that version is replaced
  * without a snapshot. Upgrade path: none without kernel support (renameat2 RENAME_EXCHANGE is Linux only).
  */
-export function replaceGuarded(file, bytes, { expectSha = null, snapshotBefore = null, snapshotNewer = null, waitMs } = {}) {
+export function replaceGuarded(file, bytes, { expectSha = null, expectStamp = null, snapshotBefore = null, snapshotNewer = null, waitMs } = {}) {
+  // a Markdown write (src/session.js): its own path, so the other formats keep exactly the writer they always had
+  if (expectStamp != null) return replaceRecorded(file, bytes, { expectSha, expectStamp, snapshotBefore, snapshotNewer, waitMs });
   const release = acquireLock(file, { waitMs });
   try {
     const before = checkRegularOwned(file);
-    const disk = readDoc(file);
+    const disk = readOwned(file);
     const diskSha = sha256(disk);
     if (expectSha != null && diskSha !== expectSha) throw new WriteConflict(diskSha, expectSha, false);
     snapshotBefore?.(disk);
@@ -190,7 +304,7 @@ export function replaceGuarded(file, bytes, { expectSha = null, snapshotBefore =
     try {
       hooks.beforeRename?.({ file, tmp });
       checkRegularOwned(file);
-      const now = readDoc(file);
+      const now = readOwned(file);
       const nowSha = sha256(now);
       if (nowSha !== diskSha) {
         try {
@@ -213,6 +327,108 @@ export function replaceGuarded(file, bytes, { expectSha = null, snapshotBefore =
     }
     return { ...info, previousSha: diskSha };
   } finally {
+    release();
+  }
+}
+
+/**
+ * The Markdown writer (replaceGuarded with `expectStamp`): the same lock, compare-and-swap, staging and rename, plus the file's record.
+ *  1. under the lock: the file's bytes AND stamp (src/fsutil.js readStamped: leaf and parent folder) must be the expected ones;
+ *  2. stage with the descriptor that writes the staged bytes kept open; re-read the target (bytes and stamp again);
+ *  3. before publication: the staged pathname must still name that descriptor's inode, its bytes read back through it equal to what was
+ *     written, its stamp the same before and after that read, the folder the same. Any difference refuses: nothing is published;
+ *  4. rename. From that moment the write is published and this function never throws: every later step only decides the outcome.
+ *     "confirmed": the descriptor and a stat of the final pathname both show exactly the stamp taken before publication, in the same
+ *     folder, and the folder was flushed. "content_unconfirmed": anything else about the bytes. "durability_unconfirmed": the bytes are
+ *     confirmed but the folder flush failed or is not supported, or a descriptor did not close.
+ * Returns {mode, xattrs, acl, previousSha, record ({sha, stamp} or null), outcome}.
+ */
+function replaceRecorded(file, bytes, { expectSha, expectStamp, snapshotBefore = null, snapshotNewer = null, waitMs } = {}) {
+  const release = acquireLock(file, { waitMs });
+  let staged = null;
+  let tmp = null;
+  let info = {};
+  let published = false;
+  try {
+    const before = checkRegularOwned(file);
+    const first = readStamped(file);
+    const diskSha = sha256(first.bytes);
+    if (diskSha !== expectSha || first.stamp !== expectStamp) throw new WriteConflict(diskSha, expectSha ?? diskSha, false);
+    snapshotBefore?.(first.bytes);
+    const st = stage(file, bytes, before, true);
+    tmp = st.tmp;
+    staged = st.fd;
+    info = st.info;
+    hooks.beforeRename?.({ file, tmp });
+    checkRegularOwned(file);
+    const again = readStamped(file);
+    const nowSha = sha256(again.bytes);
+    if (nowSha !== diskSha || again.stamp !== first.stamp) {
+      try {
+        snapshotNewer?.(again.bytes);
+      } catch {} // the newer bytes stay on disk untouched either way
+      throw new WriteConflict(nowSha, expectSha ?? diskSha, true);
+    }
+    const dir = expectStamp.slice(expectStamp.indexOf("|") + 1);
+    const a = fs.fstatSync(staged, { bigint: true });
+    hooks.stageReadBack?.({ file, tmp }); // tests: the staged name changed during the read-back
+    const back = readAllAt(staged, Number(a.size));
+    const b = fs.fstatSync(staged, { bigint: true });
+    // after all read-back: the staged NAME still names the descriptor that wrote it, and the target name the descriptor that was checked
+    const named = fs.lstatSync(tmp, { bigint: true });
+    const target = fs.lstatSync(file, { bigint: true });
+    if (stampOf(named) !== stampOf(b) || stampOf(a) !== stampOf(b) || !back.equals(bytes) || `${stampOf(target)}|${dirIdOf(file)}` !== again.stamp) throw new WriteConflict(nowSha, expectSha ?? diskSha, true); // nothing is published
+    const pre = { sha: sha256(bytes), stamp: `${stampOf(b)}|${dir}` };
+    hooks.afterStageCheck?.({ file, tmp });
+    if (dirIdOf(file) !== dir) throw new WriteConflict(nowSha, expectSha ?? diskSha, true); // the folder, immediately before the rename
+    fs.renameSync(tmp, file);
+    published = true;
+    // confirmation: the actual bytes, on the kept descriptor and on the final named leaf (read through its own descriptor, with its
+    // stamp and its folder), all exactly what was written and the stamp taken before publication
+    let record = null;
+    try {
+      hooks.afterRename?.({ file });
+      const c = fs.fstatSync(staged, { bigint: true });
+      const kept = readAllAt(staged, Number(c.size));
+      const leaf = readStamped(file);
+      if (`${stampOf(c)}|${dir}` === pre.stamp && kept.equals(bytes) && leaf.stamp === pre.stamp && leaf.bytes.equals(bytes) && dirIdOf(file) === dir) record = pre;
+    } catch {
+      record = null;
+    }
+    // the folder flush, on a descriptor verified to be the folder the file was published in
+    let durable = true;
+    try {
+      hooks.beforeFlush?.({ file }); // tests: the folder moved after the confirmation
+      const dfd = fs.openSync(path.dirname(file), "r");
+      try {
+        const d = fs.fstatSync(dfd, { bigint: true });
+        if (`${d.dev}:${d.ino}` !== dir) throw new Error("the folder is not the one the file was published in");
+        if (hooks.dirFsync) hooks.dirFsync(dfd);
+        else fs.fsyncSync(dfd);
+      } finally {
+        fs.closeSync(dfd);
+      }
+    } catch {
+      durable = false; // any failure, also a flush the filesystem does not support: the save is not confirmed to survive a crash
+    }
+    try {
+      const fd = staged;
+      staged = null;
+      fs.closeSync(fd);
+    } catch {
+      durable = false;
+    }
+    return { ...info, previousSha: diskSha, record, outcome: !record ? "content_unconfirmed" : !durable ? "durability_unconfirmed" : "confirmed" };
+  } catch (err) {
+    if (published) return { previousSha: null, record: null, outcome: "content_unconfirmed" };
+    if (tmp) fs.rmSync(tmp, { force: true });
+    throw err;
+  } finally {
+    if (staged !== null) {
+      try {
+        fs.closeSync(staged);
+      } catch {}
+    }
     release();
   }
 }

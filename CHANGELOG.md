@@ -1,5 +1,143 @@
 # Changelog
 
+## 1.0.0 (2026-11-22)
+
+### Added
+- Markdown files. Onionskin now opens `.md` and `.markdown` files: `onionskin notes.md`, or "open notes.md in Onionskin" in your agent.
+  - The file opens as a rendered preview: headings, paragraphs, bold and italic, code, lists, quotes, tables, links and rules. Nothing in the file runs or loads. Links are styled text that cannot be followed. Images, raw HTML and front matter are shown as the text they are written as.
+  - Select words in the preview and press Comment or Ask, click a block in Comment mode, or drop a pin. The comment points at exactly the words you selected in the file's source, and goes to the agent when you press Send.
+  - A selection that runs across two blocks is refused: "A comment can point at words inside one block only. Select within one paragraph, heading, list item, table cell or code block." Words that cross formatting the preview hides get an offer to comment on the whole block, with the block's source shown as written.
+  - Start typing in the preview and the page switches to Edit, a plain text box on the file's Markdown source, with your key typed where you pressed it. Where a spot does not map to one exact place in the file, the key is not typed and Edit opens at the start of that block, saying so; in an empty file the first key always lands. An edit keeps the line endings of the file it was typed on, so Copy and Send give the same bytes. The toolbar has Preview, Edit, Comment and Pin; Esc in Edit goes back to Preview.
+  - Comments you make on the text you just typed go with your edit in one Send. Send writes your edit into the file first; those comments then point at the exact words in the file as it is now.
+  - The agent changes exactly the words a comment points at. If the file is not the version the comment was made on when Onionskin checks it right before writing, nothing is written (Known issues lists the limits of that check). If the text at one place differs by one character, that change is refused: in an ordinary reply nothing is written, while a reply sent with `--partial` still writes the agent's other changes that check out. Everything outside the changed words stays byte for byte as it was: line endings, the final newline and a byte order mark.
+  - The changed words are marked after the agent's reply, History shows what changed, and Revert puts back the agent's last run. Revert is off when the file was changed outside Onionskin after the agent's write: "Revert is off for this run: the file was changed outside Onionskin after the agent's checked write, and reverting would erase that change."
+  - While the agent works, typing is off and comments still work. A second tab on the same file is read-only. The agent cannot change the front matter a file already has (a file with none can still get a block added at its very top that reads as front matter); you can edit front matter yourself in Edit.
+  - An unsent edit typed on an earlier version of the file (for example, the file was saved in another program meanwhile) is kept, never sent, and shown with Copy and Discard.
+  - Not in this version for Markdown files: Review first, Quick changes, using the open file as a writing sample, Download my edits, and merging your typing with the agent's run (typing is off while it works). Images are shown as text and never loaded; raw HTML is shown as text.
+  - Limits: 1 MB, 20,000 lines and 32 levels of nested quotes, lists or emphasis. Files not saved as UTF-8 are refused: "This Markdown file is not saved as UTF-8, so Onionskin cannot read it. Save it as UTF-8 (in most editors: Save As, Encoding, UTF-8) and open it again." Typing works in files with LF or CRLF line endings. A file with mixed line endings, with carriage returns alone ("This file uses old-style line endings (a carriage return alone), which this version does not edit, so it opens for reading and comments only. Save it with LF or CRLF line endings to edit it here."), or with an invisible byte order mark character inside its text, opens for reading and comments only.
+  - The full picture is in docs/GUIDE.md, "Markdown files".
+
+### Fixed
+- Quick ask keeps your words in more places:
+  - At the limit of 500 comments, words in the Quick ask box were lost when you pressed Send, tapped a stamp, closed the box, pressed Esc or selected other words. The box now stays open with your words and says why, and nothing is sent. With other words selected it says "Quick ask is still open on the words you asked about before. Send or close it, then ask about these."
+  - When another tab takes over editing, words in an open Quick ask box stay in the box: "This tab is read-only now. Your words stay in this box until you press Esc: copy them, then ask from the tab that holds the file." Leaving that tab with words in the box now asks first.
+  - When the file changes while the box is open, the box keeps its words to copy and makes no comment on the old place: "The file changed, so these words are no longer tied to a place. Copy them, press Esc to close this, then select the words again."
+  - An unsaved stamp edit is kept when its Quick ask box closes by itself. Words typed while Use this is on its way stay in the box.
+  - Near the comment limit Quick ask shows a count. The comment and note boxes say when a paste may have been cut: "This is the most the box holds. Text you pasted may have been cut: check the end of it."
+- Word: when the words an agent replaces overlap an earlier copy of themselves in the same paragraph (the last "ana" in "banana"), the change could land on the earlier copy. When the edit is tied to a comment and names no occurrence, it is now refused and nothing is written (see Changed and Known issues).
+- HTML: a UTF-8 page with accented letters that also seemed to declare another encoding was offered a UTF-8 copy that turned "Café" into "CafÃ©". That copy is no longer offered or made. The page itself is still refused, as in 0.0.6.
+- HTML: unsent text fixes are kept, to copy, when a reload is refused (for example, after the page was changed outside Onionskin into an encoding Onionskin refuses), as long as the page could still hand them over; a deleted passage is kept as "(text deleted)". Before, they were always dropped. See Known issues for when they cannot be handed over.
+- Excel percent: an agent's percent such as "5%" was stored as 0.05 whatever the cell's format, so some cells showed another number than the one written (`0"0"%` showed 5% as 50%). A percent is now stored as its exact number only when the cell's format is a plain percent and the cell then shows it as written; otherwise that edit is refused with what the cell would show. In an ordinary reply nothing is written then; with `--partial` the agent's other edits are written.
+  - Written: "12.5%" into a `0.0%` cell, "12.5%" into a `0%` cell (it shows 13%, as Excel rounds it), "-1.1%" into `0.0%;(0.0%)` (it shows (1.1%)) and "5%" into `[Blue]0.00%`.
+  - Refused: "5%" into `0"0"%` (`A1 would show "50%", not "5%"`), "12.5%" into `0.0% "p.a."` (it would show "12.5% p.a."), and "5%" into a cell with no percent format (`A1 would show "0.05", not "5%"`). A format the check does not know, such as `[$-409]0.0%`, is refused with a reason that says this version cannot check it.
+  - The saved file is checked again before it is written: when a later edit of the same batch changes how a written percent shows, nothing of the batch is written, with `--partial` too.
+- Excel dates and times: a date before 1 March 1900, a date in a workbook that counts dates from 1904, a time that does not exist on its own (such as "24:00") in a date cell, and a date in a workbook that has no styles part are refused with the reason. Before, such a value could be saved as a different date or time, or show as a plain number. The time check leaves elapsed-hours formats alone: a `[h]:mm` cell still takes "36:15", as in 0.0.6.
+- An open document is read only when it is a regular file that your account owns, so a document swapped for a link after it was opened is refused, not read. Onionskin's background agent cannot open a file other than the one it was started for.
+- Install and update:
+  - The installer checks that it is still the only install running before it sets an old copy aside, puts a new copy in place, switches the `onionskin` command, removes old copies and uninstalls. Two exceptions, on purpose: a reinstall of the same version does not check between setting the old copy aside and putting the new one in place, and when that reinstall fails, it first puts the old copy back if its folder name is free and only then checks again (see Known issues).
+  - A download that names, in the usual ways, a file it does not hold, the page's own files included, or whose server does not load, is refused before it is put in place. The copy you had keeps working.
+  - A failed reinstall of the same version puts the old copy back when its folder name is free. When another install took that name meanwhile, the old copy is left aside and the installer says where it is.
+  - A custom state folder (`ONIONSKIN_STATE_DIR`) is now used for the deeper checks too, and `onionskin update` looks there.
+  - With a custom state folder (`ONIONSKIN_STATE_DIR`) outside `~/.onionskin`, uninstall and `--purge` leave that folder in place and say so: "Your sessions and snapshots are in the state folder set by ONIONSKIN_STATE_DIR, which was left in place. You can delete this folder yourself if you no longer want it:", then the folder as a quoted path. Before, `--purge` said the snapshots were removed while they were still in that folder.
+  - Uninstall names the deeper checks' folder only when one exists, and `--purge` says it was removed only when it is gone afterwards. A folder left in place (outside the state folder, also through a link) is shown on a line of its own as a quoted path, after "The checker environment was left in place, outside that folder. You can delete this folder yourself if you no longer want it:". The uninstall no longer prints a delete command to paste: 0.0.6 printed `to delete it: rm -rf` with the path unquoted, which a path with a space would split into two targets. The plain uninstall now ends with "To delete it too, run the uninstall again with --purge."
+  - The removal lines of `--dry-run` print each path in double quotes.
+- A stop sent to the server in the moment after it said it was ready could be missed. The server now listens for it first.
+- `onionskin doctor` said the deeper checks need Python 3.10 or newer. It now says 3.9, as the deeper checks do.
+- Voice guide: the prompt before you leave the voice dialog covers its send options, and the checkbox for learning from your edits reads "Use the changes I made to the agent's text, in all my documents", followed by how many are kept.
+
+### Changed
+- Word, PowerPoint and HTML: an agent's replacement that is tied to a comment, names no occurrence and is not "all", and whose words overlap another copy of themselves (the last "ana" in "banana"), is refused, and so is such a replacement in HTML whose words have a copy that runs across bold, a link or other formatting. Nothing is written, and the agent is asked for a longer "find". HTML: a replacement of words that occur only once can be refused for the same reason when they sit next to the edge of a block.
+- Excel percent writes are stricter than in 0.0.6:
+  - "5%" into a cell with no percent format is refused. Before, it was saved as 0.05 and showed 0.05.
+  - Percent formats with fill characters, text, or a currency or language tag (`0.0% "p.a."`, `[$-409]0.0%`, `0%* `) are refused (a format that ends in a pad, such as `0%_)`, is accepted), and so is a cell under a conditional format that sets its own number format, and a cell whose style is set not to apply its number format.
+  - A percent with more than 15 significant digits (such as "33.33333333333333%") is refused, because Excel shows only 15.
+  - A percent other than zero that would show as 0% ("0.45%" in a `0%` cell) is refused.
+  - A percent into a workbook with no styles part is refused, because the cell could not keep its percent format.
+
+### Known issues
+- Markdown:
+  - Another program saving the file at the same instant as Onionskin writes can have its save overwritten. Onionskin checks the file right before it writes, and a save in that moment, or one that keeps the file's modified time, can be missed; the reply can then say the save was confirmed, or mark a comment Done, while the file holds the other program's text.
+  - Onionskin tells versions of the file apart by its contents and its size, place on disk and modified time. A file rewritten twice within one timestamp tick (a long tick on older disk formats and some network shares), or identical contents put back with the modified time set back on purpose, looks unchanged.
+  - Another program writing into Onionskin's temporary file while Onionskin checks it can have those bytes published; the save is then reported as not confirmed.
+  - Putting back an older copy of the file's folder while Onionskin is saving into it can make Onionskin write to, and then delete, its temporary file in that copy. The Send is refused and the document itself is kept.
+  - After an error in Onionskin's own bookkeeping (its session files could not be saved) followed by a restart, a card or History can misstate what happened, while the file is right: a sent edit can come back as a draft, a reverted run can show as Done, or a run can lack its History entry.
+  - When Onionskin cannot record a write it has just made, the reply can say the file is unchanged when it changed, a Send or a Revert can end with an error after writing, and Quick ask can show "Sent. Follow it in the review panel" when the question did not go out.
+  - A comment points at one exact version of the file. A comment made before you type asks to be selected again, and so does every waiting comment after any change: an agent's write, a Revert, a save in another program, or a restart of Onionskin.
+  - An identical re-save by another app, or a change of only the file's modified time, also makes waiting comments ask to be selected again, and an agent's reply to them is refused.
+  - On disks or folders that cannot confirm a save (some network shares and external disks), Markdown says so on every Send: "Your edit was written to the file, but Onionskin could not confirm the save. Check the file; your edit is kept here to copy." No comment is marked done, and the reason given for Revert being off can wrongly name an outside edit.
+  - Confirming a full reload of the page discards an unsent edit. The page asks first.
+  - When the agent answers a comment without changing the file, the card shows Declined. An answer of about 1,000 characters or more is cut, with a mark where it was cut.
+  - History counts changed blocks, so two changes in one paragraph count as one. Two replacements side by side can show as one mark in the preview.
+  - History can say "No places changed" after a change of structure only, such as a bulleted list made numbered, a quote mark removed or a blank line added.
+  - After another program changes the file and then puts back the same contents, History can show an update as the file's current state, and Done, Take back or the end of a run can offer Revert. Pressing Revert then refuses, and nothing is written.
+  - A Send accepted just before another tab takes over editing can still finish.
+  - When you send two separate typed edits before the agent answers, the agent can be told the first one is no longer in the file when it still is.
+  - An agent's reply with plain line endings in a file that uses Windows line endings leaves mixed line endings, and the file then opens for reading and comments only.
+  - An edit typed on a file with one kind of line ending and later sent onto a version of the file with the other kind writes the whole file with the edit's line endings.
+  - A file whose line endings are carriage returns alone opens for reading and comments only.
+  - A selection longer than 100,000 characters goes to the agent without a place: the agent can only decline it or ask a question. So do further selections once the comments of one batch carry 2,000,000 characters of selected text in all.
+  - The agent sees the file's blocks whole, in order, until the next block would pass 200,000 characters; it does not see the rest, so a single paragraph longer than that is not shown at all, and it declines what it is asked about the unseen part unless a comment points there.
+  - Rare: two comments with the same id handed from one tab to another block the receiving tab's Send (the file is not changed), and a comment whose place was refused can still be scrolled to from the review panel.
+  - Markdown has been tried on local disks and in iCloud Drive only. Network shares, other sync services and older disk formats have not been tried.
+  - A file with no line ending in it (one line, not ended) gets LF for the new lines you type. If you first send an edit that leaves the file as one unended line and then type the earlier text back, the file comes back with LF line endings, also when it had CRLF before.
+  - A file with carriage returns alone shows its sentence when you press a key; the Edit button is off without saying why.
+- Excel:
+  - At an exact tie, Onionskin's own view can show a percent rounded down while Excel rounds it up ("0.45%" in a `0.0%` cell shows 0.4% here and 0.5% in Excel). The stored number is exact.
+  - A conditional format whose range Onionskin cannot read (or one on a whole column, such as A:A) that sets its own number format makes every percent write on that sheet refused.
+  - The percent check compares what Onionskin's own viewer shows. Not checked against desktop Excel: a format with more than 30 decimal places (accepted here), a number format defined twice in one workbook (the last one is used), a column too narrow to show the number, decimal commas from your language settings, and data bars or icon sets set to hide the value. `[White]` and `[Yellow]` percent formats are accepted; the number is right but can be hard to read on a white cell.
+  - A percent made by a program from a fraction, such as "33.33333333333333%" or "12.340000000000002%", is refused for having more than 15 significant digits, even where the cell would show it correctly.
+  - More percent writes that 0.0.6 made are refused: "0%" into a `+0%` cell (it shows "+0%"), "5%" into `0.0?%` (Onionskin's viewer shows "5.0 %"), and a replace-all that produces a percent in a workbook past one of Onionskin's reading limits (such as more than 50,000 merged ranges).
+  - A merge of your edits that started under 0.0.6 and holds an agent's percent written into a plain cell cannot be replayed: Onionskin saves a copy of your version next to the file and hands back your cells as not placed.
+  - An agent cannot yet write a value with leading zeros (such as "00123"), or a number too long to be stored exactly, into a cell as text. The edit is refused with the reason. Typing such a value into a plain cell yourself drops the zeros, as Excel does.
+  - An agent cannot edit a sheet whose cells are saved without their own addresses. The edit is refused with the reason.
+- HTML:
+  - When the words you select run across the edge of a block (part in one paragraph, part in the next) and the same words appear again later, the agent's change can land on the later copy.
+  - A whole-file edit by an agent can move an existing script or event handler to the next element of the same kind in the same place; it cannot add or change one.
+  - A page that declares its encoding in a way Onionskin does not look for can be opened and written as UTF-8 when it is not.
+  - When a page that is not UTF-8 is converted, a charset tag shown as example text near the top of the page is rewritten as well, and so can be the same words in the page's title, description or `noscript` text.
+  - A UTF-8 page with accented letters and a `data-charset` attribute naming another encoding on a meta tag is refused, with no copy offered.
+  - A real windows-1252 page whose bytes also read as valid UTF-8 is refused with no copy offered.
+  - A malformed encoding declaration can lead to a copy offer that then fails, and a converted copy can be larger than the size Onionskin opens.
+  - The UTF-8 copy follows a symbolic link to the page, reads the page without a size limit, and is made with your account's default permissions, without the page's access list, so it can be readable by more accounts than the original.
+  - Unsent text fixes after a refused reload are lost when the page cannot hand them over at that moment. Those it keeps show a deletion only as "(text deleted)", a failed copy to the clipboard says nothing, and Close session does not count them as unsent.
+  - On a very large element (more than 400 text parts), the first keystroke right after a click can be missed.
+  - Not in this version for HTML files: sites of several files, pages built by scripts, inline SVG and MathML (shown as placeholders), and Review first, stamps, quick fixes and the tracked-changes copy. Chrome is the tested browser; Safari has not been tested with HTML files.
+- Word and PowerPoint:
+  - The refusal of a replacement whose words overlap another copy of themselves (the last "ana" in "banana") covers a replacement tied to a comment that names no occurrence and is not "all". A replacement that names an occurrence, or that targets a paragraph or shape directly, works as in 0.0.6 and can still land on the earlier copy. In HTML the same holds.
+  - A comment on repeated text that mixes letters with built-in accents and letters followed by a separate accent mark can land one copy early.
+  - An Office file with extra bytes between its table of contents and its end record, plus extra bytes after the end, is refused (0.0.5 opened it). Two crafted file shapes can make Onionskin read a different table of contents than other tools do.
+  - A few rare file shapes are read differently than Word, PowerPoint or Excel read them: a paragraph's tab-stop setting counts as one character, both branches of an alternate-content block are read, shared text stored under an unusual part name is not read, and old-style encoded part names are shown wrong.
+  - On very long Word files that carry no paragraph ids (some exports from other editors), a comment whose paragraph moved and whose surrounding words were also edited can show as "moved or removed" more often than in 0.0.3. The comment is kept.
+- Install and update:
+  - `--uninstall --dry-run` says "Dry run: nothing will be changed." and then prints a "removed" line after each step it only describes. Nothing is removed in a dry run.
+  - With a custom state folder outside `~/.onionskin`, a plain uninstall says it kept `~/.onionskin` and that `--purge` deletes it, though that folder then holds nothing of yours.
+  - Uninstall knows about a custom state folder only when `ONIONSKIN_STATE_DIR` is set in the terminal that runs it. Without it, uninstall and `--purge` speak of `~/.onionskin` only, and the sessions and snapshots in the custom folder stay where they are.
+  - If an install is cut off by a crash or a power loss, a later install or update can say "Another Onionskin install or update is running." The message names the folder to delete. A lock left without a process number has to be deleted by hand.
+  - If a lock left by a crashed install is present and two installs then start at the same moment, both can run and `onionskin` may not start. Installing again repairs it.
+  - A reinstall of the same version puts its new copy in place even if another install started between setting the old copy aside and that step.
+  - When a reinstall of the same version fails while another install takes the same folder name, the old copy is left aside (the installer says where) and `onionskin` may not start until you install again.
+  - Two installs at the same moment can still remove each other's copy of the agent skill while it is set up.
+  - The check before a download is put in place refuses a build whose files mention a missing file, even inside a comment, and it can miss a missing file that is named in an unusual way or an empty start page.
+  - During `onionskin update`, Ctrl-\ is not passed to the installer, and a character split across two pieces of its output can print garbled.
+  - When the Python on your Mac is too old for the deeper checks and its pip is old too, turning them on says only "Deeper checks could not be turned on. Try again, or ask your agent to look into it."
+  - A voice guide in the app folder that is a link to another file is not carried into a new version; the old app folder is left in place with a line saying so.
+  - A `--dry-run` removal line shows a path that holds a double quote, a dollar sign or a backtick in a form that does not paste back as the same path, and the other `--dry-run` lines (such as the copy and the deeper-check download) print their paths without quotes.
+  - A batch that was waiting for the agent when you updated from 0.0.6 points the agent at the old copy's schema file. The agent can decline it, and you can send again.
+  - `onionskin stop` can wait 5 seconds and exit with an error when a record left by a server that is gone points to a process number now used by another program with "onionskin" in its command line.
+- All formats:
+  - A comment draft made or deleted at the moment a Send is on its way can be back in its old state after a reload, if the save that carried it was lost as well. The page asks before you leave in that case.
+  - A change to a file's permissions, access list or extended attributes made by another program while Onionskin saves the file can be undone by that save.
+  - A full disk at the moment Onionskin takes a file's lock can leave an empty lock file behind.
+  - While a document is locked by another program, a write can hold the server for up to five seconds.
+  - Onionskin looks an open file up by its path more than once. Renaming or replacing a folder above the file while it is open is not fully guarded, and a file that grows while it is read can be read past its size check.
+  - Removing a stale lock left next to a document is not one indivisible step, so two programs doing it at once can both take the lock.
+  - Rarely, a page can look current after the file changed outside Onionskin, when the notice of the change is missed. After the open file is swapped for another, the agent's last step (done) can fail with an error.
+  - A tab that has become read-only asks before you leave only for words still in its Quick ask box, its stamp editor, its Markdown edit or kept HTML text fixes.
+  - An agent question with "mailto:" in its words, or a word, an at sign and a number with a dot in it (such as "Meet" followed by "@5.30"), is refused.
+  - With two tabs on one file, words in a Quick ask box that is open when the other tab takes over editing are not handed over (they stay in the box to copy), and the handover notice can say more of your typed words reached the other tab than did. After a manual Reload, the place of an open Quick ask can be left unmarked.
+  - With three or more windows open on one file and notes handed between them, a sentence can appear twice in the note box. Nothing is lost, and the repeat is visible in the box before you send.
+  - Not tried on real machines: Node 22.0 and 22.1, macOS 13.0 and Safari 16.
+
 ## 0.0.6 (2026-11-20)
 
 ### Added

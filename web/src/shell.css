@@ -347,6 +347,8 @@ textarea:focus-visible, input:focus-visible { outline-offset: 0; }
 .moved-note { font-size: var(--text-xs); color: var(--ink-2); }
 .card blockquote { margin: 0; padding: 6px 10px; border-radius: var(--r-sm); background: var(--hover); color: var(--ink-2); font-size: var(--text-xs); }
 .card blockquote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.limit-note { margin: 0; font-size: var(--text-xs); line-height: 1.35; color: var(--ink-2); }
+.limit-note.warn { color: var(--warn); }
 .scope-note { margin: -2px 0 8px; font-size: var(--text-xs); line-height: 1.35; color: var(--ink-2); }
 .card textarea, .composer textarea { width: 100%; padding: 8px 12px; border: 0; border-radius: var(--r-sm); background: var(--input); box-shadow: var(--shadow-field); resize: none; min-height: 44px; color: var(--ink); line-height: 1.4; }
 .card textarea { field-sizing: content; max-height: 40vh; }

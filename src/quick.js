@@ -100,13 +100,14 @@ function parseReplace(t) {
 }
 
 /**
- * Recognizes a quick request in the person's note for a file of `format` ("docx", "xlsx", "pptx").
+ * Recognizes a quick request in the person's note for a file of `format` ("docx", "xlsx", "pptx"; never for "markdown").
  * Returns null (not recognized: the agent does it) or
  * { command, kind: "replace"|"headings", op, find?, replace?, set? }
  * where `op` is the ops-file op WITHOUT `expect`: the caller adds the count the person confirmed.
  * Matching is case-sensitive. Heading formatting is DOCX only.
  */
 export function recognize(note, format) {
+  if (format === "markdown") return null; // a Markdown file is changed only by exact ranges, never by words found in it: the agent does it
   const command = normalizeNote(note);
   if (!command) return null;
   const set = HEADING_PHRASES.get(command.toLowerCase());

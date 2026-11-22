@@ -12,7 +12,7 @@ Run `onionskin doctor` (or `~/.local/bin/onionskin doctor` if the command is not
 
 ## Start
 
-Say to your agent: **open report.docx in Onionskin**. Or type `onionskin report.docx` in a terminal. Onionskin opens `.docx`, `.xlsx`, `.pptx`, `.html` and `.htm` files.
+Say to your agent: **open report.docx in Onionskin**. Or type `onionskin report.docx` in a terminal. Onionskin opens `.docx`, `.xlsx`, `.pptx`, `.html`, `.htm`, `.md` and `.markdown` files.
 
 Your file opens in the browser. Edit, comment, drop a pin, then press **Send to Agent**. The changes appear in the document.
 

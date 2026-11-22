@@ -227,7 +227,7 @@ export async function runDoctor(o = {}) {
   if (fs.existsSync(py)) {
     const ok = run(py, ["-c", "import lxml, docx, openpyxl, pptx, defusedxml; print('libraries import')"], env);
     add(ok ? "OK" : "NOTE", "deeper check (Python venv)", `${py}: ${ok || "present but the libraries do not import"}`, { fix: `${BIN} setup-checker` });
-  } else add("NOTE", "deeper check (Python venv)", "not set up (optional)", { fix: `${BIN} setup-checker   (needs Python 3.10+ and internet once)` });
+  } else add("NOTE", "deeper check (Python venv)", "not set up (optional)", { fix: `${BIN} setup-checker   (needs Python 3.9+ and internet once)` });
   // quick fixes: what the setup says, then whether Apple's model can be used here (decided without starting the helper; only a helper
   // that passed every check is asked, with --probe; tests pass o.probes.apple for appleHelperState and o.probes.appleProbe)
   const rw = rewriterStatus(state, o.probes?.apple);

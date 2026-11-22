@@ -174,8 +174,10 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved, dirt
   const [ticks, setTicks] = useState(init.ticks);
   const [seen, setSeen] = useState({});
   const [diffs, setDiffs] = useState({});
-  const [on, setOn] = useState(saved.text ? saved.on : true);
-  const [send, setSend] = useState(saved.send === "short" ? "short" : "full");
+  const initOn = useMemo(() => (saved.text ? saved.on : true), []); // eslint-disable-line react-hooks/exhaustive-deps -- a snapshot at open
+  const initSend = useMemo(() => (saved.send === "short" ? "short" : "full"), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [on, setOn] = useState(initOn);
+  const [send, setSend] = useState(initSend);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false); // "close without saving?"
@@ -201,7 +203,7 @@ export function VoiceGuideEditor({ voice, draft, onVoice, onClose, onSaved, dirt
   const sendMode = hasShort ? send : "full";
   const fromDraft = specs.filter((s) => ticks[s.id] && norm(texts[s.id]) && statusOf(s.id) !== "same").length; // what the draft adds or changes
   const already = sections.length - fromDraft;
-  const dirty = specs.some((s) => texts[s.id] !== init.texts[s.id] || ticks[s.id] !== init.ticks[s.id]);
+  const dirty = specs.some((s) => texts[s.id] !== init.texts[s.id] || ticks[s.id] !== init.ticks[s.id]) || on !== initOn || send !== initSend;
   useLayoutEffect(() => {
     dirtyRef.current = dirty;
     return () => { dirtyRef.current = false; };

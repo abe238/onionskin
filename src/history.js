@@ -513,6 +513,53 @@ function compareHtml(RA, RB, out) {
   for (const e of d.removed) out.add("changed", () => place({ format: "html", label: untrusted(`${what(e)} target`, 60), locator: null, change: "link", note: clean(`no longer points to ${e.url}`, 300) }));
 }
 
+// ---- Markdown -----------------------------------------------------------------------------------------------------------
+// Leaf blocks (paragraphs, headings, code, tables, literal blocks, rules) of each version matched by type and exact source in order; a
+// pair left between two matches with the same type is a change of its text, the rest added or removed. Places name the exact range in
+// the after version (`from`, `to`, `version`), which the page draws only while it shows that version.
+
+const MD_CONTAINERS = new Set(["blank", "quote", "list", "item"]);
+const mdLabel = (b) => untrusted(b.type === "heading" ? `heading ${b.level}` : b.type === "literal" ? "shown as written" : b.type, 60);
+
+function compareMarkdown(MA, MB, out) {
+  const leaf = (md) => md.tree.byId.filter((b) => !MD_CONTAINERS.has(b.type)).map((b) => ({ b, src: md.tree.text.slice(b.from, b.to) }));
+  const A = leaf(MA);
+  const B = leaf(MB);
+  const key = (x) => `${x.b.type}\u0000${exactHash(x.src)}`;
+  const { mapA, mapB } = lcsPairs(A.map(key), B.map(key));
+  const loc = (x) => ({ format: "markdown", from: x.b.from, to: x.b.to, version: MB.sha });
+  let i = 0;
+  let j = 0;
+  const flushGap = (iEnd, jEnd) => {
+    const byType = new Map();
+    const gapA = [];
+    for (let x = i; x < iEnd; x++) {
+      if (mapA[x] >= 0) continue;
+      gapA.push(A[x]);
+      const e = byType.get(A[x].b.type) || byType.set(A[x].b.type, { list: [], idx: 0 }).get(A[x].b.type);
+      e.list.push(A[x]);
+    }
+    const used = new Set();
+    for (let y = j; y < jEnd; y++) {
+      if (mapB[y] >= 0) continue;
+      const e = byType.get(B[y].b.type);
+      const old = e && e.idx < e.list.length ? e.list[e.idx++] : null;
+      if (old) {
+        used.add(old);
+        out.add("changed", () => place({ format: "markdown", label: mdLabel(B[y].b), locator: loc(B[y]), ...textChange(old.src, B[y].src) }));
+      } else out.add("added", () => place({ format: "markdown", label: mdLabel(B[y].b), locator: loc(B[y]), change: "added", text: clean(normText(B[y].src), TEXT_CAP) || null }));
+    }
+    for (const x of gapA) if (!used.has(x)) out.add("removed", () => place({ format: "markdown", label: mdLabel(x.b), locator: null, change: "removed", text: clean(normText(x.src), TEXT_CAP) || null }));
+  };
+  for (let y = 0; y <= B.length; y++) {
+    if (y < B.length && mapB[y] < 0) continue;
+    const x = y < B.length ? mapB[y] : A.length;
+    flushGap(x, y);
+    i = x + 1;
+    j = y + 1;
+  }
+}
+
 /** Compare two versions of one format: {counts: {changed, added, removed}, places: [...] | null, more}. Pure; runs in the worker. */
 export function compareBytes(format, before, after, { places = false } = {}) {
   const out = new Out(places);
@@ -522,6 +569,7 @@ export function compareBytes(format, before, after, { places = false } = {}) {
   else if (format === "xlsx") compareXlsx(A.wb, B.wb, out);
   else if (format === "pptx") compareDeck(A.deck, B.deck, out);
   else if (format === "html") compareHtml(A.read, B.read, out);
+  else if (format === "markdown") compareMarkdown(A.md, B.md, out);
   else unknownFormat(format, "compareBytes");
   return { counts: out.counts, places: out.places, more: out.places ? out.total - out.places.length : 0 };
 }

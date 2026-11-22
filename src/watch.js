@@ -31,8 +31,18 @@ async function hashOf(file, st) {
     // O_NONBLOCK: a FIFO swapped in after the lstat must not hold a threadpool thread forever (fstat below refuses it); no effect on a regular file
     fh = await fs.promises.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const fst = await fh.stat();
-    if (!fst.isFile() || fst.ino !== st.ino || fst.dev !== st.dev || fst.size > MAX_DOC_BYTES) return NOT_A_FILE;
-    return crypto.createHash("sha256").update(await fh.readFile()).digest("hex");
+    // the same descriptor checks as src/fsutil.js readOwned: a regular file this user owns, within the cap
+    if (!fst.isFile() || fst.uid !== process.getuid() || fst.ino !== st.ino || fst.dev !== st.dev || fst.size > MAX_DOC_BYTES) return NOT_A_FILE;
+    // at most the size fstat saw (within the cap), from this descriptor: a file still growing is never read past it. A file that changes
+    // during the read is hashed as read; its next event or the poll checks it again
+    const buf = Buffer.alloc(fst.size);
+    let off = 0;
+    while (off < buf.length) {
+      const { bytesRead } = await fh.read(buf, off, buf.length - off, off);
+      if (!bytesRead) break;
+      off += bytesRead;
+    }
+    return crypto.createHash("sha256").update(buf.subarray(0, off)).digest("hex");
   } catch (err) {
     if (err.code === "ELOOP" || err.code === "EISDIR") return NOT_A_FILE; // swapped for a symlink (or a folder) after the lstat
     return null; // gone (mid-rename) or unreadable: the next event or the poll decides

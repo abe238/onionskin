@@ -1,12 +1,23 @@
 # Onionskin
 
-Edit a Word, Excel, PowerPoint or HTML file in your browser, leave comments, and let your coding agent make the changes in the real file in realtime.
+Edit a Word, Excel, PowerPoint, HTML or Markdown file in your browser, leave comments, and let your coding agent make the changes in the real file in realtime.
 
 ![Onionskin: a Word file open in the browser editor with the review panel beside it](docs/media/hero.png)
 
 ![A comment sent to the agent, the real file changing, and the page reloading in place](docs/media/demo.gif)
 
 *The demo is a real run, recorded in the real app with its background agent: the file changed 7.8 seconds after Send. Nothing is sped up.*
+
+## New in 1.0: Markdown
+
+Onionskin now opens `.md` and `.markdown` files, the files you and your agent already write to each other.
+
+- Read it as a document: a rendered preview with headings, lists, tables and code.
+- Point at what you mean: select words in the preview, comment, and the comment goes to your agent.
+- Just type: start typing in the preview and the page switches to the Markdown source, with your key where you pressed it.
+- One Send: your typed edit and the comments you made on it go to the agent together, and the agent changes exactly the words you pointed at. Revert undoes the agent's changes.
+
+1.0 also makes Excel percent values land the way they are written, keeps your typed words in more places, and tidies install and uninstall. The full list, with known issues, is in [CHANGELOG.md](CHANGELOG.md). More on Markdown: [Markdown files](#markdown-files).
 
 ## Install
 
@@ -151,7 +162,7 @@ Two ways to start:
 - Say to your agent: **open report.docx in Onionskin**
 - Or type this in a terminal: `onionskin report.docx`
 
-The same works for a spreadsheet, a presentation or a web page: `onionskin page.html`.
+The same works for a spreadsheet, a presentation, a web page or a Markdown file: `onionskin page.html`, `onionskin notes.md`.
 
 Your file opens in the browser. Edit the text, comment on a spot, drop a pin, then press **Send to Agent**. The changes appear in the document, and **Revert** puts the last one back.
 
@@ -164,7 +175,7 @@ The background agent is limited on purpose. It can change your document only thr
 
 ## What it can do
 
-- Opens a `.docx`, `.xlsx`, `.pptx`, `.html` or `.htm` file in a browser editor with a review panel beside it, and keeps the file's own formatting.
+- Opens a `.docx`, `.xlsx`, `.pptx`, `.html`, `.htm`, `.md` or `.markdown` file in a browser editor with a review panel beside it, and keeps the file's own formatting.
 - Lets you edit the text yourself, comment on a selection, a cell, a range, a shape or a slide, drop numbered pins, and write one overall note.
 - Sends all of that to your agent when you press Send. The page reloads in place and keeps your position.
 - In Word, Excel and PowerPoint files, lets you keep editing while the agent works, and merges your edits with its version when it finishes.
@@ -185,7 +196,20 @@ Four things to know:
 - You edit text. Structure changes, such as a new paragraph, go to the agent as comments.
 - Onionskin never lets an agent add code that runs in a browser: scripts, event handlers, frames, forms or anything loaded from the internet. Such a change is refused whole: "The agent tried to add code that runs in a browser, so nothing was written."
 
-Limits: 10 MB and 200,000 elements, UTF-8 only. Chrome is the tested browser. Details: [HTML files](docs/GUIDE.md#html-files).
+Limits: 10 MB and 200,000 elements, UTF-8 only. Chrome is the tested browser. Details: [HTML files](https://github.com/abe238/onionskin/blob/main/docs/GUIDE.md#html-files).
+
+## Markdown files
+
+Open a `.md` or `.markdown` file the same way. It opens as a rendered preview. Select words and comment on them, or just start typing: the page switches to Edit, a plain text box on the file's Markdown source, with your key typed where you pressed it (where that spot maps to one exact place in the file; otherwise Edit opens at the start of the block and says so). Press Send: your edit is written into the file, and the comments go to the agent, including comments you made on the text you just typed. The agent changes exactly the words each comment points at, or nothing at all if the file is not the version the comment was made on. Revert puts back its last run.
+
+Four things to know:
+
+- Nothing in the file runs or loads. Links are shown as styled text, and images, raw HTML and front matter are shown as the text they are written as.
+- A comment points at one exact version of the file. After the file changes (your edit, the agent, a save in another program), a comment that is still waiting asks you to select the words again.
+- While the agent works, typing is off and comments still work.
+- Not offered for Markdown files in this version: Review first, Quick changes, Download my edits, and the open file as a writing sample.
+
+Limits: 1 MB and 20,000 lines, UTF-8 only. Typing works in files with LF or CRLF line endings; a file with mixed line endings, or with carriage returns alone, opens for reading and comments only. Details: [Markdown files](https://github.com/abe238/onionskin/blob/main/docs/GUIDE.md#markdown-files).
 
 ## What you need
 
@@ -193,7 +217,7 @@ Limits: 10 MB and 200,000 elements, UTF-8 only. Chrome is the tested browser. De
 - Claude Code or Codex, already installed and signed in. The terminal start needs Claude Code; with Codex, you start from inside it.
 - For quick fixes only: macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without it, grammar fixes go to your agent.
 
-Limits: macOS only so far. This is a pre-release (0.0.6) and has been tested by one person. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes or 10 MB of HTML: the full list is in [Size limits](docs/GUIDE.md#size-limits).
+Limits: macOS only so far. This is version 1.0.0 and has been tested by one person. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes, 10 MB of HTML or 1 MB of Markdown: the full list is in [Size limits](https://github.com/abe238/onionskin/blob/main/docs/GUIDE.md#size-limits).
 
 ## Privacy
 

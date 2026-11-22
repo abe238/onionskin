@@ -45,7 +45,8 @@
           { "$ref": "#/$defs/remove_attribute" },
           { "$ref": "#/$defs/insert_html" },
           { "$ref": "#/$defs/replace_element" },
-          { "$ref": "#/$defs/delete_element" }
+          { "$ref": "#/$defs/delete_element" },
+          { "$ref": "#/$defs/replace_source" }
         ]
       }
     }
@@ -538,6 +539,35 @@
     "html_element_id": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
     "markup": { "type": "string", "minLength": 1, "maxLength": 200000 },
     "attribute_name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$" },
+    "replace_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "target", "expect", "text"],
+      "description": "Markdown only, and the only op for it. Replaces the exact range [target.from, target.to) of the file's text (UTF-16 code units after any BOM, as the batch's untrusted_document_evidence.markdown and each anchor's locator give them) with `text`. `expect.sha256` is the batch's base_sha256 and `expect.source` the exact text in that range, in full (copied from a block's or anchor's `source`, never from a quote, which is cleaned and cut). Refused, and nothing is written, when the file is another version, the range ends inside one character or inside an escape, entity or line break, or the text there is not `expect.source` exactly. Every replacement of one run is checked against the same base and written at once: offsets never shift between them, and two that overlap refuse the whole run.",
+      "properties": {
+        "op": { "const": "replace_source" },
+        "id": { "$ref": "#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+            "to": { "type": "integer", "minimum": 0, "maximum": 1048576 }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "source"],
+          "properties": {
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "source": { "type": "string", "maxLength": 1048576 }
+          }
+        },
+        "text": { "type": "string", "maxLength": 1048576 }
+      }
+    },
     "set_text": {
       "type": "object",
       "additionalProperties": false,

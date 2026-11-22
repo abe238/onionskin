@@ -1,0 +1,56 @@
+/* The Markdown preview (MarkdownHost.jsx): a page of text on the paper color, the refused-selection line above it. Colors come from
+   tokens.css (light and dark). Runs keep the browser's own selection; marks are drawn by the shared overlay (Overlay.jsx). */
+.md { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--ink); }
+/* over the top of the preview, never in its flow: the text does not move when the line comes and goes (a drag would land elsewhere) */
+.md-note { position: absolute; z-index: 2; top: 6px; left: 8px; right: 8px; display: flex; align-items: center; gap: 10px; min-height: 30px; box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--warn-edge); padding: 4px 10px; border-radius: var(--r-sm, 8px); background: var(--card); font-size: var(--text-sm); }
+.md-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.md-note .btn { flex: none; }
+.md-note { flex-wrap: wrap; }
+.md-note-src { flex: 1 1 100%; order: 3; margin: 0; max-height: 7.5em; overflow: auto; padding: 4px 6px; border-radius: 4px; background: var(--bg-sunk, rgba(127, 127, 127, 0.1)); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.md-scroll { flex: 1; min-height: 0; overflow: auto; padding: 24px 16px 64px; outline: none; }
+.md-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.md-doc { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 32px 40px; border-radius: 6px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--well-edge); font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.md-doc > :first-child { margin-top: 0; }
+.md-doc h1, .md-doc h2, .md-doc h3, .md-doc h4, .md-doc h5, .md-doc h6 { margin: 1.4em 0 0.5em; line-height: 1.25; }
+.md-doc h1 { font-size: 1.8em; }
+.md-doc h2 { font-size: 1.45em; }
+.md-doc h3 { font-size: 1.2em; }
+.md-doc h4, .md-doc h5, .md-doc h6 { font-size: 1em; }
+.md-doc p { margin: 0 0 0.9em; }
+.md-doc blockquote { margin: 0 0 0.9em; padding: 0 0 0 14px; border-left: 3px solid var(--ink-3); color: var(--ink-2); }
+.md-doc ul, .md-doc ol { margin: 0 0 0.9em; padding-left: 1.6em; }
+.md-doc ul { list-style: disc; }
+.md-doc ul ul { list-style: circle; }
+.md-doc ol { list-style: decimal; }
+.md-doc li > ul, .md-doc li > ol { margin-bottom: 0; }
+.md-doc .md-tight li > p { margin: 0; }
+.md-doc li.md-task { list-style: none; }
+.md-doc code, .md-doc pre { font-family: var(--mono); font-size: 0.92em; }
+.md-doc :not(pre) > code { padding: 0.1em 0.3em; border-radius: 4px; background: var(--well); }
+.md-doc pre { margin: 0 0 0.9em; padding: 10px 12px; border-radius: 6px; background: var(--well); overflow-x: auto; white-space: pre; }
+.md-code { position: relative; }
+.md-info { display: inline-block; margin-bottom: 2px; color: var(--ink-3); font-family: var(--mono); font-size: 0.8em; }
+.md-doc pre.md-lit { white-space: pre-wrap; box-shadow: inset 0 0 0 1px var(--well-edge); color: var(--ink-2); }
+/* runs shown as written inside a paragraph (raw HTML, an image's source, an autolink): monospace, quiet */
+.md-doc .md-r.md-literal { font-family: var(--mono); font-size: 0.92em; color: var(--ink-2); }
+.md-doc hr { margin: 1.4em 0; border: 0; border-top: 1px solid var(--ink-3); }
+.md-table { margin: 0 0 0.9em; overflow-x: auto; }
+.md-doc table { border-collapse: collapse; }
+.md-doc th, .md-doc td { padding: 4px 10px; border: 1px solid var(--well-edge); vertical-align: top; }
+.md-al { text-align: left; }
+.md-ar { text-align: right; }
+.md-ac { text-align: center; }
+.md-link { color: var(--accent-ink, var(--accent)); text-decoration: underline; text-underline-offset: 2px; cursor: text; }
+.md-image { color: var(--ink-2); font-family: var(--mono); font-size: 0.92em; }
+.md-hardbreak { white-space: pre-wrap; }
+.mode-comment .md-doc [data-b], .mode-pin .md-doc [data-b] { cursor: pointer; }
+
+/* slice 2: Edit (a plain textarea on the source) and the preview kept mounted under it */
+.md-pv { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.md-pv[hidden] { display: none; }
+.md-edit { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 6px; padding: 8px; }
+.md-note-flow { position: static; }
+.md-source { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 16px; border: 1px solid var(--line, rgba(127, 127, 127, 0.3)); border-radius: var(--r-sm, 8px); background: var(--card); color: var(--ink); font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.md-source:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.md-draft-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; font-size: var(--text-sm); }
+.md-parked-text { flex: 1 1 100%; order: 4; margin: 0; white-space: pre-wrap; overflow: auto; user-select: text; min-height: 4.5em; max-height: 12em; padding: 6px; border-radius: 4px; border: 1px solid var(--line, rgba(127, 127, 127, 0.3)); background: var(--bg-sunk, rgba(127, 127, 127, 0.1)); color: var(--ink); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }

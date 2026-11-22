@@ -11,7 +11,7 @@
 // cached by file hash and command. The bytes are read whole within the readers' caps first (readChecked), so a file swapped on disk
 // past a cap is refused in plain words before the engine reads it.
 
-import { checkRegularOwned, readDoc, sha256 } from "./fsutil.js";
+import { checkRegularOwned, readOwned, sha256 } from "./fsutil.js";
 import { readChecked } from "./session.js";
 import { previewOffThread } from "./offload.js";
 import { recognize, refusalFor, wordsFor } from "./quick.js";
@@ -56,7 +56,7 @@ export async function quickPreview(s, note) {
   let bytes;
   try {
     checkRegularOwned(s.file);
-    bytes = readDoc(s.file);
+    bytes = readOwned(s.file);
   } catch {
     return { match: null };
   }
@@ -101,7 +101,7 @@ export const quickPlanner = {
     let bytes;
     try {
       checkRegularOwned(s.file);
-      bytes = readDoc(s.file);
+      bytes = readOwned(s.file);
       if (sha256(bytes) !== batch.base_sha256) return null; // the file moved since the Send
       readChecked(s.format, bytes, { sha: batch.base_sha256 }); // within the readers' caps before the engine reads it
     } catch {

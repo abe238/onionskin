@@ -4,7 +4,7 @@ import { PRODUCT } from "./constants.js";
 
 const BIN = PRODUCT.bin;
 // the formats Onionskin opens, and the web files it refuses with a sentence (src/constants.js REFUSED_PAGES): `onionskin page.mhtml` says why
-const DOC_EXT = /\.(docx|xlsx|pptx|html|htm|mhtml|mht|webarchive|xhtml|svg)$/i;
+const DOC_EXT = /\.(docx|xlsx|pptx|html|htm|md|markdown|mhtml|mht|webarchive|xhtml|svg)$/i;
 export const GET_CLAUDE_CODE = "https://claude.com/product/claude-code";
 
 /**
@@ -44,7 +44,7 @@ export function pickAudience(argv, ctx) {
   return { argv: rest, person, offer: person };
 }
 
-/** `onionskin report.docx` is `onionskin open report.docx`: a first argument that names a Word, Excel or PowerPoint file. */
+/** `onionskin report.docx` is `onionskin open report.docx`: a first argument that names a file of a format Onionskin opens (or refuses by name). */
 export function expandShortcut(argv, commands) {
   const first = argv[0];
   if (!first || first.startsWith("-") || first in commands || !DOC_EXT.test(first)) return argv;

@@ -33,7 +33,7 @@
       "additionalProperties": false,
       "required": ["format", "limit", "untrusted", "note", "updates"],
       "properties": {
-        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "format": { "enum": ["docx", "xlsx", "pptx", "markdown"] },
         "limit": { "const": 20 },
         "untrusted": { "const": true },
         "note": { "type": "string" },
@@ -60,7 +60,7 @@
       "additionalProperties": false,
       "required": ["format", "label", "locator", "change", "diff", "text", "note", "before", "after", "protected"],
       "properties": {
-        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "format": { "enum": ["docx", "xlsx", "pptx", "markdown"] },
         "label": { "type": "string", "maxLength": 140, "description": "DOCX: the first words of the paragraph (table cells: `Table 2, row 3, col 1: ...`); XLSX: `Sheet!C4`; PPTX: `Slide 3, Title`" },
         "locator": {
           "description": "the unit in this update's AFTER version (see after_is_current); null when the unit was deleted. Field names follow the batch locators.",
@@ -68,7 +68,8 @@
             { "type": "null" },
             { "type": "object", "required": ["format", "body_path", "para_id", "text_hash", "ordinal"], "properties": { "format": { "const": "docx" }, "body_path": { "type": ["array", "null"], "items": { "type": "integer" } }, "para_id": { "type": ["string", "null"] }, "text_hash": { "type": "string" }, "ordinal": { "type": "integer" }, "text_start": { "type": "string", "description": "the first 160 characters of the paragraph (whitespace collapsed): lets a page find the paragraph in what it shows" } } },
             { "type": "object", "required": ["format", "sheet", "sheet_id", "range", "text_hash"], "properties": { "format": { "const": "xlsx" }, "sheet": { "type": "string" }, "sheet_id": { "type": ["string", "null"] }, "range": { "type": "string" }, "text_hash": { "type": ["string", "null"] } } },
-            { "type": "object", "required": ["format", "slide_id", "slide_index", "shape_id", "text_hash"], "properties": { "format": { "const": "pptx" }, "slide_id": { "type": ["string", "null"] }, "slide_index": { "type": "integer", "description": "0-based" }, "shape_id": { "type": ["integer", "null"], "description": "null for a whole slide" }, "text_hash": { "type": ["string", "null"] } } }
+            { "type": "object", "required": ["format", "slide_id", "slide_index", "shape_id", "text_hash"], "properties": { "format": { "const": "pptx" }, "slide_id": { "type": ["string", "null"] }, "slide_index": { "type": "integer", "description": "0-based" }, "shape_id": { "type": ["integer", "null"], "description": "null for a whole slide" }, "text_hash": { "type": ["string", "null"] } } },
+            { "type": "object", "required": ["format", "from", "to", "version"], "properties": { "format": { "const": "markdown" }, "from": { "type": "integer", "description": "the block's exact range in the after version: UTF-16 code units after any BOM" }, "to": { "type": "integer" }, "version": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "the after version's sha256: the page draws the range only on that version" } } }
           ]
         },
         "change": { "enum": ["modified", "added", "removed", "formatting", "moved"] },
@@ -95,7 +96,7 @@
       "description": "GET /api/history/all: the net change from the oldest stored version to the file as it is now (a change that was reverted does not appear). It has no id and no kind: it is not one update, so it cannot reuse `head`. The page turns it into a plain-text note.",
       "required": ["format", "untrusted", "note", "since", "counts", "places", "more"],
       "properties": {
-        "format": { "enum": ["docx", "xlsx", "pptx"] },
+        "format": { "enum": ["docx", "xlsx", "pptx", "markdown"] },
         "untrusted": { "const": true },
         "note": { "type": "string" },
         "since": { "$ref": "#/$defs/since" },
@@ -112,7 +113,7 @@
           "type": "object",
           "required": ["format", "untrusted", "note", "places", "more", "after_is_current"],
           "properties": {
-            "format": { "enum": ["docx", "xlsx", "pptx"] },
+            "format": { "enum": ["docx", "xlsx", "pptx", "markdown"] },
             "untrusted": { "const": true },
             "note": { "type": "string" },
             "places": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/place" } },

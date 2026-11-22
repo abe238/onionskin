@@ -120,7 +120,7 @@ describe("the request", () => {
       await ask(page, { comments: false, send: false });
       assert.equal(await T(page, "voice-build").locator("h2").innerText(), "Build my voice guide");
       assert.equal(await T(page, "voice-build-edits").isDisabled(), false);
-      assert.equal(await T(page, "voice-build").locator("label", { hasText: "Use the changes I made to the agent's text (1 kept)" }).count(), 1);
+      assert.equal(await T(page, "voice-build").locator("label", { hasText: "Use the changes I made to the agent's text, in all my documents (1 kept)" }).count(), 1);
       assert.equal(await T(page, "voice-build-open-file").isChecked(), false);
       assert.equal(await T(page, "voice-build-edits").isChecked(), false);
       await T(page, "voice-build-ask").click();
@@ -368,6 +368,28 @@ describe("the editor", () => {
       assert.equal(await T(page, "vg-status-tone").innerText(), "Same as saved");
       assert.equal(await T(page, "vg-discard").count(), 0);
       await T(page, "vg-cancel").click();
+    } finally {
+      await w.cleanup();
+    }
+  });
+
+  test("changing only the send mode or only the send switch guards the page, and changing it back releases the guard", async () => {
+    // a saved guide with an "In short" section, no draft: the editor opens with every section the same as saved, so the radios show
+    const { w, page } = await open({ seeded: { guide: "## In short\nShort and plain.\n\n## Humor\nNo jokes.", on: true } });
+    try {
+      await openPanel(page);
+      await T(page, "voice-guide-open").click();
+      await T(page, "voice-guide-editor").waitFor();
+      const canLeave = () => page.evaluate(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true })));
+      assert.equal(await canLeave(), true);
+      await T(page, "vg-send").uncheck();
+      assert.equal(await canLeave(), false, "only the send switch changed");
+      await T(page, "vg-send").check();
+      assert.equal(await canLeave(), true);
+      await T(page, "vg-send-short").check();
+      assert.equal(await canLeave(), false, "only the send mode changed");
+      await T(page, "vg-send-full").check();
+      assert.equal(await canLeave(), true);
     } finally {
       await w.cleanup();
     }

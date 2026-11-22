@@ -457,6 +457,7 @@ setInterval(() => {}, 1000);
 test("R11/S14: install.sh checks macOS 13.1, restores .old.$$ in cleanup, and emits SKILL_SETUP_FAILED on setup failure after swap", () => {
   const sh = fs.readFileSync(path.join(repo, "install.sh"), "utf8");
   assert.match(sh, /older than 13\.1/);
-  assert.match(sh, /mv "\$APP\.old\.\$\$" "\$APP"/);
+  assert.match(sh, /renameSync\(process\.argv\[1\], process\.argv\[2\]\)' "\$APP\.old\.\$\$" "\$APP"/);
+  assert.match(sh, /^\s*put_back_old \|\| true$/m, "the exit cleanup puts it back");
   assert.match(sh, /SKILL_SETUP_FAILED: warning: skill setup exited/);
 });

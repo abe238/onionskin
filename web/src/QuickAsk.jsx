@@ -64,15 +64,32 @@ export function QuickAsk({ q, at, onText, onSubmit, onClose, stamps }) {
       {stamps && sug?.sg ? (
         <Suggestion sg={sug.sg} busy={sug.busy} onUse={sug.onUse} onAgent={sug.onAgent} onRetry={sug.onRetry} />
       ) : (
-        stamps && <Stamps load={stamps.load} dirtyRef={stamps.dirtyRef} own={stamps.own} save={stamps.save} disabled={!!q.blocked} onStamp={sug?.onStamp || onSubmit} suggest={sug} />
+        stamps && <Stamps load={stamps.load} dirtyRef={stamps.dirtyRef} draftRef={stamps.draftRef} own={stamps.own} save={stamps.save} disabled={!!q.blocked} onStamp={sug?.onStamp || onSubmit} suggest={sug} />
       )}
       <textarea ref={ta} rows={2} value={q.text} readOnly={!!sug?.sg} disabled={!!q.blocked} maxLength={COMMENT_TEXT_MAX} onChange={(e) => onText(e.target.value)} placeholder="What should change here?" aria-label="What should change here?" data-testid="quick-ask-text" />
       <div className="qa-foot">
-        <p className="qa-hint" id="qa-hint" role="status" data-testid="quick-ask-hint" data-tone={q.blocked || q.nudge ? "warn" : "info"}>
+        <p className="qa-hint" id="qa-hint" role="status" data-testid="quick-ask-hint" data-tone={q.blocked || q.held || q.nudge || q.text.length >= COMMENT_TEXT_MAX ? "warn" : "info"}>
           {q.blocked ? (
             <>
               <Icon name="lock" size={12} /> {q.blocked}
+              {q.stale && q.text.trim() ? (
+                <>
+                  {" "}
+                  <button type="button" className="btn sm" data-testid="quick-ask-copy" onClick={() => navigator.clipboard?.writeText(q.text).catch(() => {})}>
+                    Copy my words
+                  </button>
+                </>
+              ) : null}
             </>
+          ) : q.held ? (
+            <>
+              {q.held}{" "}
+              <button type="button" className="btn sm" data-testid="quick-ask-copy" onClick={() => navigator.clipboard?.writeText(q.text).catch(() => {})}>
+                Copy my words
+              </button>
+            </>
+          ) : q.text.length >= COMMENT_TEXT_MAX ? (
+            `This is as long as a comment can be (${COMMENT_TEXT_MAX.toLocaleString("en-US")} characters). If you pasted, check the end: it may have been cut.`
           ) : q.nudge ? (
             `Write what should change, then press ${MOD}+Enter.`
           ) : (
@@ -81,6 +98,11 @@ export function QuickAsk({ q, at, onText, onSubmit, onClose, stamps }) {
             </>
           )}
         </p>
+        {q.text.length >= COMMENT_TEXT_MAX - 200 && (
+          <span className="qa-count" data-testid="quick-ask-count">
+            {q.text.length.toLocaleString("en-US")} of {COMMENT_TEXT_MAX.toLocaleString("en-US")}
+          </span>
+        )}
         <button type="button" className="btn primary sm qa-send" disabled={!q.text.trim() || !!q.blocked} onClick={() => onSubmit()} data-testid="quick-ask-send">
           Send
         </button>

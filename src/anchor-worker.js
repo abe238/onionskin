@@ -1,7 +1,7 @@
 import { anchorWork } from "./anchor-work.js";
 import "./html-parser.js"; // this worker reads HTML files: the parser lives here, never on the server's thread
 import { env } from "./constants.js";
-import { checkRegularOwned, readDoc, sha256 } from "./fsutil.js";
+import { checkRegularOwned, readOwned, sha256 } from "./fsutil.js";
 
 // The server's anchor worker (src/offload.js anchorsOffThread), run by src/worker-host.js and kept warm: it answers job after job, each
 // on a version of a file, and keeps the last reading (src/anchors.js unitsFor), so an ordinary Send reads the file once. A job is
@@ -16,7 +16,7 @@ export const WORKER_BUDGET = 400_000_000;
 function source({ bytes, path, sha }) {
   if (bytes) return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   checkRegularOwned(path);
-  const b = readDoc(path);
+  const b = readOwned(path);
   if (sha && sha256(b) !== sha) throw Object.assign(new Error("the file is not the version asked for"), { stale: true });
   return b;
 }

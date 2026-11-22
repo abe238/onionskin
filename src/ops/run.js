@@ -4,10 +4,11 @@ import { parserLoaded } from "../html.js";
 import { previewOffThread, runOpsOffThread } from "../offload.js";
 import * as docx from "./docx.js";
 import * as html from "./html.js";
+import * as markdown from "./markdown.js";
 import * as pptx from "./pptx.js";
 import * as xlsx from "./xlsx.js";
 
-const DRIVERS = { docx, xlsx, pptx, html };
+const DRIVERS = { docx, xlsx, pptx, html, markdown };
 // ops whose job is to remove or rewrite content: a lower count of drawings/links/bookmarks is then expected, not damage
 const REWRITES = new Set(["delete_paragraph", "set_table_cell_text", "set_shape_text", "delete_rows", "delete_columns", "delete_table_row", "delete_table_column", "delete_slide"]);
 const BLOCKING = new Set(["invalid_package", "part_removed", "relationship_target_missing"]);
@@ -86,10 +87,19 @@ export async function runOps({ bytes, format, name, ops, partial = false, anchor
       }
       const applied = results.filter((r) => r.status === "applied").length;
       if (!applied) return { results, bytes: null, warnings: [], blocked: null };
-      // HTML has no engine and no package: its driver applies the splices at once and runs its own proof and write check (src/ops/html.js)
+      // HTML and Markdown have no engine and no package: their drivers apply the splices at once and run their own checks (src/ops/html.js,
+      // src/ops/markdown.js)
       if (driver.finish) return await driver.finish(st, results, { partial });
       const out = await driver.save(st);
       await turn();
+      // a driver that checks the saved bytes themselves (XLSX: every percent written must reopen showing as written): a failure names
+      // its op and blocks the whole write, in partial mode too, since the bytes that failed are the only ones this pass made
+      const unsaved = driver.verifySaved ? await driver.verifySaved(st, out) : null;
+      if (unsaved) {
+        const i = ops.indexOf(unsaved.op);
+        results[i] = shape(i, ops[i], unsaved.refusal);
+        return { results: demote(results, "a percent written by this batch did not show as written in the saved file, so nothing was written"), bytes: null, warnings: [], blocked: null };
+      }
       // the writer is checked before anything leaves this function: a lossy save blocks the whole write
       const flags = nodeChecks(bytes, out, format);
       const rewrites = ops.some((op, i) => results[i].status === "applied" && (REWRITES.has(op.op) || (op.op === "replace_text" && "text" in op)));

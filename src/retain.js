@@ -98,6 +98,14 @@ export function cleanLocation(l) {
   if (l.cell && typeof l.cell === "object" && int(l.cell.row) !== undefined && int(l.cell.col) !== undefined) out.cell = { row: l.cell.row, col: l.cell.col };
   // HTML (web/src/html-view.js): the located node's id in one version of the file, and that version's sha256 (an id means nothing in another)
   put(out, "nodeId", int(l.nodeId));
+  // Markdown (web/src/md-host.js): an exact source range [from, to) of the version `version` (UTF-16 offsets after any BOM), kept whole
+  put(out, "from", int(l.from));
+  put(out, "to", int(l.to));
+  // ... and the id of the server's record of that version (src/session.js: its bytes and identity on disk), opaque to the page
+  if (typeof l.rev === "string" && /^[0-9a-f]{24}$/.test(l.rev)) out.rev = l.rev;
+  // ... or, made on the person's unsent draft: the sha256 of the bytes that draft's Send will write (src/session.js #mdSendAnchor)
+  if (typeof l.draftSha === "string" && /^[0-9a-f]{64}$/.test(l.draftSha)) out.draftSha = l.draftSha;
+  if (typeof l.draftId === "string" && /^[0-9a-f]{24}$/.test(l.draftId)) out.draftId = l.draftId; // the draft state it was made on (src/session.js #mdSendAnchor)
   if (typeof l.version === "string" && /^[0-9a-f]{64}$/.test(l.version)) out.version = l.version;
   return out;
 }
@@ -155,6 +163,9 @@ export function cleanPageAnchor(a) {
   put(out, "prefix", typeof a.prefix === "string" ? cutTail(a.prefix, CONTEXT_MAX) : undefined); // the end nearest the selection
   put(out, "suffix", str(a.suffix, CONTEXT_MAX));
   for (const k of ["format", "hitKind"]) put(out, k, str(a[k], 40));
+  // Markdown: the selection's evidence (sha256 over its identity, offsets and exact source: src/anchors.js mdEvidence), 64 hex characters;
+  // the source itself is never stored a second time
+  if (typeof a.evidence === "string" && /^[0-9a-f]{64}$/.test(a.evidence)) out.evidence = a.evidence;
   if (cut || a.cut === true) out.cut = true;
   return out;
 }

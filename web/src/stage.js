@@ -27,6 +27,7 @@ export function stageOf(session) {
  */
 export function lockedSyncText(session) {
   if (session?.format === "html") return "Agent working: comment now, fix text after";
+  if (session?.format === "markdown") return "Agent working: comment now";
   const st = stageOf(session); // the banner's own words while an agent has the batch ("The agent has your batch")
   return session?.local ? "Working on this Mac: keep editing" : `${["delivered", "writing", "checking"].includes(st.key) ? st.text : "Agent working"}: keep editing`;
 }

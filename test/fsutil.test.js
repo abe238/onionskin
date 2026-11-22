@@ -98,6 +98,28 @@ test("the lock: exclusive while held, released after the write, stale (dead pid)
   assert.deepEqual(leftovers(), []);
 });
 
+test("acquireLock with waitMs 0 takes a stale lock it just removed (dead pid, or an old empty lock), and still refuses a live one", () => {
+  const doc = mk("lock-zero.docx", "x");
+  const dead = execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+  fs.writeFileSync(lockPathFor(doc), dead);
+  const r1 = acquireLock(doc, { waitMs: 0 });
+  assert.equal(fs.readFileSync(lockPathFor(doc), "utf8"), String(process.pid));
+  r1();
+  // an empty lock older than two seconds is garbage
+  fs.writeFileSync(lockPathFor(doc), "");
+  const old = new Date(Date.now() - 10_000);
+  fs.utimesSync(lockPathFor(doc), old, old);
+  const r2 = acquireLock(doc, { waitMs: 0 });
+  assert.equal(fs.readFileSync(lockPathFor(doc), "utf8"), String(process.pid));
+  r2();
+  assert.ok(!fs.existsSync(lockPathFor(doc)));
+  // a live holder (this process) is respected at once
+  const held = acquireLock(doc);
+  assert.throws(() => acquireLock(doc, { waitMs: 0 }), (e) => e instanceof LockBusy && e.code === "LOCK_BUSY");
+  assert.equal(fs.readFileSync(lockPathFor(doc), "utf8"), String(process.pid), "the live lock is left in place");
+  held();
+});
+
 test("a second process holding the lock blocks this writer until it lets go", async () => {
   const doc = mk("lock2.docx", "x");
   const { spawn } = await import("node:child_process");

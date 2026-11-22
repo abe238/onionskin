@@ -49,6 +49,27 @@ test("the copy's bytes: windows-1252 and ISO-8859-1 decoded, the declaration sai
   assert.deepEqual(utf8Bytes(Buffer.from('<meta charset="shift_jis"><p>x</p>')), { ok: false, reason: NOT_READABLE_ENCODING });
 });
 
+test("C2: text that is already UTF-8 is never copied as windows-1252, whatever looks like a declaration (Café stays Café)", async () => {
+  const { decodeHtml, NOT_READABLE_ENCODING } = await import("../src/html.js");
+  for (const page of ['<meta name="import-settings" data-charset="windows-1252"><meta charset="utf-8"><p>Café</p>', '<meta charset="windows-1252"><p>Café</p>']) {
+    const bytes = Buffer.from(page, "utf8");
+    const d = decodeHtml(bytes);
+    assert.equal(d.ok, false, "refused, as in 0.0.6");
+    assert.equal(d.copyable, false, "and no copy is offered");
+    assert.equal(d.sentence, NOT_READABLE_ENCODING);
+    const r = utf8Bytes(bytes);
+    assert.equal(r.ok, false, "no copy is made");
+    assert.ok(!String(r.bytes || "").includes("CafÃ©"));
+  }
+  // a real windows-1252 page is copied as before, and its text is right
+  const legacy = Buffer.concat([Buffer.from('<meta charset="windows-1252"><p>Caf', "latin1"), Buffer.from([0xe9]), Buffer.from("</p>", "latin1")]);
+  const ok = utf8Bytes(legacy);
+  assert.equal(ok.ok, true);
+  assert.ok(ok.bytes.toString("utf8").includes("<p>Café</p>"));
+  // a plain-ASCII page that declares windows-1252 is copied as before
+  assert.equal(utf8Bytes(Buffer.from('<meta charset="windows-1252"><p>Cafe</p>', "latin1")).ok, true);
+});
+
 test("onionskin open prints the sentence and the command; utf8-copy writes the copy next to the file once, the original untouched; the copy opens", async () => {
   srv = await startServer({ port: 0 });
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(root, "pages-")));

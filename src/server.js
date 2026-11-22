@@ -202,6 +202,20 @@ async function withStartLock(fn) {
   }
 }
 
+/**
+ * The real path of a CLI route's file, resolved once: the agent binding is checked on it, and the route opens exactly it (`pinned`), so a path
+ * changed in between cannot open another file. null when it does not resolve (the binding is then checked on the path as sent, and the
+ * open answers "not found" as before). Ceiling: a folder on the path swapped after this is followed (the O_NOFOLLOW limit of readOwned).
+ */
+function pinFile(file, holder) {
+  let real = null;
+  try {
+    real = fs.realpathSync(path.resolve(file));
+  } catch {}
+  checkBinding(real ?? file, holder);
+  return real;
+}
+
 export async function startServer({ port = 0 } = {}) {
   ensureStateDir();
   const sessions = new Sessions();
@@ -328,10 +342,11 @@ export async function startServer({ port = 0 } = {}) {
       const s = sessions.get(key);
       tabSeen.set(key, Date.now());
       if (req.method === "GET" && p === "/api/file") {
-        const { bytes, diskSha } = sessions.loadForPage(key); // records an outside change the user is taking (history)
+        const { bytes, diskSha, mdRev } = sessions.loadForPage(key); // records an outside change the user is taking (history)
         warm(s);
         secure(res);
-        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Sha256": diskSha });
+        // a Markdown file: the revision number of these bytes (anchors name it with the sha256)
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Sha256": diskSha, ...(mdRev != null ? { "X-Revision": String(mdRev) } : {}) });
         return res.end(bytes);
       }
       if (req.method === "GET" && p === "/api/html-view") {
@@ -368,7 +383,7 @@ export async function startServer({ port = 0 } = {}) {
         MAX_BODY;
       const body = await readJson(req, bodyMax, p === "/api/draft" || p === "/api/handover" ? tooLarge("This draft") : null);
       // a Send or a quick fix's Use carries the document too: their comments, note, typed edits and view state are held to the same cap
-      if ((p === "/api/send" || p === "/api/suggest/use") && requestSize([body.comments, body.note, body.edits, body.viewState, body.htmlEdits]) > REQUEST_MAX) throw tooLarge(p === "/api/send" ? "This Send" : "This request");
+      if ((p === "/api/send" || p === "/api/suggest/use") && requestSize([body.comments, body.note, body.edits, body.viewState, body.htmlEdits, body.mdEdit]) > REQUEST_MAX) throw tooLarge(p === "/api/send" ? "This Send" : "This request");
       if (p === "/api/claim" && !/^[\w-]{6,64}$/.test(tab)) return sendJson(res, 400, { error: "a tab id is required" });
       if (p === "/api/claim") return sendJson(res, 200, { ok: sessions.claimEditor(key, tab, { takeover: body.takeover === true }), session: sessions.view(s) });
       // the tab that just lost editing hands over its unsaved words (Sessions.handOver checks that it is that tab), in the file's turn
@@ -398,7 +413,7 @@ export async function startServer({ port = 0 } = {}) {
       if (p === "/api/send") {
         const bytes = typeof body.bytesB64 === "string" ? Buffer.from(body.bytesB64, "base64") : null;
         // an HTML file's text edits (PLAN-html R9) come as {nodeId, versionSha, baseTextHash, newText}, never as bytes
-        await sessions.sendAsync(key, { baseSha: String(body.baseSha || ""), bytes, comments: body.comments, note: body.note, edits: body.edits, htmlEdits: body.htmlEdits, viewState: body.viewState, quick: body.quick, rev: body.rev, noteRev: body.noteRev, seen: body.seen, noteSeen: body.noteSeen, sends: body.sends, tab });
+        await sessions.sendAsync(key, { baseSha: String(body.baseSha || ""), bytes, comments: body.comments, note: body.note, edits: body.edits, htmlEdits: body.htmlEdits, mdEdit: body.mdEdit, viewState: body.viewState, quick: body.quick, rev: body.rev, noteRev: body.noteRev, seen: body.seen, noteSeen: body.noteSeen, sends: body.sends, tab });
         warm(s);
         return sendJson(res, 200, { ok: true, session: sessions.view(s) });
       }
@@ -519,8 +534,12 @@ export async function startServer({ port = 0 } = {}) {
       const p = url.pathname;
       if (p === "/health") return sendJson(res, 200, { ok: true, pid: process.pid, protocol: SERVER_PROTOCOL, sessions: sessions.map.size });
       if (req.method === "POST" && p === "/cli/open") {
-        const { file, agent: wants } = await readJson(req);
-        const s = await sessions.openAsync(String(file || ""), { agent: wants === "background" ? "background" : undefined });
+        const { file, agent: wants, holder: h } = await readJson(req);
+        const holder = typeof h === "string" ? h : undefined;
+        const real = pinFile(String(file || ""), holder); // a bound agent: not_your_file, on the real file, before anything is read
+        const opts = { agent: wants === "background" ? "background" : undefined };
+        const s = await sessions.openAsync(real ?? String(file || ""), real ? { ...opts, pinned: true } : opts);
+        checkBinding(s.file, holder); // backstop on the session opened: no link for another file
         if (wants === "background") agent.ensure(s.key); // a person opened it from a terminal: the background agent works on it
         const nonce = auth.newNonce();
         return sendJson(res, 200, { key: s.key, url: `${auth.origin}/?s=${s.key}&n=${nonce}`, state: sessions.state(s), name: path.basename(s.file) });
@@ -567,15 +586,16 @@ export async function startServer({ port = 0 } = {}) {
       }
       if (req.method === "GET" && p === "/cli/poll") {
         const f = url.searchParams.get("file") || "";
-        checkBinding(f, url.searchParams.get("holder")); // before the file is looked up or opened
+        const real = pinFile(f, url.searchParams.get("holder")); // the binding, on the real file, before it is looked up or opened
         let handle;
         res.once("close", () => handle?.cancel());
         let s;
         try {
-          s = sessions.byFile(f);
+          s = sessions.byFile(real ?? f);
         } catch {
-          s = await sessions.openAsync(f); // a poller may start before (or after a server restart without) `open`
+          s = await sessions.openAsync(real ?? f, real ? { pinned: true } : {}); // a poller may start before (or after a server restart without) `open`
         }
+        checkBinding(s.file, url.searchParams.get("holder")); // backstop: the session found is the bound file's
         await sessions.outlineAhead(s.key, url.searchParams.get("holder") || "agent"); // the outline a delivery carries, built off this thread
         if (res.destroyed) return;
         handle = sessions.poll(s.key, { ack: url.searchParams.get("ack") === "1", holder: url.searchParams.get("holder") || "agent", full: url.searchParams.get("full") === "1", compact: url.searchParams.get("compact") === "1" });

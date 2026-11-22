@@ -26,6 +26,8 @@ export function reanchor(units, c) {
   if (units.format === "pptx") return buildDurable(units, { location: { slideIndex: r.slideIndex, slideId: r.slideId, shapeId: r.shapeId ?? undefined, shapeName: r.shapeName, cell: d.cell || undefined }, quote: d.quote, prefix: d.prefix, suffix: d.suffix, hitKind: d.quote ? undefined : "shape" });
   // the resolved place in the page's own offsets (src/html.js pageLocation), which htmlDurable reads
   if (units.format === "html") return buildDurable(units, { location: r.page?.start != null ? r.page : { nodeId: r.nodeId }, quote: d.quote, prefix: d.prefix, suffix: d.suffix, hitKind: d.quote ? undefined : "element" });
+  // Markdown: resolved only on the version it was made on (then it is the same anchor); on any other version it stays unresolved
+  if (units.format === "markdown") return d;
   return unknownFormat(units.format, "reanchor");
 }
 
@@ -74,6 +76,8 @@ export function resolveAllOf(units, comments, view) {
  */
 export function weakDurable(format, anchor) {
   const loc = anchor?.location;
+  // Markdown: a range means something only on its own version, and a quote is never searched for: no weaker anchor, it goes out unresolved
+  if (format === "markdown") return null;
   // HTML: the page's quote, its context and the node id it named (a hint for that version only): resolved by searching the quote
   // (src/html.js resolveHtml), never by a path it does not have
   if (format === "html") {

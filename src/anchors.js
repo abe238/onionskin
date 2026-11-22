@@ -1,20 +1,25 @@
+import crypto from "node:crypto";
 import { normText } from "./text.js";
 import { readDocxParagraphs, resolveDurable, durableFromEngine } from "./docx.js";
 import { parseDeck, pptxDurable, resolvePptx } from "./pptx.js";
 import { a1, a1Range, ch, parseWorkbook, resolveXlsx, sheetRows, xlsxDurable } from "./xlsx.js";
-import { capDurable } from "./retain.js";
+import { capDurable, cutText } from "./retain.js";
 import { elementPath, htmlDurable, ownHash, pathString, readHtml, resolveHtml, visibleText } from "./html.js";
 import { unknownFormat } from "./constants.js";
+import { readMarkdownFile, labelAt, protectedAt } from "./markdown-file.js";
+import { offsetAllowed } from "./markdown.js";
 
 // One seam per format for the three things the server does with the bytes it holds: read the units, build a durable anchor from an
 // engine location (at Send) and re-resolve one against newer bytes (after `done`). DOCX lives in docx.js, XLSX in xlsx.js, PPTX in pptx.js,
-// HTML in html.js (whose parser exists only in a worker thread: src/html-parser.js; on the server's thread reading an HTML file throws).
+// HTML in html.js (whose parser exists only in a worker thread: src/html-parser.js; on the server's thread reading an HTML file throws),
+// Markdown here (src/markdown.js reads it on any thread: its anchors are exact ranges of one version, never found again by their words).
 
 export function readUnits(format, bytes) {
   if (format === "docx") return { format, paragraphs: readDocxParagraphs(bytes) };
   if (format === "xlsx") return { format, wb: parseWorkbook(bytes) };
   if (format === "pptx") return { format, deck: parseDeck(bytes) };
   if (format === "html") return { format, read: readHtml(bytes) };
+  if (format === "markdown") return { format, md: readMarkdownFile(bytes) };
   return unknownFormat(format, "readUnits");
 }
 
@@ -54,7 +59,40 @@ export function buildDurable(units, anchor) {
   if (format === "xlsx") return capDurable(xlsxDurable(units.wb, anchor.location));
   if (format === "pptx") return capDurable(pptxDurable(units.deck, anchor.location, { quote: anchor.quote, prefix: anchor.prefix, suffix: anchor.suffix, text: anchor.quote, shapeWide: !!anchor.hitKind || whole }));
   if (format === "html") return capDurable(htmlDurable(units.read, anchor));
+  if (format === "markdown") return capDurable(markdownDurable(units.md, anchor));
   return unknownFormat(format, "buildDurable");
+}
+
+/**
+ * A Markdown page anchor ({location: {from, to, version}, quote, hitKind}) -> {format, kind, from, to, sha256, label, quote}, or null
+ * (kind "block": a click or a caret in Comment mode, or the explicit "comment on the whole block", all with a hitKind). The range is
+ * taken as it is, only on the version it was made on (`version`: the sha256 of the bytes the page showed) and only on character and run
+ * boundaries; on any other version it means nothing, and nothing here searches for its words. The quote is display evidence only.
+ */
+function markdownDurable(md, anchor) {
+  const l = anchor.location;
+  if (!l || l.version !== md.sha || !Number.isSafeInteger(l.from) || !Number.isSafeInteger(l.to) || l.from > l.to) return null;
+  if (!offsetAllowed(md.tree, l.from) || !offsetAllowed(md.tree, l.to)) return null;
+  // the selection's evidence, made by the page when it captured the selection: sha256 over its identity (the file's record id, or the
+  // draft's state id), its offsets and the exact source there. It must match the text at that range of these bytes: a range that drifted
+  // from what the person saw (a stale offer, a re-render, another word on the same identity) has no place. A place the server built itself
+  // from a write it made (a typed edit's record) needs none: it is exact by construction
+  if (anchor.serverMade !== true && !evidenceHolds(anchor, md.tree.text)) return null;
+  // a range on front matter is protected (src/markdown-file.js protectedAt): the batch says so and the writer refuses it
+  const prot = protectedAt(md.tree, l.from, l.to);
+  return { format: "markdown", kind: anchor.hitKind ? "block" : "text", from: l.from, to: l.to, sha256: md.sha, label: labelAt(md.tree, l.from), quote: cutText(normText(String(anchor.quote ?? "")), 2000), ...(prot ? { protected: true, protectInfo: { reason: `${prot} is never changed by a reply` } } : {}) };
+}
+
+/** sha256 hex of a selection's evidence: identity, offsets and exact source, one per line (web/src/MarkdownHost.jsx makes the same). */
+export function mdEvidence(identity, from, to, source) {
+  return crypto.createHash("sha256").update(`${identity}\n${from}\n${to}\n${source}`, "utf8").digest("hex");
+}
+/** Does a Markdown page anchor's evidence match `text` (the file's text after any BOM) at its range, under its own identity? */
+export function evidenceHolds(anchor, text) {
+  const l = anchor?.location;
+  const identity = l?.rev ?? l?.draftId;
+  if (typeof anchor?.evidence !== "string" || typeof identity !== "string" || !Number.isSafeInteger(l.from) || !Number.isSafeInteger(l.to) || l.to > text.length) return false;
+  return anchor.evidence === mdEvidence(identity, l.from, l.to, text.slice(l.from, l.to));
 }
 
 /** Re-resolve a stored durable anchor against new units. DOCX results keep their own shape (see docx.js). */
@@ -64,6 +102,8 @@ export function resolveDurableAny(units, durable) {
   if (units.format === "xlsx") return resolveXlsx(units.wb, durable);
   if (units.format === "pptx") return resolvePptx(units.deck, durable);
   if (units.format === "html") return resolveHtml(units.read, durable);
+  // Markdown: the same version gives the same range; any other version leaves it unresolved (it is never found again by its words)
+  if (units.format === "markdown") return durable.sha256 === units.md.sha ? { method: "exact", from: durable.from, to: durable.to, text: units.md.tree.text.slice(durable.from, durable.to) } : { method: "none" };
   return unknownFormat(units.format, "resolveDurableAny");
 }
 
@@ -235,6 +275,15 @@ export function changedRegions(format, preBytes, postBytes) {
     const key = (u) => `${u.tag}\u0000${ownHash(u.node)}`;
     const { kind } = diffSeq(A.units.map(key), B.units.map(key));
     B.units.forEach((u, i) => kind[i] !== "same" && push({ kind: kind[i], nodeId: u.nodeId, path: pathString(elementPath(u.node)), text: normText(visibleText(B, u.node)).slice(0, 160) }));
+  } else if (format === "markdown") {
+    // leaf blocks by type and exact source, in order: the blocks of the post version that are new or different
+    const A = readMarkdownFile(preBytes);
+    const B = readMarkdownFile(postBytes);
+    const leaf = (md) => md.tree.byId.filter((b) => !["blank", "quote", "list", "item"].includes(b.type));
+    const la = leaf(A);
+    const lb = leaf(B);
+    const { kind } = diffSeq(la.map((b) => `${b.type}\u0000${A.tree.text.slice(b.from, b.to)}`), lb.map((b) => `${b.type}\u0000${B.tree.text.slice(b.from, b.to)}`));
+    lb.forEach((b, i) => kind[i] !== "same" && push({ kind: kind[i], from: b.from, to: b.to, text: normText(B.tree.text.slice(b.from, b.to)).slice(0, 160) }));
   } else unknownFormat(format, "changedRegions");
   return { items, truncated: items.length >= MAX_CHANGES };
 }

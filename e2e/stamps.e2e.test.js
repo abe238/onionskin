@@ -87,7 +87,7 @@ describe("Stamps (DOCX)", () => {
     const box = page.locator(q("quick-ask-text"));
     await box.fill(typed);
     await stamp(page, "Shorter").click();
-    await page.getByText(/stamp.*5,000 characters/i).waitFor();
+    await page.locator(q("notice"), { hasText: /stamp.*5,000 characters/i }).waitFor(); // the notice (the box itself now also names the limit)
     assert.equal(await box.inputValue(), typed);
     assert.equal(sends.length, 0);
     await page.close();

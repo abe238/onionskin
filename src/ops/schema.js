@@ -100,6 +100,10 @@ function semantic(op, at, errors) {
     if (new Set(ids).size !== ids.length) errors.push(`${at}.shapes: each shape_id at most once`);
   }
   if (op.op === "format_all" || op.op === "replace_all_text") return;
+  if (op.op === "replace_source") {
+    if (op.target.to < op.target.from) errors.push(`${at}.target: to must not be before from`);
+    return; // its expect (sha256 and the exact source) is the schema's own shape
+  }
   const e = op.expect || {};
   if (op.op === "add_sheet") {
     if (e.absent !== true || "quote" in e || "text_hash" in e) errors.push(`${at}.expect: add_sheet needs exactly { "absent": true }`);

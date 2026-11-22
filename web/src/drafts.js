@@ -152,7 +152,7 @@ export class Drafts {
         if (!(this.theirs.has(c.id) && this.rev(c.id) === 0)) comments.push(c); // one this page made stays until its save
         continue;
       }
-      const fields = { status: s.status, result: s.result, localHint: s.localHint, durable: s.durable, batchId: s.batchId, question: s.question, answer: s.answer };
+      const fields = { status: s.status, result: s.result, reopened: s.reopened, localHint: s.localHint, durable: s.durable, batchId: s.batchId, question: s.question, answer: s.answer };
       const r = this.rev(c.id);
       if (s.status === "draft" && !s.answer) {
         // the server's words for a draft are words this page sent: the page's own are the same or newer

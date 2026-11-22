@@ -52,6 +52,23 @@ async function sendNote(page, note = "Please tidy up.") {
 }
 
 describe("the page, with a stand-in for the server half", () => {
+  test("the overall note shows a count near its limit and a cut warning at it, and nothing far from it", async () => {
+    const t = await world("note-limit.docx");
+    try {
+      const { page } = t;
+      const note = page.locator(q("overall-note"));
+      await note.fill("short");
+      assert.equal(await page.locator(q("note-limit")).count(), 0, "no count far from the limit");
+      await note.fill("a".repeat(19_850));
+      assert.equal((await text(page, "note-limit")).trim(), "19,850 of 20,000 characters");
+      await note.fill("a".repeat(20_001)); // the box keeps 20,000
+      assert.equal(await page.locator(q("note-limit")).getAttribute("data-at-limit"), "1");
+      assert.match(await text(page, "note-limit"), /may have been cut/);
+    } finally {
+      await t.end();
+    }
+  });
+
   test("a Send with nobody listening shows Start (no command line); Start runs the agent, which answers; Show the agent lists what it did", async () => {
     const t = await world("agent-flow.docx");
     try {

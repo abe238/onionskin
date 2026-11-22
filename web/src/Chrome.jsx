@@ -99,7 +99,7 @@ export function TopBar({ readOnly, product, session, counts, hasNote, pending, s
       <Mark />
       <span className="brand">{product}</span>
       <span className="fname" data-testid="file-name" title={session.name}>{session.name}</span>
-      <span className="badge format" data-testid="format-badge">{session.format.toUpperCase()}</span>
+      <span className="badge format" data-testid="format-badge">{session.format === "markdown" ? "MD" : session.format.toUpperCase()}</span>
       {!compact && (
         <span className={`sync sync-${sync.tone}`} data-testid="sync-state" role="status">
           <Icon name={sync.icon} size={14} />
@@ -177,7 +177,29 @@ const MODES = [
   ["pin", "Pin", "pin", "Drop a numbered pin anywhere"],
 ];
 
-function Modes({ mode, onMode, readOnly }) {
+/**
+ * A Markdown file (`md`: {view, onView, editOk, why}): Preview | Edit | Comment | Pin. What looks selected is true: Preview is on while
+ * the preview takes selections (the app's "edit" mode with the preview shown), Edit while the source textarea is shown; Comment and Pin
+ * work on the preview, as before. Edit is off, with its reason as the hint, when the file or the tab cannot be edited.
+ */
+function MdModes({ mode, onMode, readOnly, md }) {
+  const btn = (key, on, label, icon, hint, onClick, disabled = false) => (
+    <button key={key} type="button" className={`mode ${on ? "on" : ""}`} onClick={onClick} disabled={disabled} data-testid={`mode-${key}`} aria-pressed={on} title={hint}>
+      <Icon name={icon} size={16} />
+      <span className="mode-label">{label}</span>
+    </button>
+  );
+  return (
+    <div className="modes" role="group" aria-label="Mode">
+      {btn("preview", mode === "edit" && md.view !== "edit", "Preview", "doc", "Read the file rendered; select words to comment, or start typing to edit", () => (onMode("edit"), md.onView("preview")))}
+      {btn("edit", mode === "edit" && md.view === "edit", "Edit", "edit", md.editOk ? "Edit the file's Markdown source" : md.why, () => (onMode("edit"), md.onView("edit")), !md.editOk)}
+      {MODES.filter(([m]) => m !== "edit").map(([m, label, icon, hint]) => btn(m, mode === m, label, icon, hint, () => (onMode(m), md.onView("preview")), readOnly))}
+    </div>
+  );
+}
+
+function Modes({ mode, onMode, readOnly, md = null }) {
+  if (md) return <MdModes mode={mode} onMode={onMode} readOnly={readOnly} md={md} />;
   return (
     <div className="modes" role="group" aria-label="Mode">
       {MODES.map(([m, label, icon, hint]) => (
@@ -191,7 +213,7 @@ function Modes({ mode, onMode, readOnly }) {
 }
 
 /** Desktop and tablet: the mode switch and the format toolbar share one glass bar. Phone: only the format strip (it shows in Edit mode); the modes live in the dock. */
-export function Toolbar({ mode, onMode, setBar, readOnly, phone, format }) {
+export function Toolbar({ mode, onMode, setBar, readOnly, phone, format, md = null }) {
   const tbRef = useRef(null);
   const [detectedHtml, setDetectedHtml] = useState(false);
   useLayoutEffect(() => {
@@ -202,7 +224,7 @@ export function Toolbar({ mode, onMode, setBar, readOnly, phone, format }) {
   const isHtml = format ? format === "html" : detectedHtml;
   return (
     <div ref={tbRef} className="toolbar glass" data-hidden={phone && mode !== "edit" ? "1" : "0"}>
-      {!phone && <Modes mode={mode} onMode={onMode} readOnly={readOnly} />}
+      {!phone && <Modes mode={mode} onMode={onMode} readOnly={readOnly} md={md} />}
       {!phone && (!isHtml || readOnly) && <span className="tb-sep" aria-hidden="true" />}
       {readOnly && (
         <span className="locked-note" role="status" data-testid="readonly-note">
@@ -220,11 +242,11 @@ export function Toolbar({ mode, onMode, setBar, readOnly, phone, format }) {
 }
 
 /** Phone only: a floating glass dock at the thumb. Edit / Comment / Pin, and the button that opens the review sheet where Send is pinned. Counts are what would be sent. */
-export function Dock({ mode, onMode, readOnly, counts, pending, sideOpen, onSidebar, sending }) {
+export function Dock({ mode, onMode, readOnly, counts, pending, sideOpen, onSidebar, sending, md = null }) {
   const parts = counts.comments + counts.pins + counts.edits;
   return (
     <nav className="dock glass" aria-label="Actions">
-      <Modes mode={mode} onMode={onMode} readOnly={readOnly} />
+      <Modes mode={mode} onMode={onMode} readOnly={readOnly} md={md} />
       <button type="button" className="send-pill" data-testid="sidebar-toggle" data-mobile-review="1" data-empty={pending ? "0" : "1"} onClick={onSidebar} aria-expanded={sideOpen} aria-controls="review-panel" aria-label={`Review panel${pending ? `, ${parts || 1} to send` : ""}`}>
         <Icon name="panel" size={16} />
         <span>{sending ? "Sending" : "Review"}</span>
