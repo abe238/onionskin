@@ -56,6 +56,7 @@
 
 ### Known issues
 - Markdown:
+  - In the preview, a first key typed with Option held (such as the euro sign) or a dead key for an accent is not typed and nothing says so. Press Edit first, then type it.
   - Another program saving the file at the same instant as Onionskin writes can have its save overwritten. Onionskin checks the file right before it writes, and a save in that moment, or one that keeps the file's modified time, can be missed; the reply can then say the save was confirmed, or mark a comment Done, while the file holds the other program's text.
   - Onionskin tells versions of the file apart by its contents and its size, place on disk and modified time. A file rewritten twice within one timestamp tick (a long tick on older disk formats and some network shares), or identical contents put back with the modified time set back on purpose, looks unchanged.
   - Another program writing into Onionskin's temporary file while Onionskin checks it can have those bytes published; the save is then reported as not confirmed.
@@ -91,6 +92,7 @@
   - An agent cannot yet write a value with leading zeros (such as "00123"), or a number too long to be stored exactly, into a cell as text. The edit is refused with the reason. Typing such a value into a plain cell yourself drops the zeros, as Excel does.
   - An agent cannot edit a sheet whose cells are saved without their own addresses. The edit is refused with the reason.
 - HTML:
+  - When the same word appears twice written with different accent forms (an "é" stored as one character in one copy and as "e" plus a separate accent in the other), a comment on one copy can move to the other, and the agent's change lands there.
   - When the words you select run across the edge of a block (part in one paragraph, part in the next) and the same words appear again later, the agent's change can land on the later copy.
   - A whole-file edit by an agent can move an existing script or event handler to the next element of the same kind in the same place; it cannot add or change one.
   - A page that declares its encoding in a way Onionskin does not look for can be opened and written as UTF-8 when it is not.
@@ -103,12 +105,16 @@
   - On a very large element (more than 400 text parts), the first keystroke right after a click can be missed.
   - Not in this version for HTML files: sites of several files, pages built by scripts, inline SVG and MathML (shown as placeholders), and Review first, stamps, quick fixes and the tracked-changes copy. Chrome is the tested browser; Safari has not been tested with HTML files.
 - Word and PowerPoint:
+  - When two comments in one Send point at the same words ("red" in "red bus") and the agent's first reply removes those words, its second reply can change another copy of them ("red car"), and both comments show as done. This is also in 0.0.6.
   - The refusal of a replacement whose words overlap another copy of themselves (the last "ana" in "banana") covers a replacement tied to a comment that names no occurrence and is not "all". A replacement that names an occurrence, or that targets a paragraph or shape directly, works as in 0.0.6 and can still land on the earlier copy. In HTML the same holds.
   - A comment on repeated text that mixes letters with built-in accents and letters followed by a separate accent mark can land one copy early.
   - An Office file with extra bytes between its table of contents and its end record, plus extra bytes after the end, is refused (0.0.5 opened it). Two crafted file shapes can make Onionskin read a different table of contents than other tools do.
   - A few rare file shapes are read differently than Word, PowerPoint or Excel read them: a paragraph's tab-stop setting counts as one character, both branches of an alternate-content block are read, shared text stored under an unusual part name is not read, and old-style encoded part names are shown wrong.
   - On very long Word files that carry no paragraph ids (some exports from other editors), a comment whose paragraph moved and whose surrounding words were also edited can show as "moved or removed" more often than in 0.0.3. The comment is kept.
 - Install and update:
+  - The sample files that come with Onionskin live in the app folder and are replaced by a reinstall or an update. An edit you made to an installed sample is gone afterwards (a snapshot of it is kept). Copy a sample somewhere else before you work on it.
+  - A custom state folder (`ONIONSKIN_STATE_DIR`) placed inside the installed app or skill folder is deleted by an uninstall or a reinstall, with the sessions and snapshots in it, while the uninstall says they were kept. Keep a custom state folder outside those folders.
+  - When `ONIONSKIN_STATE_DIR` points at a folder you also use for other things (your home folder, Documents), uninstall says you can delete "this folder" and shows that folder. Do not delete it: remove only the folders Onionskin made in it (`sessions`, `snapshots`, `agents`).
   - `--uninstall --dry-run` says "Dry run: nothing will be changed." and then prints a "removed" line after each step it only describes. Nothing is removed in a dry run.
   - With a custom state folder outside `~/.onionskin`, a plain uninstall says it kept `~/.onionskin` and that `--purge` deletes it, though that folder then holds nothing of yours.
   - Uninstall knows about a custom state folder only when `ONIONSKIN_STATE_DIR` is set in the terminal that runs it. Without it, uninstall and `--purge` speak of `~/.onionskin` only, and the sessions and snapshots in the custom folder stay where they are.
