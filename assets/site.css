@@ -279,6 +279,7 @@ h1{margin-top:20px;font-size:clamp(40px,5vw,72px);line-height:1.0;letter-spacing
 .formats li:nth-child(2){background:var(--c-grid);color:oklch(18% .04 165)}
 .formats li:nth-child(3){background:var(--c-slide);color:oklch(18% .05 36)}
 .formats li:nth-child(4){background:var(--c-note);color:oklch(20% .05 88)}
+.formats li:nth-child(5){grid-column:1/-1;min-height:150px;background:var(--ink);color:var(--bg)}
 .fmt{font-size:clamp(44px,4.6vw,68px);font-weight:750;letter-spacing:-.04em;line-height:1}
 .formats b{display:block;font-size:18px;font-weight:650}
 .formats span:not(.fmt){display:block;margin-top:2px}

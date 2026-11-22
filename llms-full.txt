@@ -1,10 +1,10 @@
 # Onionskin
 
-> Review and edit Word, Excel, PowerPoint and HTML files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.
+> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Version 1.0.0.
 
-**Status:** Available now. Open source under the MIT license.
+**Status:** Onionskin 1.0 is available now. Open source under the MIT license.
 
-## Edit Office and HTML files with your coding agent.
+## Edit Office, HTML and Markdown files with your coding agent.
 
 Type onionskin report.docx in a terminal, or tell Claude Code or Codex: open report.docx in Onionskin. The file opens in a browser editor with a review panel. Edit it, comment on a selection, cell, range, shape or slide, drop numbered pins, write one overall note, then press Send. The agent changes the real file, and the page reloads in place and keeps your position.
 
@@ -19,6 +19,17 @@ Install steps for AI coding agents.
 1. Install once: paste this sentence into Claude Code or Codex: Install Onionskin from https://github.com/abe238/onionskin
 2. Open a file: say "open report.docx in Onionskin" (use the real file name), or run onionskin report.docx in a terminal.
 3. The editor opens in the user's browser. When the user presses Send, apply their edits, comments, pins and overall note to that file.
+
+## New in 1.0: Markdown files
+
+Open notes.md the same way you open a Word file. You read it as a rendered preview, with headings, lists, tables and code. Select words and comment, or just start typing: the page switches to the Markdown source, with your key where you pressed it. Press Send, and the agent changes exactly the words you pointed at.
+
+- **Point at the words.** Select words in the preview and comment, or drop a pin. The comment goes to your agent tied to those exact words in the file.
+- **Start typing to edit.** The page swaps to Edit, a plain text box on the file's Markdown source. Esc goes back to the preview, which shows your edit.
+- **One Send for both.** Your typed edit and the comments you made on it go to the agent together. The changed words are marked, History shows what changed, and Revert undoes the agent's last run.
+- **Nothing in the file runs.** Nothing in the file runs or loads. Links cannot be followed, and images and raw HTML are shown as the text they are written as.
+
+Files up to 1 MB, saved as UTF-8. Onionskin checks the file right before every write. Also in 1.0: an Excel percent is written only when the cell will show it as written, your typed words are kept in more places, and install and uninstall get a set of fixes.
 
 ## How it works
 
@@ -59,7 +70,7 @@ A round from Send to the changed file took about 5 to 13 seconds in our runs.
 
 ## Keep working while the agent works
 
-You do not have to wait for a run to finish. In Word, Excel and PowerPoint, keep typing, and your edits are merged with the agent's version when it is done. An HTML page is read only while the agent works; you can still add comments.
+You do not have to wait for a run to finish. In Word, Excel and PowerPoint, keep typing, and your edits are merged with the agent's version when it is done. An HTML page is read only while the agent works; you can still add comments. In a Markdown file, typing is off while the agent works, and comments still work.
 
 - **Word.** A paragraph-level three-way merge, including formatting and moved paragraphs.
 - **Excel and PowerPoint.** A strict merge: your edit is carried over only onto a place the agent did not touch.
@@ -69,7 +80,7 @@ You do not have to wait for a run to finish. In Word, Excel and PowerPoint, keep
 Select one sentence in a Word or PowerPoint file and ask for Fix grammar. Apple's built-in on-device model answers on your Mac. Nothing is downloaded, and nothing changes until you tap Use this.
 
 - **Usually ready by the time you tap.** The fix starts when the Quick ask box opens and takes about 0.85 seconds per sentence. On the first fix of a session, or an immediate tap, the card took about 0.3 to 0.4 seconds.
-- **Plain commands use no AI.** Replace in N places and other plain quick commands run on your Mac with no AI at all.
+- **Plain commands use no AI.** Replace in N places and other plain quick commands run on your Mac with no AI at all. In a Markdown file they go to your agent.
 
 Quick fixes need macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without them, Fix grammar goes to your coding agent.
 
@@ -90,12 +101,13 @@ Your coding agent works the way it already does. Whatever it normally sends to i
 - Excel (.xlsx): Workbooks and sheets
 - PowerPoint (.pptx): Decks and slides
 - HTML (.html): Static web pages
+- Markdown (.md): Notes, READMEs and drafts
 
 ## FAQ
 
 ### Is Onionskin released?
 
-Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is a pre-release. To update later, tell your agent "update Onionskin" or run onionskin update.
+Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is version 1.0.0. To update later, tell your agent "update Onionskin" or run onionskin update.
 
 ### Can I try it without installing anything?
 
@@ -111,11 +123,15 @@ The editor and its small server run on your computer, and the page makes no outs
 
 ### Which file formats does it support?
 
-Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and HTML (.html, .htm). All four run the whole loop. For Office files the file's own formatting is kept because edits go through the same engine that renders it. For HTML, only the bytes the edit touches change.
+Word (.docx), Excel (.xlsx), PowerPoint (.pptx), HTML (.html, .htm) and Markdown (.md, .markdown). All five run the whole loop. For Office files the file's own formatting is kept because edits go through the same engine that renders it. For HTML, only the bytes the edit touches change. For Markdown, the agent names the exact words it replaces, and Onionskin checks the file right before every write.
 
 ### What happens with HTML files?
 
 You see a still view of the page: scripts never run in it, and nothing loads from the internet. Images and styles in the page's folder are shown. You edit text directly; structure changes, such as a new paragraph, go to the agent as comments. Onionskin never lets an agent add code that runs in a browser, such as scripts, event handlers, frames or forms. Such a change is refused whole. Pages up to 10 MB and 200,000 elements, saved as UTF-8. Chrome is the tested browser.
+
+### What happens with Markdown files?
+
+You read the file as a rendered preview: headings, lists, tables, code, quotes and links. Nothing in the file runs or loads: links cannot be followed, and images and raw HTML are shown as the text they are written as. Select words and comment, or start typing and the page switches to Edit, a plain text box on the file's Markdown source. Press Send: your edit is written into the file, and your comments, including those on the text you just typed, go to the agent. A comment points at one version of the file, so after the file changes, a waiting comment asks you to select the words again. While the agent works, typing is off and comments still work. Not in this version for Markdown: Review first, Quick changes and Download my edits. Files up to 1 MB and 20,000 lines, saved as UTF-8.
 
 ### What does it need, and what is missing?
 
@@ -123,7 +139,7 @@ Claude Code or Codex already installed: Onionskin is for people who already use 
 
 ### How well is it tested?
 
-Over 1,700 unit tests and 410 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds.
+Over 1,800 unit tests and 440 browser tests pass. On a second Mac with no Onionskin on it, the pasted install sentence, run by a real agent, installed it in 17.5 seconds, onionskin doctor reported OK, and a real round changed the file 4.1 seconds after Send. With the background agent, a real round took about 5 to 13 seconds in our runs on one Mac. Inside a Claude Code session, a warm round took about 2 to 3 seconds.
 
 ### Can the background agent see my other files?
 
@@ -151,7 +167,7 @@ Onionskin is a thin, strong paper you can see through. From the 1920s to the 197
 
 Artists and animators found another use for it. They laid a sheet over a drawing, saw the original through it, and traced the next version on top. A new idea took minutes, and it started from work that already existed.
 
-This tool works the same way. It lays a thin layer over your Word, Excel, PowerPoint or HTML file. You mark what you want on that layer, and your coding agent (Claude Code or Codex) makes the change in the real file. The page updates in place and you keep going.
+This tool works the same way. It lays a thin layer over your Word, Excel, PowerPoint, HTML or Markdown file. You mark what you want on that layer, and your coding agent (Claude Code or Codex) makes the change in the real file. The page updates in place and you keep going.
 
 We built it because we believe the age of AI makes fast edits and fast creation possible, and a lot of today's tools are too heavy for that. A quick change should feel quick. You and your agent should be able to work on the same page, one thin sheet apart.
 

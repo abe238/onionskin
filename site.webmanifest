@@ -1,7 +1,7 @@
 {
   "name": "Onionskin",
   "short_name": "Onionskin",
-  "description": "Edit Word, Excel and PowerPoint files with your coding agent in the loop.",
+  "description": "Edit Word, Excel, PowerPoint, HTML and Markdown files with your coding agent in the loop.",
   "start_url": "/",
   "scope": "/",
   "display": "browser",

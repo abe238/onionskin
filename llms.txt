@@ -1,8 +1,8 @@
 # Onionskin
 
-> Review and edit Word, Excel, PowerPoint and HTML files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Pre-release.
+> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Version 1.0.0.
 
-Status: Available now. Open source under the MIT license.
+Status: Onionskin 1.0 is available now. Open source under the MIT license.
 
 Type onionskin report.docx in a terminal, or tell Claude Code or Codex: open report.docx in Onionskin. The file opens in a browser editor with a review panel. Edit it, comment on a selection, cell, range, shape or slide, drop numbered pins, write one overall note, then press Send. The agent changes the real file, and the page reloads in place and keeps your position.
 
