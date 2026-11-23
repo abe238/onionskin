@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.1 (2026-11-22)
+
+A small release for three things found after 1.0.0.
+
+### Fixed
+- Uninstall no longer says you can delete a folder that Onionskin did not make. With a custom state folder (`ONIONSKIN_STATE_DIR`), 1.0.0 printed "You can delete this folder yourself if you no longer want it:" and then that folder, also when it was your home folder or Documents. Uninstall and `--purge` now name the folder and list only what Onionskin made in it: "These are Onionskin's files and folders in it. You can delete them if you no longer want them; leave the folder itself, which may hold other things:", then each one as a quoted path.
+- A custom state folder placed inside the installed app or skill folder was deleted by an uninstall, a reinstall or an update, with the sessions and snapshots in it, while the uninstall said they were kept. The installer now stops before it changes anything: "Not uninstalled: the state folder set by ONIONSKIN_STATE_DIR is inside a folder the uninstall deletes, so your sessions and snapshots would be deleted with it." (or "Not installed: ..." for an install), with the two folders and what to do. `--uninstall --purge` deletes it and says so.
+- Markdown: in the preview, a first key typed with Option held (such as the euro sign) was not typed and nothing said so. It is now typed like any other key. A dead key for an accent, or the start of an input method composition, opens Edit at that place so the character lands in the text box.
+
+### Known issues
+- Everything listed under Known issues for 1.0.0 still holds, except the three items fixed above.
+- Running `onionskin setup` yourself (not the installer) still replaces a skill folder that holds a custom state folder. Keep a custom state folder outside the app and skill folders.
+- In the list of what Onionskin made in a custom state folder, a private folder of your own that has one of Onionskin's folder names (such as `history`) would be listed too. Look before you delete.
+- A dead key or an input method in the Markdown preview was tested with a scripted browser, not with a physical keyboard.
+
 ## 1.0.0 (2026-11-22)
 
 ### Added

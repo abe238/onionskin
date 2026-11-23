@@ -615,7 +615,10 @@ function uninstallWithChecker(name, setup, venvAt, args = [], opts = {}) {
   assert.equal(install(src, home).status, 0);
   const stateDir = setup(home);
   const venv = venvAt(home);
-  if (venv) fs.mkdirSync(venv, { recursive: true });
+  if (venv) {
+    fs.mkdirSync(venv, { recursive: true });
+    fs.writeFileSync(path.join(venv, "pyvenv.cfg"), "home = /usr/bin\n"); // what `python -m venv` writes: the mark of a checker environment
+  }
   const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--uninstall", ...args], {
     cwd: opts.cwd ? opts.cwd(home) : undefined,
     encoding: "utf8", env: { HOME: home, TMPDIR: home, ...(stateDir ? { ONIONSKIN_STATE_DIR: stateDir } : {}), PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
@@ -625,12 +628,25 @@ function uninstallWithChecker(name, setup, venvAt, args = [], opts = {}) {
   return { r, home, venv, lines: r.stdout.split("\n") };
 }
 const hasLines = (lines, want) => { const i = lines.indexOf(want[0]); return i >= 0 && want.every((l, k) => lines[i + k] === l); };
-// A custom state folder as the app keeps it: sessions and snapshots in it.
-const customState = (dir) => { for (const d of ["sessions", "snapshots"]) fs.mkdirSync(path.join(dir, d), { recursive: true }); fs.writeFileSync(path.join(dir, "snapshots", "a"), "x"); };
+// A custom state folder as the app keeps it: sessions and snapshots in it, owner-only as src/paths.js makes them.
+const customState = (dir) => {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const d of ["sessions", "snapshots"]) fs.mkdirSync(path.join(dir, d), { mode: 0o700 });
+  fs.writeFileSync(path.join(dir, "snapshots", "a"), "x");
+};
+// The lines for a custom state folder outside ~/.onionskin: the folder is named as where Onionskin's files are, and only the entries
+// Onionskin made inside it are offered for deletion, never the folder itself.
 const customLines = (dir, purge, checker = true) => [
-  `  Your ${checker ? "sessions, snapshots and checker environment" : "sessions and snapshots"} are in the state folder set by ONIONSKIN_STATE_DIR, which ${purge ? "was left in place" : "--purge also leaves in place"}. You can delete this folder yourself if you no longer want it:`,
+  `  Onionskin's files are in the state folder set by ONIONSKIN_STATE_DIR, which ${purge ? "was left in place" : "--purge also leaves in place"}:`,
   `    "${dir}"`,
+  "  These are Onionskin's files and folders in it. You can delete them if you no longer want them; leave the folder itself, which may hold other things:",
+  `    "${dir}/sessions"`,
+  `    "${dir}/snapshots"`,
+  ...(checker ? [`    "${dir}/venv"`] : []),
+  "Your documents were not touched.",
 ];
+// No line ever offers the custom folder itself for deletion.
+const neverOffersFolder = (r) => assert.doesNotMatch(r.stdout, /delete this folder|delete it yourself/, r.stdout);
 
 test("D3: purge with a custom state folder outside ~/.onionskin, its path with a space, leaves it and says where the snapshots are", () => {
   const { home, venv, lines, r } = uninstallWithChecker("purge-outside", (h) => {
@@ -714,6 +730,155 @@ test("D3: uninstall without purge says where the snapshots and the checker are k
   assert.ok(outside.lines.includes(`  kept ${outside.home}/.onionskin. To delete it too, run the uninstall again with --purge.`), outside.r.stdout);
   assert.ok(hasLines(outside.lines, customLines(path.join(outside.home, "external state"), false)), outside.r.stdout);
   assert.doesNotMatch(outside.r.stdout, /your snapshots\)|outside that folder/);
+  neverOffersFolder(outside.r);
+});
+
+// v1.0.1 item 1: a custom state folder that is a shared folder (the home folder, Documents) is never offered for deletion: only the
+// entries Onionskin made in it are listed, each quoted on its own line; a person's own files and folders there are not.
+for (const purge of [false, true]) {
+  test(`1.0.1: ${purge ? "purge" : "uninstall"} with ONIONSKIN_STATE_DIR set to the home folder itself lists only Onionskin's entries in it`, () => {
+    const { home, lines, r } = uninstallWithChecker(`home-root-${purge}`, (h) => {
+      customState(h);
+      fs.writeFileSync(path.join(h, "notes.txt"), "mine");
+      fs.mkdirSync(path.join(h, "history")); // the person's own folder, with a name Onionskin also uses (theirs is not owner-only)
+      return h;
+    }, (h) => path.join(h, "venv"), purge ? ["--purge"] : []);
+    assert.ok(hasLines(lines, customLines(home, purge)), r.stdout);
+    neverOffersFolder(r);
+    assert.ok(!lines.includes(`    "${home}/history"`) && !lines.includes(`    "${home}/notes.txt"`), r.stdout);
+    assert.equal(fs.readFileSync(path.join(home, "notes.txt"), "utf8"), "mine");
+    assert.ok(fs.existsSync(path.join(home, "snapshots", "a")));
+  });
+}
+
+test("1.0.1: purge with ONIONSKIN_STATE_DIR set to Documents, which holds another file, lists only Onionskin's entries", () => {
+  const { home, lines, r } = uninstallWithChecker("documents", (h) => {
+    customState(path.join(h, "Documents"));
+    fs.writeFileSync(path.join(h, "Documents", "report.docx"), "the person's");
+    return path.join(h, "Documents");
+  }, () => null, ["--purge"]);
+  assert.ok(hasLines(lines, customLines(path.join(home, "Documents"), true, false)), r.stdout);
+  neverOffersFolder(r);
+  assert.ok(!r.stdout.includes("report.docx"), r.stdout);
+  assert.equal(fs.readFileSync(path.join(home, "Documents", "report.docx"), "utf8"), "the person's");
+});
+
+test("1.0.1: a dedicated custom state folder with a space in its path, holding nothing Onionskin made, says so and offers nothing", () => {
+  const { home, lines, r } = uninstallWithChecker("dedicated", (h) => {
+    fs.mkdirSync(path.join(h, "my state"));
+    return path.join(h, "my state");
+  }, () => null);
+  assert.ok(hasLines(lines, [
+    "  The state folder set by ONIONSKIN_STATE_DIR holds nothing Onionskin made, and --purge also leaves it in place:",
+    `    "${path.join(home, "my state")}"`,
+    "Your documents were not touched.",
+  ]), r.stdout);
+  neverOffersFolder(r);
+});
+
+// v1.0.1 item 2: a custom state folder inside a folder the installer removes (the app copies, a skill folder). Uninstall refuses and
+// changes nothing; --purge deletes it and says so; a reinstall or an upgrade refuses and changes nothing.
+const nestedPlaces = {
+  app: (h) => path.join(h, ".onionskin", "app", "9.9.9", "my state"),
+  skill: (h) => path.join(h, ".claude", "skills", "onionskin", "state"),
+};
+// A package whose `setup` replaces the skill folder, as src/setup.js does when the folder differs from the shipped one.
+function nestedPackage(name, version = "9.9.9") {
+  const src = fakePackage(name);
+  fs.writeFileSync(path.join(src, "package.json"), JSON.stringify({ version }));
+  fs.writeFileSync(path.join(src, "src", "cli.js"), `
+    const fs = require("node:fs"), path = require("node:path");
+    if (process.argv[2] === "--version") console.log(require("../package.json").version);
+    else if (process.argv[2] === "setup") {
+      const t = path.join(process.env.HOME, ".claude", "skills", "onionskin");
+      fs.rmSync(t, { recursive: true, force: true });
+      fs.mkdirSync(t, { recursive: true });
+      fs.writeFileSync(path.join(t, "SKILL.md"), "---\\nname: onionskin\\n---\\n");
+      console.log(t + ": replaced");
+    }
+  `);
+  return src;
+}
+function nestedWorld(name, where) {
+  const src = nestedPackage(`pkg-nest-${name}`);
+  const home = path.join(tmp, `home nest ${name}`);
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const state = nestedPlaces[where](home);
+  customState(state);
+  const run = (pkg, ...args) => spawnSync("/bin/sh", [path.join(pkg, "install.sh"), "--no-checker", ...args], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, ONIONSKIN_STATE_DIR: state, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  return { src, home, state, run };
+}
+const nestedLines = (verb, state, tree) => [
+  `  Not ${verb}ed: the state folder set by ONIONSKIN_STATE_DIR is inside a folder the ${verb} ${verb === "install" ? "replaces" : "deletes"}, so your sessions and snapshots would be deleted with it.`,
+  `    state folder: "${state}"`,
+  `    inside:       "${tree}"`,
+];
+const nestedTree = { app: (h) => path.join(h, ".onionskin", "app"), skill: (h) => path.join(h, ".claude", "skills", "onionskin") };
+
+for (const where of ["app", "skill"]) {
+  test(`1.0.1: uninstall with the state folder inside the ${where} folder refuses, says why and what to do, and removes nothing`, () => {
+    const { src, home, state, run } = nestedWorld(`un-${where}`, where);
+    const r = run(src, "--uninstall");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    const lines = r.stdout.split("\n");
+    assert.ok(hasLines(lines, [
+      ...nestedLines("uninstall", state, nestedTree[where](home)),
+      "  Move the state folder out of there (and set ONIONSKIN_STATE_DIR to its new place), then run the uninstall again. Or run the uninstall with --purge to delete it along with Onionskin. Nothing was removed.",
+    ]), r.stdout);
+    assert.doesNotMatch(r.stdout, /kept .*your snapshots|^ {2}removed /m);
+    assert.ok(fs.existsSync(path.join(state, "snapshots", "a")), "the snapshots are still there");
+    assert.ok(fs.existsSync(path.join(home, ".local", "bin", "onionskin")), "the launcher is still there");
+    assert.ok(fs.existsSync(path.join(home, ".onionskin", "app", "9.9.9", "src", "cli.js")), "the app copy is still there");
+  });
+
+  test(`1.0.1: uninstall --purge with the state folder inside the ${where} folder deletes it and says so`, () => {
+    const { src, home, state, run } = nestedWorld(`purge-${where}`, where);
+    const r = run(src, "--uninstall", "--purge");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const lines = r.stdout.split("\n");
+    assert.ok(hasLines(lines, [
+      `  removed ${nestedTree[where](home)}, and the state folder set by ONIONSKIN_STATE_DIR inside it, with its sessions and snapshots (--purge):`,
+      `    "${state}"`,
+    ]), r.stdout);
+    assert.equal(fs.existsSync(state), false);
+    assert.ok(lines.includes(`  removed ${home}/.onionskin`), r.stdout);
+    assert.doesNotMatch(r.stdout, /left in place|included|kept/);
+  });
+
+  for (const upgrade of [false, true]) {
+    test(`1.0.1: ${upgrade ? "an upgrade" : "a same-version reinstall"} with the state folder inside the ${where} folder refuses and changes nothing`, () => {
+      const { src, home, state, run } = nestedWorld(`re-${where}-${upgrade}`, where);
+      const pkg = upgrade ? nestedPackage(`pkg-nest-up-${where}`, "9.9.10") : src;
+      const r = run(pkg);
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      const lines = r.stdout.split("\n");
+      assert.ok(hasLines(lines, [
+        ...nestedLines("install", state, nestedTree[where](home)),
+        "  Move the state folder out of there (and set ONIONSKIN_STATE_DIR to its new place), then run the install again. Nothing was changed.",
+      ]), r.stdout);
+      assert.ok(fs.existsSync(path.join(state, "snapshots", "a")), "the snapshots are still there");
+      assert.deepEqual(fs.readdirSync(path.join(home, ".onionskin", "app")), ["9.9.9"], "no copy published or set aside");
+      assert.match(fs.readFileSync(path.join(home, ".local", "bin", "onionskin"), "utf8"), /app\/9\.9\.9\//, "the launcher is unchanged");
+    });
+  }
+}
+
+test("1.0.1: a custom state folder inside ~/.onionskin but outside the app copies does not stop a reinstall", () => {
+  const src = fakePackage("pkg-nest-ok");
+  const home = path.join(tmp, "home-nest-ok");
+  fs.mkdirSync(home);
+  assert.equal(install(src, home).status, 0);
+  const state = path.join(home, ".onionskin", "custom");
+  customState(state);
+  const r = spawnSync("/bin/sh", [path.join(src, "install.sh"), "--no-checker"], {
+    encoding: "utf8", env: { HOME: home, TMPDIR: home, ONIONSKIN_STATE_DIR: state, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` },
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /Not installed/);
+  assert.ok(fs.existsSync(path.join(state, "snapshots", "a")));
 });
 
 test("a dry run with a space in HOME prints each removal path in double quotes", () => {

@@ -66,15 +66,27 @@ export function toTextareaOffset(text, o) {
 }
 
 /**
- * The key of a keydown in the preview, as the text it types, or null when it does not swap to Edit: a shortcut (Cmd, Ctrl or Alt held),
- * composition (an IME: the person presses the Edit switch), arrows, Backspace, Delete, Tab, Escape and every other named key. Enter is "\n".
+ * The key of a keydown in the preview, as the text it types, or null when it types nothing: a shortcut (Cmd or Ctrl held), a dead key or
+ * a composition (composeKey), arrows, Backspace, Delete, Tab, Escape and every other named key. Enter is "\n". A printable key typed with
+ * Option (Alt) held is typing: on a Mac, Option-Shift-2 is the euro sign, and its `key` is that one character.
  */
 export function typedKey(e) {
-  if (!e || e.isComposing || e.keyCode === 229 || e.key === "Process" || e.key === "Dead") return null;
-  if (e.metaKey || e.ctrlKey || e.altKey) return null;
-  if (e.key === "Enter") return "\n";
+  if (!e || e.isComposing || composeKey(e)) return null;
+  if (e.metaKey || e.ctrlKey) return null;
+  if (e.key === "Enter") return e.altKey ? null : "\n";
   if (typeof e.key !== "string" || [...e.key].length !== 1) return null;
   return /[\p{Cc}\p{Cf}]/u.test(e.key) ? null : e.key;
+}
+
+/**
+ * Is a keydown in the preview a dead key (Option-e for an accent on a Mac) or the start of a composition (an IME)? It types nothing by
+ * itself: the page opens Edit at the mapped place without inserting anything and lets the browser go on, so the composition lands in the
+ * text box and the person gets the composed character. Never with Cmd or Ctrl held (shortcuts), and not for a key in the middle of a
+ * composition already going on (isComposing): that one is neither typed nor a start, so the preview stays as it is.
+ */
+export function composeKey(e) {
+  if (!e || e.metaKey || e.ctrlKey || e.isComposing) return false;
+  return e.keyCode === 229 || e.key === "Process" || e.key === "Dead";
 }
 
 /**

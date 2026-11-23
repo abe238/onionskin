@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { cspViolations, launch, makeWorld, until } from "./helpers/harness.mjs";
+import { WEBKIT, cspViolations, launch, makeWorld, until } from "./helpers/harness.mjs";
 
 const q = (id) => `[data-testid="${id}"]`;
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
@@ -676,6 +676,72 @@ describe("Markdown edit (slice 11): a kept draft's line endings; the first key i
     } finally {
       await page.close();
       await w.cleanup();
+    }
+  });
+
+  test("1.0.1: a printable key typed with Option held (the euro sign) is typed at the caret, once, with no notice, and Send writes it", async () => {
+    const { w, file } = world("option.md", "one two\n");
+    const page = await openPage(w, file);
+    try {
+      await page.evaluate(() => {
+        window.__keys = [];
+        document.addEventListener("keydown", (e) => window.__keys.push({ key: e.key, alt: e.altKey }), true);
+      });
+      await caretAt(page, "two", 0);
+      // Option-Shift-2 as Chrome receives it from a US Mac keyboard: key "€" with its text, Alt and Shift held (Playwright's own keyboard
+      // has no "€" key). The text would be inserted by the browser too unless the page takes the key: typed twice would show here.
+      if (WEBKIT) {
+        // no CDP in WebKit: the same keydown, dispatched (it carries no text the browser would insert)
+        await page.evaluate(() => document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "€", code: "Digit2", altKey: true, shiftKey: true, bubbles: true, cancelable: true })));
+      } else {
+        const cdp = await page.context().newCDPSession(page);
+        const k = { modifiers: 1 | 8, key: "€", code: "Digit2", windowsVirtualKeyCode: 50, nativeVirtualKeyCode: 50 };
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...k, text: "€", unmodifiedText: "@" });
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...k });
+        await cdp.detach();
+      }
+      assert.ok((await page.evaluate(() => window.__keys)).some((k) => k.key === "€" && k.alt), "the browser saw € with Option held");
+      await page.locator(q("md-source")).waitFor({ timeout: 5000 });
+      assert.equal(await source(page), "one €two\n", "typed once, at the caret");
+      assert.equal(await page.locator(q("md-edit-note")).count(), 0);
+      await page.keyboard.press("Escape");
+      await page.locator(q("send")).click();
+      await until(async () => fs.readFileSync(file, "utf8") !== "one two\n", "written");
+      assert.equal(fs.readFileSync(file, "utf8"), "one €two\n");
+    } finally {
+      await page.close();
+      await w.cleanup();
+    }
+  });
+
+  test("1.0.1: a dead key in the preview opens Edit focused at the caret (or on the selection) with nothing typed, so the composed character lands there once", async () => {
+    // the browser cannot press a real dead key here: the keydown is dispatched as macOS sends it for Option-e, and the composed
+    // character is then inserted as the finished composition inserts it
+    const dead = (page) => page.evaluate(() => {
+      const e = new KeyboardEvent("keydown", { key: "Dead", code: "KeyE", altKey: true, bubbles: true, cancelable: true });
+      document.activeElement.dispatchEvent(e);
+      const ta = document.querySelector('[data-testid="md-source"]');
+      // read inside the same task as the keydown: the text box must already have the focus when the composition goes on
+      return { prevented: e.defaultPrevented, focused: !!ta && document.activeElement === ta, value: ta?.value, sel: ta ? [ta.selectionStart, ta.selectionEnd] : null };
+    });
+    for (const [name, k2, after] of [["caret", null, "one étwo\n"], ["selection", 3, "one é\n"]]) {
+      const { w, file } = world(`dead-${name}.md`, "one two\n");
+      const page = await openPage(w, file);
+      try {
+        await caretAt(page, "two", 0, { k2 });
+        const r = await dead(page);
+        assert.deepEqual(r, { prevented: false, focused: true, value: "one two\n", sel: [4, k2 == null ? 4 : 7] }, name);
+        assert.equal(await page.locator(q("md-edit-note")).count(), 0, "no notice: nothing was lost");
+        await page.keyboard.insertText("é");
+        assert.equal(await source(page), after, `${name}: the composed character, once`);
+        await page.keyboard.press("Escape");
+        await page.locator(q("send")).click();
+        await until(async () => fs.readFileSync(file, "utf8") !== "one two\n", "written");
+        assert.equal(fs.readFileSync(file, "utf8"), after);
+      } finally {
+        await page.close();
+        await w.cleanup();
+      }
     }
   });
 

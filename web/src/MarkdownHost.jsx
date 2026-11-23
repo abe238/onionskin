@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { readMarkdown } from "../../src/markdown.js";
 import { caretBlock, hitOf, rectsOf, runPoint, selectionOf } from "./md-host.js";
-import { MD_OFFER_STALE, draftRefusal, draftSplice, editability, firstKey, fromTextarea, toTextarea, toTextareaOffset, typedKey } from "./md-edit.js";
+import { MD_OFFER_STALE, composeKey, draftRefusal, draftSplice, editability, firstKey, fromTextarea, toTextarea, toTextareaOffset, typedKey } from "./md-edit.js";
 import { sha256hex } from "./writein.js";
 import "./md-view.css";
 
@@ -17,9 +18,10 @@ import "./md-view.css";
  * an agent run), onDraft(text), onView(view), onHost(host | null). With a draft, Preview shows the draft read by the same reader, as a
  * version of its own (the SHA-256 of the bytes Send would write, with the file's BOM): comments made on it point at that version.
  *
- * Typing in the preview swaps to Edit: a printable key or Enter, no Cmd, Ctrl or Alt, no composition, the focus in the preview. The key
+ * Typing in the preview swaps to Edit: a printable key (Option held too) or Enter, no Cmd or Ctrl, the focus in the preview. The key
  * goes in at the exact source place of the caret, or replaces the selection's exact range, once (md-edit.js firstKey); with no exact
- * place nothing is typed and the editor opens at the start of the block, saying so.
+ * place nothing is typed and the editor opens at the start of the block, saying so. A dead key or the start of a composition opens Edit
+ * focused at the exact place with nothing typed, so the composition goes on in the text box.
  *
  * The host is what App.jsx drives for the engine formats (selection, rectsFor, hitTest, scrollTo, getViewState, setViewState) plus onPick
  * (the explicit "comment on the whole block"). `version` is the version shown, `baseVersion` the file's, `rev` the shown revision number
@@ -151,13 +153,20 @@ export function MarkdownHost({ doc, draft = null, draftId = null, draftEol = nul
     // the first key typed in the preview: Edit opens with it typed at its exact place, once (or not typed, with the sentence)
     const onKey = (e) => {
       const k = typedKey(e);
-      if (k == null) return;
-      e.preventDefault();
+      // a dead key or the start of a composition: nothing is typed here; Edit opens focused at the mapped place, in this same keydown,
+      // and the browser goes on, so the composition lands in the text box (md-edit.js composeKey)
+      const compose = k == null && composeKey(e);
+      if (k == null && !compose) return;
+      if (!compose) e.preventDefault();
       e.stopPropagation();
       const can = editRef.current;
-      if (!can.ok) return setNote({ reason: can.why, key: true });
+      if (!can.ok) {
+        if (compose) e.preventDefault();
+        return setNote({ reason: can.why, key: true });
+      }
       // a draft the preview cannot show: Edit opens on it as it is, and nothing is typed over it
       if (shown.error) {
+        if (compose) e.preventDefault();
         setEditNote(shown.error);
         return cb.current.onView("edit");
       }
@@ -175,9 +184,19 @@ export function MarkdownHost({ doc, draft = null, draftId = null, draftEol = nul
           if (b) at = { start: { run: tree.runs.findIndex((x) => x.block === b.id) }, exact: false, blockFrom: b.from };
         }
       }
-      const out = firstKey(tree, at ?? null, k, eol);
+      // a composition types nothing: firstKey only maps the place (its empty text is never spliced in, so a selection is not deleted)
+      const out = firstKey(tree, at ?? null, compose ? "" : k, eol);
       if (at?.blockFrom != null && out.reason) out.caret = at.blockFrom;
       const text = shown.text;
+      if (compose && !out.reason) {
+        // the text box opens with the mapped caret or selection, as a text box holds it; the composed character replaces a selection
+        // there only when the person finishes the composition, like typing in any text box
+        caretRef.current = [toTextareaOffset(text, out.from), toTextareaOffset(text, out.to)];
+        setEditNote(null);
+        flushSync(() => cb.current.onView("edit")); // the text box exists and has the focus before this keydown ends
+        return;
+      }
+      if (compose) e.preventDefault(); // no exact place: the dead key is not typed, and the sentence says so
       if (out.reason) {
         caretRef.current = toTextareaOffset(text, out.caret);
         setEditNote(out.reason);
@@ -264,8 +283,9 @@ export function MarkdownHost({ doc, draft = null, draftId = null, draftEol = nul
     if (!ta) return;
     ta.focus({ preventScroll: true });
     if (caretRef.current != null) {
-      const c = Math.min(caretRef.current, ta.value.length);
-      ta.setSelectionRange(c, c);
+      const [a, b] = Array.isArray(caretRef.current) ? caretRef.current : [caretRef.current, caretRef.current];
+      const c = Math.min(a, ta.value.length);
+      ta.setSelectionRange(c, Math.min(b, ta.value.length));
       caretRef.current = null;
       // the caret's line in view: the textarea scrolls to it
       const lines = ta.value.slice(0, c).split("\n").length;

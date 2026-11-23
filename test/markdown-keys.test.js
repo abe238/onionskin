@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { readMarkdown } from "../src/markdown.js";
 import * as editabilityStrings from "../web/src/md-edit.js";
 import { MD_MIXED_EOL, MD_NOT_EXACT, draftSplice, editability, firstKey, fromTextarea, toTextarea, toTextareaOffset, typedKey } from "../web/src/md-edit.js";
+// composeKey is new in 1.0.1: read it from the module so this file still loads (and fails by assertion) on a version without it
+const composeKey = (e) => (editabilityStrings.composeKey ?? (() => undefined))(e);
 
 /** The source after the first key at the displayed offset `at` of the first run that shows `needle` (offset inside that run's display). */
 function typeAt(text, needle, k, key, { nth = 0 } = {}) {
@@ -50,13 +52,33 @@ test("b. a selection replaces exactly its range: the last ana of banana; a selec
 });
 
 test("c. no swap for shortcuts, arrows, Backspace, Delete, Tab, Escape and during composition; printable keys and Enter swap", () => {
-  const no = [{ key: "c", metaKey: true }, { key: "a", ctrlKey: true }, { key: "e", altKey: true }, { key: "ArrowLeft" }, { key: "Backspace" }, { key: "Delete" }, { key: "Tab" }, { key: "Escape" }, { key: "a", isComposing: true }, { key: "Process", keyCode: 229 }, { key: "Dead" }, { key: "F5" }];
+  const no = [{ key: "c", metaKey: true }, { key: "a", ctrlKey: true }, { key: "€", altKey: true, metaKey: true }, { key: "a", altKey: true, ctrlKey: true }, { key: "ArrowLeft" }, { key: "ArrowLeft", altKey: true }, { key: "Backspace" }, { key: "Delete" }, { key: "Tab" }, { key: "Escape" }, { key: "a", isComposing: true }, { key: "Process", keyCode: 229 }, { key: "Dead" }, { key: "Dead", altKey: true }, { key: "F5" }];
   for (const e of no) assert.equal(typedKey(e), null, JSON.stringify(e));
   assert.equal(typedKey({ key: "a" }), "a");
   assert.equal(typedKey({ key: "A", shiftKey: true }), "A");
   assert.equal(typedKey({ key: " " }), " ");
   assert.equal(typedKey({ key: "😀" }), "😀");
   assert.equal(typedKey({ key: "Enter" }), "\n");
+});
+
+test("1.0.1 a printable key typed with Option (Alt) held is typing: the euro sign (Option-Shift-2 on a US Mac keyboard), Option-e on a layout that gives a letter", () => {
+  assert.equal(typedKey({ key: "€", altKey: true, shiftKey: true }), "€");
+  assert.equal(typedKey({ key: "e", altKey: true }), "e");
+  assert.equal(typedKey({ key: "µ", altKey: true }), "µ");
+  // never with Cmd or Ctrl, which are shortcuts
+  assert.equal(typedKey({ key: "€", altKey: true, ctrlKey: true }), null);
+  assert.equal(typedKey({ key: "m", altKey: true, metaKey: true }), null);
+  assert.equal(composeKey({ key: "€", altKey: true }), false, "a typed key is not a composition");
+});
+
+test("1.0.1 a dead key or the start of a composition is not typed but opens Edit (composeKey), so the composition lands in the text box", () => {
+  for (const e of [{ key: "Dead" }, { key: "Dead", altKey: true }, { key: "Dead", altKey: true, shiftKey: true }, { key: "Process", keyCode: 229 }, { key: "Unidentified", keyCode: 229 }]) {
+    assert.equal(typedKey(e), null, JSON.stringify(e));
+    assert.equal(composeKey(e), true, JSON.stringify(e));
+  }
+  // a key in the middle of a composition already going on is neither typed nor a start (as before 1.0.1: the preview stays)
+  for (const e of [{ key: "Dead", metaKey: true }, { key: "Dead", ctrlKey: true }, { key: "a", isComposing: true }, { key: "Dead", isComposing: true }, { key: "a" }, { key: "ArrowLeft" }, null]) assert.equal(composeKey(e), false, JSON.stringify(e));
+  assert.equal(typedKey({ key: "a", isComposing: true }), null);
 });
 
 test("d. the textarea round trip keeps a CRLF file's bytes; the splice of one edited word leaves everything else identical", () => {

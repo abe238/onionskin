@@ -232,31 +232,94 @@ carry_guide() {
 
 [ "$DRY" = 1 ] && say "Dry run: nothing will be changed."
 
+# By real place (a link, or a linked folder, can put a folder somewhere else): `under A B` is true when A is B or inside it.
+under() { [ -n "$1" ] && [ -n "$2" ] && case "$1/" in "$2"/*) true ;; *) false ;; esac; }
+real_dir() { [ -d "$1" ] && ( cd "$1" 2>/dev/null && pwd -P ); }
+# The state folder set by ONIONSKIN_STATE_DIR, at its real place (empty when unset or missing). CHECKER_STATE is that folder, made
+# absolute the way src/paths.js does; its real place also settles a trailing slash.
+CUSTOM_REAL=""
+[ -n "${ONIONSKIN_STATE_DIR:-}" ] && CUSTOM_REAL=$(real_dir "$CHECKER_STATE")
+# A custom state folder inside a folder this run removes or replaces (the app copies, a skill folder) would go with it, sessions and
+# snapshots included. Checked before anything changes: the run stops with what to do, unless an uninstall with --purge was asked for.
+# $1: "install" or "uninstall"; then the folders this run removes. Sets NESTED_IN to the folder that holds it (empty: none).
+NESTED_IN=""
+nested_refuse() {
+  verb=$1; shift
+  [ -n "$CUSTOM_REAL" ] || return 0
+  for t in "$@"; do
+    t_real=$(real_dir "$t") || continue
+    under "$CUSTOM_REAL" "$t_real" || continue
+    NESTED_IN=$t
+    [ "$verb" = uninstall ] && [ "$PURGE" = 1 ] && return 0
+    if [ "$verb" = install ]; then does="replaces"; else does="deletes"; fi
+    say "  Not ${verb}ed: the state folder set by ONIONSKIN_STATE_DIR is inside a folder the $verb $does, so your sessions and snapshots would be deleted with it."
+    say "    state folder: \"$CUSTOM_REAL\""
+    say "    inside:       \"$t\""
+    if [ "$verb" = install ]; then
+      say "  Move the state folder out of there (and set ONIONSKIN_STATE_DIR to its new place), then run the install again. Nothing was changed."
+    else
+      say "  Move the state folder out of there (and set ONIONSKIN_STATE_DIR to its new place), then run the uninstall again. Or run the uninstall with --purge to delete it along with Onionskin. Nothing was removed."
+    fi
+    exit 1
+  done
+}
+# Removes folder $1 (the app copies or a skill folder); with the custom state folder inside it (only with --purge), says that it went too.
+remove_tree() {
+  do_ rm -rf "$1"
+  if [ -n "$NESTED_IN" ] && [ "$1" = "$NESTED_IN" ]; then
+    say "  removed $1, and the state folder set by ONIONSKIN_STATE_DIR inside it, with its sessions and snapshots (--purge):"
+    say "    \"$CUSTOM_REAL\""
+    NESTED_GONE=1
+  else
+    say "  removed $1"
+  fi
+}
+NESTED_GONE=0
+# What Onionskin itself makes in its state folder (src/: paths.js sub() and the files beside it), in the order they are listed. Ceiling: in a
+# shared folder (the home folder, Documents) a person's own entry can have one of these names, so an entry counts only when it is not a link
+# and is private to its owner, as Onionskin makes everything there (0700 folders, 0600 files); the checker environment counts by the
+# pyvenv.cfg that python -m venv writes. The upgrade path is a list of what was made, kept in the state folder.
+STATE_ENTRIES="sessions snapshots history agents backgrounds leases holders tickets settings.json style.json stamps.json voice-guide.json voice-draft.json voice-evidence.json rewriter.json server.json start.lock s.sock"
+ours_in() { # prints each entry Onionskin made in folder $1, quoted on its own line
+  for n in $STATE_ENTRIES; do
+    p="$1/$n"
+    { [ -e "$p" ] && [ ! -L "$p" ]; } || continue
+    case "$(ls -ld "$p" 2>/dev/null | cut -c5-10)" in ------) say "    \"$p\"" ;; esac
+  done
+  p="$1/venv"
+  if [ -d "$p" ] && [ ! -L "$p" ] && [ -f "$p/pyvenv.cfg" ]; then say "    \"$p\""; fi
+}
+
 # ---- uninstall ----------------------------------------------------------------------------------------------------
 if [ "$UNINSTALL" = 1 ]; then
   say "Uninstalling Onionskin"
+  # the folders this uninstall removes: the app copies and each skill folder that is ours
+  set -- "$APPS"
+  for s in "$HOME_DIR/.claude/skills/onionskin" "$HOME_DIR/.agents/skills/onionskin"; do is_our_skill "$s" && set -- "$@" "$s"; done
+  nested_refuse uninstall "$@"
   take_lock
+  # By real place (a link, or a linked folder, can put either outside $STATE): the checker environment (empty when there is none).
+  # A custom folder outside $STATE is never removed: it may hold other things. Every path left behind is printed quoted on its own line,
+  # never as a command to paste.
+  CHECKER_REAL=$(real_dir "$CHECKER_STATE/venv")
+  STATE_REAL=$(real_dir "$STATE")
+  CHECKER_IN=0; under "$CHECKER_REAL" "$STATE_REAL" && CHECKER_IN=1
+  CUSTOM_OUT=0; [ -n "$CUSTOM_REAL" ] && ! under "$CUSTOM_REAL" "$STATE_REAL" && CUSTOM_OUT=1
+  CHECKER_IN_CUSTOM=0; [ "$CUSTOM_OUT" = 1 ] && under "$CHECKER_REAL" "$CUSTOM_REAL" && CHECKER_IN_CUSTOM=1
   if is_our_launcher && command -v node >/dev/null 2>&1 && [ "$DRY" = 0 ]; then "$LAUNCHER" stop >/dev/null 2>&1 || true; fi
   check_lock
   if is_our_launcher; then do_ rm -f "$LAUNCHER"; say "  removed $LAUNCHER"; elif [ -e "$LAUNCHER" ]; then say "  left alone: $LAUNCHER (not made by this installer)"; else say "  not present: $LAUNCHER"; fi
   check_lock
-  if [ -d "$APPS" ]; then do_ rm -rf "$APPS"; say "  removed $APPS"; else say "  not present: $APPS"; fi
+  if [ -d "$APPS" ]; then remove_tree "$APPS"; else say "  not present: $APPS"; fi
   for s in "$HOME_DIR/.claude/skills/onionskin" "$HOME_DIR/.agents/skills/onionskin"; do
     check_lock
-    if is_our_skill "$s"; then do_ rm -rf "$s"; say "  removed $s"; elif [ -e "$s" ]; then say "  left alone: $s (not an onionskin skill folder)"; else say "  not present: $s"; fi
+    if is_our_skill "$s"; then remove_tree "$s"; elif [ -e "$s" ]; then say "  left alone: $s (not an onionskin skill folder)"; else say "  not present: $s"; fi
   done
-  # By real place (a link, or a linked folder, can put either outside $STATE): the checker environment (empty when there is none),
-  # and the state folder set by ONIONSKIN_STATE_DIR (empty when unset or missing). CHECKER_STATE is that folder, made absolute the way
-  # src/paths.js does; its real place also settles a trailing slash. A custom folder outside $STATE is never removed: it may hold other
-  # things. Every path left behind is printed quoted on its own line, never as a command to paste.
-  under() { [ -n "$1" ] && [ -n "$2" ] && case "$1/" in "$2"/*) true ;; *) false ;; esac; }
-  CHECKER_REAL=$( [ -d "$CHECKER_STATE/venv" ] && cd "$CHECKER_STATE/venv" 2>/dev/null && pwd -P )
-  STATE_REAL=$( [ -d "$STATE" ] && cd "$STATE" 2>/dev/null && pwd -P )
-  CUSTOM_REAL=""
-  [ -n "${ONIONSKIN_STATE_DIR:-}" ] && CUSTOM_REAL=$( [ -d "$CHECKER_STATE" ] && cd "$CHECKER_STATE" 2>/dev/null && pwd -P )
-  CHECKER_IN=0; under "$CHECKER_REAL" "$STATE_REAL" && CHECKER_IN=1
-  CUSTOM_OUT=0; [ -n "$CUSTOM_REAL" ] && ! under "$CUSTOM_REAL" "$STATE_REAL" && CUSTOM_OUT=1
-  CHECKER_IN_CUSTOM=0; [ "$CUSTOM_OUT" = 1 ] && under "$CHECKER_REAL" "$CUSTOM_REAL" && CHECKER_IN_CUSTOM=1
+  # The custom state folder went with the folder that held it (--purge, said above): nothing of it is left to name.
+  if [ "$NESTED_GONE" = 1 ]; then
+    under "$CHECKER_REAL" "$CUSTOM_REAL" && CHECKER_REAL=""
+    CUSTOM_REAL=""; CUSTOM_OUT=0; CHECKER_IN_CUSTOM=0
+  fi
   if [ "$PURGE" = 1 ]; then
     if [ "$STATE_CREATED" = 0 ] && [ -d "$STATE" ]; then
       check_lock
@@ -266,7 +329,7 @@ if [ "$UNINSTALL" = 1 ]; then
         if [ -n "$CHECKER_REAL" ]; then if [ -e "$CHECKER_REAL" ]; then CHECKER_IN=0; else CHECKER_IN=1; fi; fi
         if [ -n "$CUSTOM_REAL" ]; then if [ -e "$CUSTOM_REAL" ]; then CUSTOM_OUT=1; else CUSTOM_OUT=0; fi; fi
       fi
-      if [ "$CUSTOM_OUT" = 1 ]; then
+      if [ "$CUSTOM_OUT" = 1 ] || [ "$NESTED_GONE" = 1 ]; then
         say "  removed $STATE"
       elif [ "$CHECKER_IN" = 1 ]; then
         say "  removed $STATE (snapshots and checker environment included)"
@@ -285,11 +348,21 @@ if [ "$UNINSTALL" = 1 ]; then
       say "  kept $STATE (your snapshots). To delete it too, run the uninstall again with --purge."
     fi
   fi
+  # A custom state folder may be a shared one (the home folder, Documents): it is named as where Onionskin's files are, and only the
+  # entries Onionskin made in it are offered for deletion, never the folder itself.
   if [ "$CUSTOM_OUT" = 1 ]; then
-    WHAT="sessions and snapshots"; [ "$CHECKER_IN_CUSTOM" = 1 ] && WHAT="sessions, snapshots and checker environment"
-    if [ "$PURGE" = 1 ]; then LEFT="was left in place"; else LEFT="--purge also leaves in place"; fi
-    say "  Your $WHAT are in the state folder set by ONIONSKIN_STATE_DIR, which $LEFT. You can delete this folder yourself if you no longer want it:"
-    say "    \"$CUSTOM_REAL\""
+    OURS=$(ours_in "$CUSTOM_REAL")
+    if [ -n "$OURS" ]; then
+      if [ "$PURGE" = 1 ]; then LEFT="was left in place"; else LEFT="--purge also leaves in place"; fi
+      say "  Onionskin's files are in the state folder set by ONIONSKIN_STATE_DIR, which $LEFT:"
+      say "    \"$CUSTOM_REAL\""
+      say "  These are Onionskin's files and folders in it. You can delete them if you no longer want them; leave the folder itself, which may hold other things:"
+      say "$OURS"
+    else
+      if [ "$PURGE" = 1 ]; then LEFT="was left in place"; else LEFT="--purge also leaves it in place"; fi
+      say "  The state folder set by ONIONSKIN_STATE_DIR holds nothing Onionskin made, and $LEFT:"
+      say "    \"$CUSTOM_REAL\""
+    fi
   fi
   if [ -n "$CHECKER_REAL" ] && [ "$CHECKER_IN" = 0 ] && [ "$CHECKER_IN_CUSTOM" = 0 ]; then
     if [ "$PURGE" = 1 ]; then
@@ -351,6 +424,8 @@ if { [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; } && ! is_our_launcher; then
   say "  Move it away, or run the app directly: node $SRC/src/cli.js"
   exit 1
 fi
+# an install removes the other app copies (and sets aside the one of this version), and onionskin setup replaces a skill folder that differs
+nested_refuse install "$APPS" "$HOME_DIR/.claude/skills/onionskin" "$HOME_DIR/.agents/skills/onionskin"
 take_lock
 # A server left running by the copy that is about to be replaced would keep the old code in memory. Stop it: open sessions are kept
 # on disk and the server starts again on the next command.

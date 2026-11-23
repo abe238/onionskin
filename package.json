@@ -1,6 +1,6 @@
 {
   "name": "onionskin-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Edit Word, Excel, PowerPoint, HTML and Markdown files in the browser and send the batch to a coding agent.",
   "type": "module",
   "bin": {
