@@ -1,10 +1,10 @@
 # Onionskin
 
-> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Version 1.0.1.
+> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT).
 
-Status: Onionskin 1.0 is available now. Open source under the MIT license.
+Status: Onionskin 1.0 is available now. Open source under the MIT license. Version 1.0.1.
 
-Type onionskin report.docx in a terminal, or tell Claude Code or Codex: open report.docx in Onionskin. The file opens in a browser editor with a review panel. Edit it, comment on a selection, cell, range, shape or slide, drop numbered pins, write one overall note, then press Send. The agent changes the real file, and the page reloads in place and keeps your position.
+Type onionskin report.docx in a terminal, or tell Claude Code or Codex: open report.docx in Onionskin. Edit the file, comment on anything in it, and press Send: your agent changes the real file, and the page updates in place.
 
 Install for AI coding agents. Install steps for AI coding agents.
 
@@ -19,7 +19,7 @@ Install for AI coding agents. Install steps for AI coding agents.
 
 ## Project
 
-- [Try-it demo](https://onionskin.abediaz.ai/try/): A recorded agent session replayed in the browser, no install
+- [Demo](https://onionskin.abediaz.ai/try/): A 30 second recording of the real editor on a Markdown file, no install
 - [GitHub repository](https://github.com/abe238/onionskin): Source code under the MIT license
 - [abe238](https://abediaz.com): Author's website
 

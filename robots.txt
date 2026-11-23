@@ -1,5 +1,5 @@
 # Onionskin: search engines and AI crawlers and agents are welcome.
-# Tokens below are the ones each vendor documents; see AGENT-SURFACES.md for sources.
+# Tokens below are the ones each vendor documents.
 
 User-agent: Googlebot
 User-agent: Google-Extended
