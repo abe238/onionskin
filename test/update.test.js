@@ -9,7 +9,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { NPM_COMMANDS, baseUrlOk, compareVersions, detectRoute, fetchLatest, parseVersionText, runGetShDefault, updateCommand, workAtRisk } from "../src/update.js";
+import { HOMEBREW_COMMANDS, NPM_COMMANDS, baseUrlOk, compareVersions, detectRoute, fetchLatest, parseVersionText, runGetShDefault, updateCommand, workAtRisk } from "../src/update.js";
 import { openWork } from "../src/local.js";
 import { tmpdir } from "./helpers/zipbuild.js";
 
@@ -31,6 +31,9 @@ test("route: the installer's folder, an npm install, a source checkout (a .git f
   fs.symlinkSync(home, path.join(root, "home-link"));
   assert.equal(detectRoute({ appRoot: path.join(root, "home-link", ".onionskin", "app", "0.0.3"), home: path.join(root, "home-link") }).route, "installer");
   assert.equal(detectRoute({ appRoot: mk("prefix", "lib", "node_modules", "onionskin-cli"), home }).route, "npm");
+  // a Homebrew keg holds an npm-shaped folder under Cellar/<formula>/<version>/libexec: Homebrew owns its updates
+  assert.equal(detectRoute({ appRoot: mk("brew", "Cellar", "onionskin", "1.0.3", "libexec", "lib", "node_modules", "onionskin-cli"), home }).route, "homebrew");
+  assert.equal(detectRoute({ appRoot: mk("Cellar", "lib", "node_modules", "onionskin-cli"), home }).route, "npm", "a folder that is only named Cellar is still npm");
   const src = mk("checkout");
   fs.writeFileSync(path.join(src, "package.json"), "{}");
   fs.writeFileSync(path.join(src, ".git"), "gitdir: elsewhere\n");
@@ -136,7 +139,7 @@ test("fetchLatest reads only the first line and names the URL it asked", () => {
 /** updateCommand with every acting part recorded instead of run. */
 function harness({ route = "installer", version = "0.0.3", latest = { version: "0.0.4" }, healthy = false, work = { status: 200, body: { sessions: 0, open_sessions: 0, unsent_edits: 0, draft_comments: 0, batches: 0 } }, getSh = 0, after = "0.0.4" } = {}) {
   const home = mk(`hh${Math.random().toString(36).slice(2, 8)}`);
-  const appRoot = route === "installer" ? mk(path.relative(root, home), ".onionskin", "app", version) : route === "npm" ? mk(path.relative(root, home), "prefix", "lib", "node_modules", "onionskin-cli") : mk(path.relative(root, home), "loose", "onionskin");
+  const appRoot = route === "installer" ? mk(path.relative(root, home), ".onionskin", "app", version) : route === "npm" ? mk(path.relative(root, home), "prefix", "lib", "node_modules", "onionskin-cli") : route === "homebrew" ? mk(path.relative(root, home), "brew", "Cellar", "onionskin", version, "libexec", "lib", "node_modules", "onionskin-cli") : mk(path.relative(root, home), "loose", "onionskin");
   const calls = [];
   const lines = [];
   const d = {
@@ -243,6 +246,16 @@ test("update on the installer copy: runs get.sh from the base URL, prints old an
   env.d.env = { ONIONSKIN_BASE_URL: "file:///somewhere/rel" };
   await updateCommand([], env.d);
   assert.deepEqual(env.calls[1], ["get.sh", "file:///somewhere/rel"], "ONIONSKIN_BASE_URL is the release folder");
+});
+
+test("update on a Homebrew copy never uses the network and never updates itself: it names the two commands, with and without --check, --yes or --force", async () => {
+  for (const args of [[], ["--check"], ["--yes"], ["--force"]]) {
+    const h = harness({ route: "homebrew" });
+    assert.equal(await updateCommand(args, h.d), 0, h.out());
+    assert.deepEqual(h.lines, ["This copy: Onionskin 0.0.3", "This copy was installed with Homebrew, which manages its updates. To update it, run these two commands:", ...HOMEBREW_COMMANDS.map((c) => `  ${c}`), "Nothing was changed."]);
+    assert.deepEqual(h.calls, [], "no fetch, no stop, nothing run");
+  }
+  assert.deepEqual(HOMEBREW_COMMANDS, ["brew upgrade onionskin", "onionskin setup --force"]);
 });
 
 test("update on an npm copy prints the README's two commands and runs nothing; --yes runs them; a source checkout or an unknown copy changes nothing", async () => {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3 (2026-11-23)
+
+A small release for copies installed with Homebrew.
+
+### Changed
+- `onionskin update` on a copy installed with Homebrew now prints the two commands to run, `brew upgrade onionskin` and then `onionskin setup --force`, and changes nothing. Homebrew manages that copy's updates, so Onionskin does not check for a release or update itself there. Every other kind of install updates as before.
+
+### Known issues
+- Everything listed under Known issues for 1.0.1 still holds.
+
 ## 1.0.2 (2026-11-22)
 
 A small release for one thing found after 1.0.1.

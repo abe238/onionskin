@@ -14,6 +14,7 @@ const BIN = PRODUCT.bin;
 export const DEFAULT_BASE_URL = "https://github.com/abe238/onionskin/releases/latest/download";
 export const VERSION_FILE = "version.txt";
 export const NPM_COMMANDS = ["npm install -g onionskin-cli", `${BIN} setup --force`]; // README "### Stay up to date", word for word
+export const HOMEBREW_COMMANDS = [`brew upgrade ${BIN}`, `${BIN} setup --force`]; // Homebrew owns a keg's updates: this command never updates one itself
 const CURL = ["-fsSL", "--connect-timeout", "20", "--max-time", "30", "--proto-redir", "=https"]; // get.sh's own flags, a shorter time limit
 
 /**
@@ -104,13 +105,19 @@ const real = (p) => {
 
 /**
  * How the copy at `appRoot` was installed: "source" (a .git file or folder beside package.json; a worktree has a .git file), "installer"
- * (~/.onionskin/app/<version>/, what install.sh makes), "npm" (…/node_modules/onionskin-cli) or "unknown" (an unzipped folder run directly).
+ * (~/.onionskin/app/<version>/, what install.sh makes), "homebrew" (an npm-shaped folder inside a Homebrew keg,
+ * …/Cellar/<formula>/<version>/libexec/lib/node_modules/onionskin-cli), "npm" (…/node_modules/onionskin-cli) or "unknown" (an unzipped folder run directly).
  */
 export function detectRoute({ appRoot, home }) {
   const root = real(appRoot);
   if (fs.existsSync(path.join(root, ".git")) && fs.existsSync(path.join(root, "package.json"))) return { route: "source", root };
   if (path.dirname(root) === path.join(real(home), PRODUCT.stateDirName, "app")) return { route: "installer", root };
-  if (path.basename(root) === "onionskin-cli" && path.basename(path.dirname(root)) === "node_modules") return { route: "npm", root };
+  if (path.basename(root) === "onionskin-cli" && path.basename(path.dirname(root)) === "node_modules") {
+    const parts = root.split(path.sep);
+    const cellar = parts.lastIndexOf("Cellar");
+    if (cellar >= 0 && parts[cellar + 3] === "libexec") return { route: "homebrew", root };
+    return { route: "npm", root };
+  }
   return { route: "unknown", root };
 }
 
@@ -177,6 +184,14 @@ export async function updateCommand(args, d) {
     return 1;
   }
   const { route, root } = detectRoute({ appRoot: d.appRoot, home });
+  if (route === "homebrew") {
+    // before the version check on purpose: Homebrew's formula is the version that matters here, and this copy must not update itself
+    say(`This copy: ${PRODUCT.name} ${d.version}`);
+    say("This copy was installed with Homebrew, which manages its updates. To update it, run these two commands:");
+    for (const c of HOMEBREW_COMMANDS) say(`  ${c}`);
+    say("Nothing was changed.");
+    return 0;
+  }
   const latest = (d.fetchLatest || fetchLatest)(base);
   const cmp = latest.version ? compareVersions(d.version, latest.version) : null;
 
