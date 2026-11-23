@@ -29,7 +29,7 @@ That is the whole install, and the way we recommend. Your agent does the rest an
 
 ### Other ways to install
 
-Pick one. The Terminal, npm and zip routes install the app and the skill.
+Pick one. The Terminal, Homebrew, npm and zip routes install the app and the skill.
 
 To open Terminal: press Command-Space, type `Terminal`, then press Return.
 
@@ -40,6 +40,20 @@ To open Terminal: press Command-Space, type `Terminal`, then press Return.
    ```sh
    RELEASE=https://github.com/abe238/onionskin/releases/latest/download
    curl -fsSL --proto "=https" --proto-redir "=https" "$RELEASE/get.sh" | ONIONSKIN_BASE_URL="$RELEASE" sh
+   ```
+
+**Homebrew** (if you already use Homebrew)
+
+1. In Terminal, run:
+
+   ```sh
+   brew install abe238/tap/onionskin
+   ```
+
+2. In Terminal, run:
+
+   ```sh
+   onionskin setup
    ```
 
 **npm** (if you already use npm)
@@ -125,6 +139,7 @@ If a file is open in Onionskin in a browser tab (or its tab was open in the last
 | How you installed | To update | Automatic? |
 | --- | --- | --- |
 | Pasted sentence, Terminal or zip | `onionskin update`. It downloads the latest release with the same checked download as the install. | No |
+| Homebrew | `brew upgrade onionskin`, then `onionskin setup --force` (this replaces the older skill folders). `onionskin update` prints these two commands and changes nothing, because Homebrew manages that copy. | No |
 | npm | `onionskin update` prints two commands: `npm install -g onionskin-cli`, then `onionskin setup --force` (this replaces the older skill folders). `onionskin update --yes` runs them for you. | No |
 | Claude Code plugin | Skill: turn on auto-update (step 3 above), or run `claude plugin marketplace update onionskin`, then `claude plugin update onionskin@onionskin`, then restart Claude Code. App: `onionskin update`. | Skill: yes, once you turn on auto-update. App: no |
 | Codex plugin | Skill: `codex plugin marketplace upgrade onionskin`. App: `onionskin update`. | Manual |
@@ -134,6 +149,7 @@ Onionskin never checks for updates by itself, so nothing leaves your Mac unless 
 ### Uninstall
 
 - Terminal or zip install: `sh ~/.onionskin/app/*/install.sh --uninstall`. This keeps your snapshots in `~/.onionskin`. To delete those too, add `--purge`.
+- Homebrew: `onionskin setup --uninstall`, then `brew uninstall onionskin`.
 - npm: `onionskin setup --uninstall`, then `npm uninstall -g onionskin-cli`.
 - Claude Code plugin: `claude plugin uninstall onionskin@onionskin`.
 - Codex plugin: `codex plugin remove onionskin@onionskin`.
