@@ -113,7 +113,7 @@ Both open as a view where nothing in the file runs and nothing loads from the in
 
 ### What does it need, and how do I update it?
 
-Claude Code or Codex already installed: Onionskin is for people who already use one of them. macOS only so far, because it is the only platform tested, and Node.js 22 or newer. There is no Windows or Linux version and no real-time collaboration. Quick fixes also need macOS 26 or later, Apple silicon and Apple Intelligence turned on. If something is off, run onionskin doctor to check the install. Onionskin is also on npm: run npm install -g onionskin-cli, then onionskin setup. To update later, tell your agent "update Onionskin" or run onionskin update.
+Claude Code or Codex already installed: Onionskin is for people who already use one of them. macOS only so far, because it is the only platform tested, and Node.js 22 or newer. There is no Windows or Linux version and no real-time collaboration. Quick fixes also need macOS 26 or later, Apple silicon and Apple Intelligence turned on. If something is off, run onionskin doctor to check the install. Onionskin is also on Homebrew and npm: run brew install abe238/tap/onionskin or npm install -g onionskin-cli, then onionskin setup. To update later, tell your agent "update Onionskin" or run onionskin update.
 
 ### Can the agent add table rows or slides? What about charts?
 
