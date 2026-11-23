@@ -1,6 +1,6 @@
 # Onionskin
 
-> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Version 1.0.0.
+> Review and edit Word, Excel, PowerPoint, HTML and Markdown files with Claude Code or Codex. Comment in a browser editor on your computer, press Send, and the agent changes the real file. Open source (MIT). Version 1.0.1.
 
 **Status:** Onionskin 1.0 is available now. Open source under the MIT license.
 
@@ -107,7 +107,7 @@ Your coding agent works the way it already does. Whatever it normally sends to i
 
 ### Is Onionskin released?
 
-Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is version 1.0.0. To update later, tell your agent "update Onionskin" or run onionskin update.
+Yes. The code is public on GitHub under the MIT license. Install it by pasting the sentence in the Install block into Claude Code or Codex. It is also on npm: run npm install -g onionskin-cli, then onionskin setup. This is version 1.0.1. To update later, tell your agent "update Onionskin" or run onionskin update.
 
 ### Can I try it without installing anything?
 
