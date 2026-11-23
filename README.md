@@ -217,7 +217,7 @@ Limits: 1 MB and 20,000 lines, UTF-8 only. Typing works in files with LF or CRLF
 - Claude Code or Codex, already installed and signed in. The terminal start needs Claude Code; with Codex, you start from inside it.
 - For quick fixes only: macOS 26 or later, Apple silicon and Apple Intelligence turned on. Without it, grammar fixes go to your agent.
 
-Limits: macOS only so far. This is version 1.0.1 and has been tested by one person. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes, 10 MB of HTML or 1 MB of Markdown: the full list is in [Size limits](https://github.com/abe238/onionskin/blob/main/docs/GUIDE.md#size-limits).
+Limits: macOS only so far. No Windows, no Linux, no real-time collaboration. Files up to about 1,600 Word pages, 1,000,000 Excel cells, 50,000 PowerPoint shapes, 10 MB of HTML or 1 MB of Markdown: the full list is in [Size limits](https://github.com/abe238/onionskin/blob/main/docs/GUIDE.md#size-limits).
 
 ## Privacy
 

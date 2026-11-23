@@ -12,14 +12,16 @@ import { python, ENGINE_SAMPLES, CORPUS, skipUnless, haveSamples, haveCorpus, ha
 export { python, ENGINE_SAMPLES, CORPUS, skipUnless, haveSamples, haveCorpus, havePython, VENV_HINT };
 
 /** A throwaway world: state dir (short path, unix socket limit), documents dir, env for the CLI/server. */
-export function makeWorld(extraEnv = {}) {
+export function makeWorld(extraEnv = {}, { fixtures = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "da-"));
   const state = path.join(root, "st");
   const docs = path.join(root, "docs");
   fs.mkdirSync(docs);
   const env = { ...process.env, ONIONSKIN_STATE_DIR: state, ONIONSKIN_TICK_MS: "150", ONIONSKIN_LEASE_MS: "600000", ...extraEnv };
-  if (!havePython()) throw new Error(`the E2E fixtures need the repo virtualenv (${python} is missing). Create it: ${VENV_HINT}`);
-  execFileSync(python, [path.join(repo, "scripts", "make-fixtures.py"), docs]);
+  if (fixtures) {
+    if (!havePython()) throw new Error(`the E2E fixtures need the repo virtualenv (${python} is missing). Create it: ${VENV_HINT}`);
+    execFileSync(python, [path.join(repo, "scripts", "make-fixtures.py"), docs]);
+  } // fixtures: false (the site media script writes its own Markdown and HTML files and needs no Python)
   const spawned = []; // CLI children of this world, ended at cleanup
   const running = new Set(); // world.cli() children still running: a poll among them would start the server again after `stop`
   const world = {

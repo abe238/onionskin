@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.2 (2026-11-22)
+
+A small release for one thing found after 1.0.1.
+
+### Fixed
+- Markdown: in the dark theme the preview was unreadable. Its page kept a light background while the text took the dark theme's light color. The preview page now follows the theme, like the Edit box already did. The light theme looks the same as before.
+
+### Changed
+- The install zip no longer includes a notes file that the app never read.
+
+### Known issues
+- Everything listed under Known issues for 1.0.1 still holds.
+
 ## 1.0.1 (2026-11-22)
 
 A small release for three things found after 1.0.0.

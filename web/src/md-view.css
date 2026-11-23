@@ -1,4 +1,4 @@
-/* The Markdown preview (MarkdownHost.jsx): a page of text on the paper color, the refused-selection line above it. Colors come from
+/* The Markdown preview (MarkdownHost.jsx): a page of text on the card color (white in light, dark in dark, so the theme's ink always reads on it), the refused-selection line above it. Colors come from
    tokens.css (light and dark). Runs keep the browser's own selection; marks are drawn by the shared overlay (Overlay.jsx). */
 .md { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--ink); }
 /* over the top of the preview, never in its flow: the text does not move when the line comes and goes (a drag would land elsewhere) */
@@ -9,7 +9,7 @@
 .md-note-src { flex: 1 1 100%; order: 3; margin: 0; max-height: 7.5em; overflow: auto; padding: 4px 6px; border-radius: 4px; background: var(--bg-sunk, rgba(127, 127, 127, 0.1)); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .md-scroll { flex: 1; min-height: 0; overflow: auto; padding: 24px 16px 64px; outline: none; }
 .md-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
-.md-doc { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 32px 40px; border-radius: 6px; background: var(--paper); box-shadow: inset 0 0 0 1px var(--well-edge); font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.md-doc { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 32px 40px; border-radius: 6px; background: var(--card); box-shadow: inset 0 0 0 1px var(--well-edge); font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
 .md-doc > :first-child { margin-top: 0; }
 .md-doc h1, .md-doc h2, .md-doc h3, .md-doc h4, .md-doc h5, .md-doc h6 { margin: 1.4em 0 0.5em; line-height: 1.25; }
 .md-doc h1 { font-size: 1.8em; }

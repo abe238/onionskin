@@ -209,3 +209,31 @@ describe("Markdown: a hostile file is shown as text", () => {
     assert.match(await card.textContent(), /Plain strong words end/);
   });
 });
+
+describe("Markdown: the preview reads in both themes", () => {
+  // The preview page once kept the light paper color in the dark theme while its text took the dark theme's light ink: unreadable.
+  test("the preview's text has strong contrast on its page in light and in dark", async () => {
+    const { w, file } = world("theme.md", "# Title\n\nA line of body text.\n");
+    try {
+      const page = await openPage(w, file);
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+        const ratio = await page.evaluate(() => {
+          const lum = (css) => {
+            const c = document.createElement("canvas").getContext("2d");
+            c.fillStyle = css; c.fillRect(0, 0, 1, 1);
+            const [r, g, b] = [...c.getImageData(0, 0, 1, 1).data].slice(0, 3).map((v) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4));
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          const doc = document.querySelector(".md-doc");
+          const a = lum(getComputedStyle(doc).backgroundColor), b = lum(getComputedStyle(doc.querySelector("p")).color);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        });
+        assert.ok(ratio >= 7, `${theme}: body text contrast on the preview page is ${ratio.toFixed(1)}, expected at least 7`);
+      }
+      await page.close();
+    } finally {
+      await w.cleanup();
+    }
+  });
+});
